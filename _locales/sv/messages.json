@@ -1,0 +1,636 @@
+{
+  "filterPacksSummaryUnavailable": {
+    "message": "Status för filterpaket är inte tillgänglig."
+  },
+  "filterPacksSummarySettingsHint": {
+    "message": "Öppna inställningar för att hantera filterpaket."
+  },
+  "filterPacksSummaryComingSoon": {
+    "message": "Filterpaket kommer snart."
+  },
+  "filterPacksSummaryEmptyHint": {
+    "message": "Valfria filterpaket visas här."
+  },
+  "filterPacksSummaryActive": {
+    "message": "Aktiva filterpaket: $ENABLED$ av $TOTAL$",
+    "placeholders": {
+      "enabled": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      },
+      "plural": {
+        "content": "$3"
+      }
+    }
+  },
+  "filterPacksSummaryNone": {
+    "message": "Inga valfria paket aktiverade. Använd inställningar för att välja extra."
+  },
+  "filterPacksSummaryMore": {
+    "message": "+$REMAINING$ fler aktiva",
+    "placeholders": {
+      "remaining": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterPacksStatusReady": {
+    "message": "Filterpaket redo."
+  },
+  "filterPacksStatusUnavailable": {
+    "message": "Status för filterpaket är inte tillgänglig."
+  },
+  "popupStatusFilterError": {
+    "message": "Filterpaket är inte tillgängliga; kontrollera inställningarna."
+  },
+  "popupStatusFilterWarn": {
+    "message": "Valfria filterpaket behöver uppmärksamhet."
+  },
+  "filterPacksStatusRulesApplied": {
+    "message": "$COUNT$ regler tillämpade",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterPacksStatusEnabledCount": {
+    "message": "$COUNT$ paket aktiverade",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksStatusUnknown": {
+    "message": "Status för filterpaket okänd."
+  },
+  "filterPacksStatusDisabled": {
+    "message": "Filterpaket inaktiverade: gränsen för declarativeNetRequest-regler nådd."
+  },
+  "filterPacksStatusTrimmed": {
+    "message": "Filterpaket trimmade till $CURRENT$ / $TOTAL$ regler (kvot nådd).",
+    "placeholders": {
+      "current": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksStatusActiveDetail": {
+    "message": "Aktiva filterpaket: $ENABLED$ ($RULES$ regler).",
+    "placeholders": {
+      "enabled": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      },
+      "rules": {
+        "content": "$3"
+      }
+    }
+  },
+  "filterPacksStatusNone": {
+    "message": "Inga valfria paket aktiverade."
+  },
+  "filterPacksStatusCleared": {
+    "message": "Filterpaket rensade."
+  },
+  "filterCatalogStatusUnavailable": {
+    "message": "Diagnostik för filterpaket är inte tillgänglig."
+  },
+  "filterCatalogLicensePrefix": {
+    "message": "Licens: $VALUE$",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterCatalogLicenseUnknown": {
+    "message": "Licens: okänd"
+  },
+  "filterCatalogStatusRulesApplied": {
+    "message": "$COUNT$ regler tillämpade",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterCatalogStatusEnabled": {
+    "message": "$COUNT$ paket aktiverade",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksSyncFailed": {
+    "message": "Synkronisering av filterpaket misslyckades."
+  },
+  "filterPacksClearFailed": {
+    "message": "Kunde inte rensa regler för filterpaket."
+  },
+  "filterPacksSummaryEnabledLabel": {
+    "message": "Aktiverad"
+  },
+  "filterCatalogDefaultDescription": {
+    "message": "Ytterligare filterpaket."
+  },
+  "filterCatalogRequiredLabel": {
+    "message": "Krävs"
+  },
+  "extensionName": {
+    "message": "Talon Defender"
+  },
+  "extensionDescription": {
+    "message": "Blockerar annonser och spårare."
+  },
+  "actionDefaultTitle": {
+    "message": "Talon Defender"
+  },
+  "extName": {
+    "message": "Talon Defender"
+  },
+  "extShortDesc": {
+    "message": "Blockerar annonser och spårare."
+  },
+  "pickerTipEnter": {
+    "message": "Gå in i elementväljarläge"
+  },
+  "uiLoading": {
+    "message": "Laddar..."
+  },
+  "uiWorking": {
+    "message": "Arbetar..."
+  },
+  "uiSoon": {
+    "message": "snart"
+  },
+  "uiSettings": {
+    "message": "Inställningar"
+  },
+  "uiPrivacy": {
+    "message": "Integritet"
+  },
+  "uiDisabled": {
+    "message": "Inaktiverad"
+  },
+  "uiActive": {
+    "message": "Aktiv"
+  },
+  "uiRemove": {
+    "message": "Ta bort"
+  },
+  "uiRemoving": {
+    "message": "Tar bort..."
+  },
+  "popupStatusCheckingProtection": {
+    "message": "Kontrollerar skydd..."
+  },
+  "popupProtectionSummaryTitle": {
+    "message": "Skyddssammanfattning"
+  },
+  "popupSessionAdsLabel": {
+    "message": "Annonser blockerade denna session"
+  },
+  "popupSessionTrackersLabel": {
+    "message": "Spårare blockerade denna session"
+  },
+  "popupLifetimeAdsLabel": {
+    "message": "Totalt blockerade annonser"
+  },
+  "popupLifetimeTrackersLabel": {
+    "message": "Totalt blockerade spårare"
+  },
+  "popupDataSavedLabel": {
+    "message": "Sparad data"
+  },
+  "popupSessionLabel": {
+    "message": "Denna session"
+  },
+  "popupStatsAds": {
+    "message": "Annonser blockeras"
+  },
+  "popupStatsTrackers": {
+    "message": "Spårare blockeras"
+  },
+  "popupStatsScripts": {
+    "message": "Misstänkta skript blockeras"
+  },
+  "popupLifetimeLabel": {
+    "message": "Totalt"
+  },
+  "popupFilterPacksTitle": {
+    "message": "Extra skydd"
+  },
+  "popupToggleActivateSubscription": {
+    "message": "Aktivera licens"
+  },
+  "popupToggleEnableProtection": {
+    "message": "Slå på skydd"
+  },
+  "popupToggleDisableProtection": {
+    "message": "Slå av skydd"
+  },
+  "popupStatusTrialEndedActivate": {
+    "message": "Skyddet är pausat. Aktivera för att fortsätta."
+  },
+  "expiredOverlayBadge": {
+    "message": "Åtgärd krävs"
+  },
+  "expiredOverlayBadgeMaxDevices": {
+    "message": "Enhetsgräns"
+  },
+  "expiredOverlayTitle": {
+    "message": "Skyddet är pausat"
+  },
+  "expiredOverlayTitleMaxDevices": {
+    "message": "Enhetsgräns nådd"
+  },
+  "expiredOverlayBullet1": {
+    "message": "Annonsblockering är inaktiverad."
+  },
+  "expiredOverlayBullet2": {
+    "message": "Spårare kan följa vad du gör online."
+  },
+  "expiredOverlayBullet3": {
+    "message": "Bluffsidor kan slinka igenom."
+  },
+  "expiredOverlayBulletMax1": {
+    "message": "Du har nått din gräns på 5 datorer."
+  },
+  "expiredOverlayBulletMax2": {
+    "message": "Skydda den här datorn genom att använda den i stället för en äldre."
+  },
+  "expiredOverlayBulletMax3": {
+    "message": "Detta frigör en äldre dator."
+  },
+  "expiredOverlayPrimaryCta": {
+    "message": "Skaffa skydd"
+  },
+  "expiredOverlaySecondaryCta": {
+    "message": "Har du en nyckel? Aktivera nu"
+  },
+  "expiredOverlayStep1Label": {
+    "message": "STEG 1"
+  },
+  "expiredOverlayStep1Title": {
+    "message": "Skaffa din licensnyckel"
+  },
+  "expiredOverlayStep2Label": {
+    "message": "STEG 2"
+  },
+  "expiredOverlayStep2Title": {
+    "message": "Aktivera"
+  },
+  "expiredOverlayTrialEndedMessage": {
+    "message": "Ditt gratis skydd har tagit slut. Aktivera för att fortsätta blockera annonser, pop-ups och bluff-sidor."
+  },
+  "expiredOverlayExpiredMessage": {
+    "message": "Aktivera en licens för att fortsätta blockera annonser, pop-ups och bluff-sidor."
+  },
+  "expiredOverlayTrialEndedOn": {
+    "message": "Gratis skydd avslutades $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "expiredOverlayLicenseEndedOn": {
+    "message": "Licensen avslutades $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "expiredOverlayTrustMv3": {
+    "message": "Kompatibel med Manifest V3 (MV3)."
+  },
+  "expiredOverlayKeyLabel": {
+    "message": "Har du redan en licensnyckel?"
+  },
+  "expiredOverlayActivateButton": {
+    "message": "Aktivera nu"
+  },
+  "expiredOverlayEmailKeyButton": {
+    "message": "Mejla mig licensnyckeln"
+  },
+  "expiredOverlayHelpLink": {
+    "message": "Behöver du hjälp? Öppna support"
+  },
+  "expiredOverlayNoReinstall": {
+    "message": "Ingen ominstallation behövs. Avinstallera och installera igen förlänger inte provperioden."
+  },
+  "popupStatusProtectionActive": {
+    "message": "Skyddet är aktivt"
+  },
+  "popupStatusProtectionPaused": {
+    "message": "Skyddet är pausat"
+  },
+  "popupSafetyMessage": {
+    "message": "Skyddet är aktivt"
+  },
+  "popupNoActiveTab": {
+    "message": "Ingen mål upptäckt"
+  },
+  "popupFilteringDisabledSite": {
+    "message": "Skydd av för denna webbplats"
+  },
+  "popupFilteringEnabledSite": {
+    "message": "Skydd på för denna webbplats"
+  },
+  "popupFilteringCompleteSite": {
+    "message": "Extra skydd på för denna webbplats"
+  },
+  "subscriptionSectionTitle": {
+    "message": "Prenumeration"
+  },
+  "optionsSubscriptionTitle": {
+    "message": "Håll dig skyddad utan att ändra något"
+  },
+  "optionsSubscriptionSubtitle": {
+    "message": "Talon Defender blockerar annonser, spårare och popup-fönster automatiskt."
+  },
+  "optionsSubscriptionBadge": {
+    "message": "Rekommenderas"
+  },
+  "optionsSubscriptionBenefit1": {
+    "message": "Färre popup-fönster och skrämmande varningar"
+  },
+  "optionsSubscriptionBenefit2": {
+    "message": "Renare sidor som laddar snabbare"
+  },
+  "optionsSubscriptionBenefit3": {
+    "message": "Automatiska listuppdateringar håller skyddet aktuellt"
+  },
+  "optionsSubscriptionKeyHint": {
+    "message": "Har du redan en licensnyckel? Ange den ovan och klicka på Aktivera licens."
+  },
+  "optionsSubscriptionCta": {
+    "message": "Skaffa en licens"
+  },
+  "optionsSubscriptionReassurance": {
+    "message": "Enkel uppsättning. Vi håller skyddet uppdaterat åt dig."
+  },
+  "optionsSubscriptionGuarantee": {
+    "message": "30 dagars pengarna-tillbaka-garanti."
+  },
+  "optionsSubscriptionDeviceLimit": {
+    "message": "Täcker upp till 5 datorer."
+  },
+  "subscriptionStatusLoading": {
+    "message": "Laddar status..."
+  },
+  "licenseKeyLabel": {
+    "message": "Licensnyckel"
+  },
+  "licenseKeyPlaceholder": {
+    "message": "Ange licensnyckel"
+  },
+  "licenseActivateButton": {
+    "message": "Aktivera licens"
+  },
+  "licenseGetButton": {
+    "message": "Skaffa en licens"
+  },
+  "licenseAlreadyPurchasedLink": {
+    "message": "Redan köpt? Ange din licensnyckel"
+  },
+  "licenseHelpButton": {
+    "message": "Hjälp"
+  },
+  "popupSubscriptionGuarantee": {
+    "message": "30 dagars pengarna-tillbaka-garanti"
+  },
+  "popupSubscriptionDeviceLimit": {
+    "message": "Täcker upp till 5 datorer."
+  },
+  "subscriptionPaid": {
+    "message": "Licens aktiv."
+  },
+  "subscriptionPaidUntil": {
+    "message": "Renews on $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "subscriptionTrial": {
+    "message": "Gratis skydd slutar om $REMAINING$.",
+    "placeholders": {
+      "remaining": {
+        "content": "$1"
+      }
+    }
+  },
+  "subscriptionExpired": {
+    "message": "Provperioden är slut. Skyddet är pausat."
+  },
+  "subscriptionExpiredWithError": {
+    "message": "Provperioden är slut. Skyddet är pausat. ($ERROR$)",
+    "placeholders": {
+      "error": {
+        "content": "$1"
+      }
+    }
+  },
+  "licenseStatusEnterKey": {
+    "message": "Ange din licensnyckel för att aktivera."
+  },
+  "licenseStatusActivating": {
+    "message": "Aktiverar..."
+  },
+  "licenseStatusActivationFailed": {
+    "message": "Aktivering misslyckades. Försök igen."
+  },
+  "licenseStatusActivated": {
+    "message": "Aktiverad."
+  },
+  "licenseStatusRemoved": {
+    "message": "Licens borttagen."
+  },
+  "licenseStatusVerifyLater": {
+    "message": "Kunde inte verifiera licensen ännu. Försök igen."
+  },
+  "licenseStatusActivationRequired": {
+    "message": "Aktivering krävs."
+  },
+  "optionsSubtitle": {
+    "message": "Justera hur blockeringen fungerar i din webbläsare."
+  },
+  "optionsFilterListsTitle": {
+    "message": "Rekommenderade skyddslistor"
+  },
+  "optionsFilterListsSubtitle": {
+    "message": "Dessa uppdateras automatiskt för att blockera annonser och spårning."
+  },
+  "optionsFilterListsHint": {
+    "message": "Låt dessa vara på för bästa skydd. Stäng av endast om en webbplats krånglar."
+  },
+  "optionsFilterEasyListLabel": {
+    "message": "Blockera de flesta annonser"
+  },
+  "optionsFilterEasyListNote": {
+    "message": "Täcker annonser på de flesta webbplatser."
+  },
+  "optionsFilterEasyPrivacyLabel": {
+    "message": "Stoppa spårning"
+  },
+  "optionsFilterEasyPrivacyNote": {
+    "message": "Blockerar spårare som följer dig mellan webbplatser."
+  },
+  "optionsFilterAnnoyancesLabel": {
+    "message": "Dölj popup-fönster och banderoller"
+  },
+  "optionsFilterAnnoyancesNote": {
+    "message": "Tar bort cookie-popups och överlägg."
+  },
+  "optionsFilterSecurityLabel": {
+    "message": "Blockera kända farliga webbplatser"
+  },
+  "optionsFilterSecurityNote": {
+    "message": "Stoppar kända skadliga och bedrägerisidor innan de laddas."
+  },
+  "optionsAllowedSitesTitle": {
+    "message": "Tillåtna webbplatser"
+  },
+  "optionsAllowedSitesSubtitle": {
+    "message": "Välj webbplatser du vill stödja; annonser visas där."
+  },
+  "optionsAllowedSitesAddButton": {
+    "message": "Lägg till webbplats"
+  },
+  "optionsAllowedSitesEmpty": {
+    "message": "Inga webbplatser tillagda än."
+  },
+  "footerSupportLink": {
+    "message": "Hjälp"
+  },
+  "footerManageSubscriptionLink": {
+    "message": "Hantera prenumeration"
+  },
+  "footerWhatsNewLink": {
+    "message": "Nyheter"
+  },
+  "footerPrivacyPolicyLink": {
+    "message": "Integritetspolicy"
+  },
+  "footerTermsLink": {
+    "message": "Användarvillkor"
+  },
+  "footerRemoveLicenseLink": {
+    "message": "Ta bort licens"
+  },
+  "footerRemoveLicenseConfirm": {
+    "message": "Ta bort licensen från den här enheten? Du kan aktivera igen när som helst."
+  },
+  "popupSettingsLink": {
+    "message": "Inställningar"
+  },
+  "popupPrivacyLink": {
+    "message": "Integritet"
+  },
+  "strictblockTitle": {
+    "message": "Talon Defender - Webbplats blockerad"
+  },
+  "strictblockSentence1": {
+    "message": "Talon Defender blockerade denna webbplats för att hålla dig säker. Om du litar på den kan du fortsätta."
+  },
+  "strictblockSponsoredSentence1": {
+    "message": "Det här verkar vara en sponsrad länk. Fortsätt om detta var avsiktligt."
+  },
+  "strictblockDontWarn": {
+    "message": "Varna mig inte igen för denna webbplats"
+  },
+  "strictblockBack": {
+    "message": "Gå tillbaka"
+  },
+  "strictblockClose": {
+    "message": "Stäng flik"
+  },
+  "strictblockProceed": {
+    "message": "Fortsätt till webbplatsen"
+  },
+  "strictblockNoParamsPrompt": {
+    "message": "Webbadress"
+  },
+  "strictblockReasonSentence1": {
+    "message": "Blockerad av Talon Defenders säkerhetslistor."
+  },
+  "strictblockSponsoredReasonSentence1": {
+    "message": "Blockerad av Talon Defender sponsrat länkskydd."
+  },
+  "strictblockRedirectSentence1": {
+    "message": "En säkrare version av denna sida finns: {{url}}"
+  },
+  "pickerTitle": {
+    "message": "Talon Defender - Blockera ett element"
+  },
+  "unpickerTitle": {
+    "message": "Talon Defender - Återställ ett blockerat element"
+  },
+  "pickerQuit": {
+    "message": "Stäng verktyg"
+  },
+  "pickerSliderLabel": {
+    "message": "Välj vad som ska blockeras"
+  },
+  "pickerPick": {
+    "message": "Välj"
+  },
+  "pickerPreview": {
+    "message": "Förhandsgranskning"
+  },
+  "pickerCreate": {
+    "message": "Blockera detta element"
+  },
+  "popupMoreButton": {
+    "message": "Fler val"
+  },
+  "popupLessButton": {
+    "message": "Färre val"
+  },
+  "unpickerUsage": {
+    "message": "Klicka på ett blockerat element för att visa det igen, eller klicka på papperskorgsikonen för att ta bort det permanent."
+  },
+  "subscriptionTrialAfterNote": {
+    "message": "Efter provperioden blockeras inte längre annonser och spårare."
+  },
+  "licenseRecoverLink": {
+    "message": "Skicka licensnyckeln på nytt"
+  },
+  "licenseRevealButton": {
+    "message": "Visa licensnyckel"
+  },
+  "licenseHideButton": {
+    "message": "Dölj licensnyckel"
+  },
+  "subscriptionPaidManageNote": {
+    "message": "Hantera eller säg upp när som helst."
+  },
+  "licenseStatusUseThisDevice": {
+    "message": "Denna licens är redan aktiv på det maximala antalet datorer. Klicka på Använd den här datorn för att flytta den hit."
+  },
+  "licenseStatusUsingThisDevice": {
+    "message": "Använder den här datorn..."
+  },
+  "licenseUseThisDeviceButton": {
+    "message": "Använd den här datorn"
+  }
+}

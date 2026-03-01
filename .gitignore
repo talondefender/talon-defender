@@ -1,0 +1,10 @@
+keys/
+node_modules/
+website/node_modules/
+dist/
+website/dist/
+test-results/
+playwright-report/
+*.zip
+scripts/__pycache__/
+website/.devserver*.log

@@ -1,0 +1,11 @@
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="powerGlow" x="-4" y="-4" width="32" height="32">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+  <path d="M18.36 6.64C19.6184 7.8988 20.4753 9.50246 20.8223 11.2482C21.1693 12.994 20.9909 14.8034 20.3096 16.4477C19.6284 18.0921 18.4748 19.4976 16.9948 20.4864C15.5147 21.4752 13.7749 22.0029 12 22.0029C10.2251 22.0029 8.4853 21.4752 7.00525 20.4864C5.5252 19.4976 4.37164 18.0921 3.69036 16.4477C3.00909 14.8034 2.83067 12.994 3.17769 11.2482C3.52471 9.50246 4.38157 7.8988 5.64 6.64" stroke="#EF4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M12 2V12" stroke="#EF4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Active State Glow (Hidden by default or can be used for 'on' state with different color) -->
+</svg>

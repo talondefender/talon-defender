@@ -1,0 +1,29 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="shieldGrad" x1="64" y1="4" x2="64" y2="124" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1E293B"/>
+      <stop offset="100%" stop-color="#0F172A"/>
+    </linearGradient>
+    <linearGradient id="blueGlow" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#0EA5E9"/>
+    </linearGradient>
+    <filter id="dropshadow" x="-4" y="-4" width="136" height="136">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Base Shield -->
+  <path d="M64 4L14 26V58C14 92 36 118 64 126C92 118 114 92 114 58V26L64 4Z" fill="url(#shieldGrad)" stroke="url(#blueGlow)" stroke-width="3" filter="url(#dropshadow)"/>
+  
+  <!-- High-Tech Circuit/Grid Pattern Overlay -->
+  <path d="M64 14V116M24 40H104M34 80H94" stroke="#38BDF8" stroke-width="1" stroke-opacity="0.1"/>
+  
+  <!-- The Talon - Three sharp, aggressive scratches -->
+  <path d="M40 35 C 45 35, 60 45, 64 75" stroke="#EF4444" stroke-width="6" stroke-linecap="round"/>
+  <path d="M64 30 C 64 30, 80 45, 84 90" stroke="#EF4444" stroke-width="6" stroke-linecap="round"/>
+  <path d="M88 35 C 83 35, 75 45, 72 65" stroke="#EF4444" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Inner Shine -->
+  <path d="M64 8L108 28V58C108 65 107 70 105 75C95 50 75 35 64 30V8Z" fill="#FFFFFF" fill-opacity="0.1"/>
+</svg>

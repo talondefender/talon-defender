@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html id="ublock0-clicktoload">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1 user-scalable=yes">
+<meta name="color-scheme" content="light dark" />
+<title>Talon Defender Click-to-Load</title>
+<link rel="stylesheet" href="../css/default.css">
+<link rel="stylesheet" href="../css/common.css">
+<link rel="stylesheet" href="../css/click2load.css">
+</head>
+
+<body class="loading">
+<main id="rootContainer">
+    <h1 id="titleText">Blocked embedded content</h1>
+    <p id="summaryText">
+        Talon Defender paused this request. You can load it manually.
+    </p>
+    <p id="targetLine" class="code hidden">
+        <span id="targetURL"></span>
+    </p>
+    <div id="actionContainer">
+        <button id="loadNow" class="preferred" type="button">Load content</button>
+        <a id="openInTab" href="#" rel="noopener noreferrer" target="_blank">Open in new tab</a>
+    </div>
+    <p id="missingTargetText" class="hidden">
+        No target URL was provided for this embedded frame.
+    </p>
+</main>
+
+<script src="../js/theme.js" type="module"></script>
+<script src="../js/click2load.js" type="module"></script>
+</body>
+</html>

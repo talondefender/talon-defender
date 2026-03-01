@@ -1,0 +1,636 @@
+{
+  "filterPacksSummaryUnavailable": {
+    "message": "Stato dei pacchetti di filtri non disponibile."
+  },
+  "filterPacksSummarySettingsHint": {
+    "message": "Apri le impostazioni per gestire i pacchetti di filtri."
+  },
+  "filterPacksSummaryComingSoon": {
+    "message": "Pacchetti di filtri in arrivo."
+  },
+  "filterPacksSummaryEmptyHint": {
+    "message": "I pacchetti di filtri opzionali appariranno qui."
+  },
+  "filterPacksSummaryActive": {
+    "message": "Pacchetti di filtri attivi: $ENABLED$ su $TOTAL$",
+    "placeholders": {
+      "enabled": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      },
+      "plural": {
+        "content": "$3"
+      }
+    }
+  },
+  "filterPacksSummaryNone": {
+    "message": "Nessun pacchetto opzionale attivo. Usa le impostazioni per scegliere extra."
+  },
+  "filterPacksSummaryMore": {
+    "message": "+$REMAINING$ altri attivi",
+    "placeholders": {
+      "remaining": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterPacksStatusReady": {
+    "message": "Pacchetti di filtri pronti."
+  },
+  "filterPacksStatusUnavailable": {
+    "message": "Stato dei pacchetti di filtri non disponibile."
+  },
+  "popupStatusFilterError": {
+    "message": "Pacchetti di filtri non disponibili; controlla le impostazioni."
+  },
+  "popupStatusFilterWarn": {
+    "message": "I pacchetti di filtri opzionali richiedono attenzione."
+  },
+  "filterPacksStatusRulesApplied": {
+    "message": "$COUNT$ regole applicate",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterPacksStatusEnabledCount": {
+    "message": "$COUNT$ pacchetti attivi",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksStatusUnknown": {
+    "message": "Stato dei pacchetti di filtri sconosciuto."
+  },
+  "filterPacksStatusDisabled": {
+    "message": "Pacchetti di filtri disattivati: limite regole declarativeNetRequest raggiunto."
+  },
+  "filterPacksStatusTrimmed": {
+    "message": "Pacchetti di filtri ridotti a $CURRENT$ / $TOTAL$ regole (quota raggiunta).",
+    "placeholders": {
+      "current": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksStatusActiveDetail": {
+    "message": "Pacchetti di filtri attivi: $ENABLED$ ($RULES$ regole).",
+    "placeholders": {
+      "enabled": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      },
+      "rules": {
+        "content": "$3"
+      }
+    }
+  },
+  "filterPacksStatusNone": {
+    "message": "Nessun pacchetto opzionale attivo."
+  },
+  "filterPacksStatusCleared": {
+    "message": "Pacchetti di filtri cancellati."
+  },
+  "filterCatalogStatusUnavailable": {
+    "message": "Diagnostica dei pacchetti di filtri non disponibile."
+  },
+  "filterCatalogLicensePrefix": {
+    "message": "Licenza: $VALUE$",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterCatalogLicenseUnknown": {
+    "message": "Licenza: sconosciuta"
+  },
+  "filterCatalogStatusRulesApplied": {
+    "message": "$COUNT$ regole applicate",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterCatalogStatusEnabled": {
+    "message": "$COUNT$ pacchetti attivi",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksSyncFailed": {
+    "message": "Sincronizzazione dei pacchetti di filtri non riuscita."
+  },
+  "filterPacksClearFailed": {
+    "message": "Impossibile cancellare le regole dei pacchetti di filtri."
+  },
+  "filterPacksSummaryEnabledLabel": {
+    "message": "Attivato"
+  },
+  "filterCatalogDefaultDescription": {
+    "message": "Pacchetto di filtri aggiuntivo."
+  },
+  "filterCatalogRequiredLabel": {
+    "message": "Richiesto"
+  },
+  "extensionName": {
+    "message": "Talon Defender"
+  },
+  "extensionDescription": {
+    "message": "Blocca annunci e tracker."
+  },
+  "actionDefaultTitle": {
+    "message": "Talon Defender"
+  },
+  "extName": {
+    "message": "Talon Defender"
+  },
+  "extShortDesc": {
+    "message": "Blocca annunci e tracker."
+  },
+  "pickerTipEnter": {
+    "message": "Entra in modalità selettore elementi"
+  },
+  "uiLoading": {
+    "message": "Caricamento..."
+  },
+  "uiWorking": {
+    "message": "In corso..."
+  },
+  "uiSoon": {
+    "message": "presto"
+  },
+  "uiSettings": {
+    "message": "Impostazioni"
+  },
+  "uiPrivacy": {
+    "message": "Privacy"
+  },
+  "uiDisabled": {
+    "message": "Disattivato"
+  },
+  "uiActive": {
+    "message": "Attivo"
+  },
+  "uiRemove": {
+    "message": "Rimuovi"
+  },
+  "uiRemoving": {
+    "message": "Rimozione..."
+  },
+  "popupStatusCheckingProtection": {
+    "message": "Verifica della protezione..."
+  },
+  "popupProtectionSummaryTitle": {
+    "message": "Riepilogo protezione"
+  },
+  "popupSessionAdsLabel": {
+    "message": "Annunci bloccati in questa sessione"
+  },
+  "popupSessionTrackersLabel": {
+    "message": "Tracker bloccati in questa sessione"
+  },
+  "popupLifetimeAdsLabel": {
+    "message": "Totale annunci bloccati"
+  },
+  "popupLifetimeTrackersLabel": {
+    "message": "Totale tracker bloccati"
+  },
+  "popupDataSavedLabel": {
+    "message": "Dati risparmiati"
+  },
+  "popupSessionLabel": {
+    "message": "Questa sessione"
+  },
+  "popupStatsAds": {
+    "message": "Gli annunci vengono bloccati"
+  },
+  "popupStatsTrackers": {
+    "message": "I tracker vengono bloccati"
+  },
+  "popupStatsScripts": {
+    "message": "Gli script sospetti vengono bloccati"
+  },
+  "popupLifetimeLabel": {
+    "message": "Totale"
+  },
+  "popupFilterPacksTitle": {
+    "message": "Protezione extra"
+  },
+  "popupToggleActivateSubscription": {
+    "message": "Attiva licenza"
+  },
+  "popupToggleEnableProtection": {
+    "message": "Attiva protezione"
+  },
+  "popupToggleDisableProtection": {
+    "message": "Disattiva protezione"
+  },
+  "popupStatusTrialEndedActivate": {
+    "message": "Protezione in pausa. Attivala per continuare."
+  },
+  "expiredOverlayBadge": {
+    "message": "Azione necessaria"
+  },
+  "expiredOverlayBadgeMaxDevices": {
+    "message": "Limite dispositivi"
+  },
+  "expiredOverlayTitle": {
+    "message": "Protezione in pausa"
+  },
+  "expiredOverlayTitleMaxDevices": {
+    "message": "Limite dispositivi raggiunto"
+  },
+  "expiredOverlayBullet1": {
+    "message": "Il blocco degli annunci è disattivato."
+  },
+  "expiredOverlayBullet2": {
+    "message": "I tracker possono seguire la tua attività online."
+  },
+  "expiredOverlayBullet3": {
+    "message": "Le pagine truffa potrebbero passare."
+  },
+  "expiredOverlayBulletMax1": {
+    "message": "Hai raggiunto il limite di 5 computer."
+  },
+  "expiredOverlayBulletMax2": {
+    "message": "Proteggi questo computer usandolo al posto di uno più vecchio."
+  },
+  "expiredOverlayBulletMax3": {
+    "message": "Questo libererà un computer più vecchio."
+  },
+  "expiredOverlayPrimaryCta": {
+    "message": "Ottieni protezione"
+  },
+  "expiredOverlaySecondaryCta": {
+    "message": "Hai già una chiave? Attiva ora"
+  },
+  "expiredOverlayStep1Label": {
+    "message": "PASSO 1"
+  },
+  "expiredOverlayStep1Title": {
+    "message": "Ottieni la tua chiave di licenza"
+  },
+  "expiredOverlayStep2Label": {
+    "message": "PASSO 2"
+  },
+  "expiredOverlayStep2Title": {
+    "message": "Attiva"
+  },
+  "expiredOverlayTrialEndedMessage": {
+    "message": "La protezione gratuita è terminata. Attiva per continuare a bloccare annunci, pop-up e pagine truffa."
+  },
+  "expiredOverlayExpiredMessage": {
+    "message": "Attiva una licenza per continuare a bloccare annunci, pop-up e pagine truffa."
+  },
+  "expiredOverlayTrialEndedOn": {
+    "message": "La protezione gratuita è terminata il $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "expiredOverlayLicenseEndedOn": {
+    "message": "La licenza è terminata il $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "expiredOverlayTrustMv3": {
+    "message": "Compatibile con Manifest V3 (MV3)."
+  },
+  "expiredOverlayKeyLabel": {
+    "message": "Hai già una chiave di licenza?"
+  },
+  "expiredOverlayActivateButton": {
+    "message": "Attiva ora"
+  },
+  "expiredOverlayEmailKeyButton": {
+    "message": "Inviami la mia chiave di licenza"
+  },
+  "expiredOverlayHelpLink": {
+    "message": "Serve aiuto? Apri assistenza"
+  },
+  "expiredOverlayNoReinstall": {
+    "message": "Nessuna reinstallazione necessaria. Disinstallare e reinstallare non estenderà la prova."
+  },
+  "popupStatusProtectionActive": {
+    "message": "Protezione attiva"
+  },
+  "popupStatusProtectionPaused": {
+    "message": "Protezione in pausa"
+  },
+  "popupSafetyMessage": {
+    "message": "La protezione è attiva"
+  },
+  "popupNoActiveTab": {
+    "message": "Nessun bersaglio rilevato"
+  },
+  "popupFilteringDisabledSite": {
+    "message": "Protezione disattivata per questo sito"
+  },
+  "popupFilteringEnabledSite": {
+    "message": "Protezione attiva per questo sito"
+  },
+  "popupFilteringCompleteSite": {
+    "message": "Protezione extra attiva per questo sito"
+  },
+  "subscriptionSectionTitle": {
+    "message": "Abbonamento"
+  },
+  "optionsSubscriptionTitle": {
+    "message": "Resta protetto senza cambiare nulla"
+  },
+  "optionsSubscriptionSubtitle": {
+    "message": "Talon Defender blocca automaticamente annunci, tracker e pop-up."
+  },
+  "optionsSubscriptionBadge": {
+    "message": "Consigliato"
+  },
+  "optionsSubscriptionBenefit1": {
+    "message": "Meno pop-up e avvisi spaventosi"
+  },
+  "optionsSubscriptionBenefit2": {
+    "message": "Pagine più pulite che caricano più velocemente"
+  },
+  "optionsSubscriptionBenefit3": {
+    "message": "Gli aggiornamenti automatici delle liste mantengono la protezione aggiornata"
+  },
+  "optionsSubscriptionKeyHint": {
+    "message": "Hai già una chiave di licenza? Inseriscila sopra e clicca Attiva licenza."
+  },
+  "optionsSubscriptionCta": {
+    "message": "Ottieni una licenza"
+  },
+  "optionsSubscriptionReassurance": {
+    "message": "Configurazione semplice. Manteniamo la protezione aggiornata per te."
+  },
+  "optionsSubscriptionGuarantee": {
+    "message": "Garanzia di rimborso di 30 giorni."
+  },
+  "optionsSubscriptionDeviceLimit": {
+    "message": "Copre fino a 5 computer."
+  },
+  "subscriptionStatusLoading": {
+    "message": "Caricamento stato..."
+  },
+  "licenseKeyLabel": {
+    "message": "Chiave di licenza"
+  },
+  "licenseKeyPlaceholder": {
+    "message": "Inserisci chiave di licenza"
+  },
+  "licenseActivateButton": {
+    "message": "Attiva licenza"
+  },
+  "licenseGetButton": {
+    "message": "Ottieni una licenza"
+  },
+  "licenseAlreadyPurchasedLink": {
+    "message": "Già acquistato? Inserisci la tua chiave di licenza"
+  },
+  "licenseHelpButton": {
+    "message": "Aiuto"
+  },
+  "popupSubscriptionGuarantee": {
+    "message": "Garanzia di rimborso di 30 giorni"
+  },
+  "popupSubscriptionDeviceLimit": {
+    "message": "Copre fino a 5 computer."
+  },
+  "subscriptionPaid": {
+    "message": "Licenza attiva."
+  },
+  "subscriptionPaidUntil": {
+    "message": "Renews on $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "subscriptionTrial": {
+    "message": "La protezione gratuita termina tra $REMAINING$.",
+    "placeholders": {
+      "remaining": {
+        "content": "$1"
+      }
+    }
+  },
+  "subscriptionExpired": {
+    "message": "Prova terminata. La protezione è in pausa."
+  },
+  "subscriptionExpiredWithError": {
+    "message": "Prova terminata. Protezione in pausa. ($ERROR$)",
+    "placeholders": {
+      "error": {
+        "content": "$1"
+      }
+    }
+  },
+  "licenseStatusEnterKey": {
+    "message": "Inserisci la tua chiave di licenza per attivare."
+  },
+  "licenseStatusActivating": {
+    "message": "Attivazione..."
+  },
+  "licenseStatusActivationFailed": {
+    "message": "Attivazione non riuscita. Riprova."
+  },
+  "licenseStatusActivated": {
+    "message": "Attivato."
+  },
+  "licenseStatusRemoved": {
+    "message": "Licenza rimossa."
+  },
+  "licenseStatusVerifyLater": {
+    "message": "Impossibile verificare la licenza per ora. Riprova."
+  },
+  "licenseStatusActivationRequired": {
+    "message": "Attivazione richiesta."
+  },
+  "optionsSubtitle": {
+    "message": "Regola come il blocco funziona nel tuo browser."
+  },
+  "optionsFilterListsTitle": {
+    "message": "Liste di protezione consigliate"
+  },
+  "optionsFilterListsSubtitle": {
+    "message": "Si aggiornano automaticamente per bloccare annunci e tracciamento."
+  },
+  "optionsFilterListsHint": {
+    "message": "Lasciale attive per la migliore protezione. Disattivane una solo se un sito non funziona."
+  },
+  "optionsFilterEasyListLabel": {
+    "message": "Blocca la maggior parte degli annunci"
+  },
+  "optionsFilterEasyListNote": {
+    "message": "Copre gli annunci sulla maggior parte dei siti."
+  },
+  "optionsFilterEasyPrivacyLabel": {
+    "message": "Ferma il tracciamento"
+  },
+  "optionsFilterEasyPrivacyNote": {
+    "message": "Blocca i tracker che ti seguono tra i siti."
+  },
+  "optionsFilterAnnoyancesLabel": {
+    "message": "Nascondi pop-up e banner"
+  },
+  "optionsFilterAnnoyancesNote": {
+    "message": "Rimuove i pop-up dei cookie e le sovrapposizioni."
+  },
+  "optionsFilterSecurityLabel": {
+    "message": "Blocca siti pericolosi conosciuti"
+  },
+  "optionsFilterSecurityNote": {
+    "message": "Blocca siti di malware e truffa conosciuti prima che si carichino."
+  },
+  "optionsAllowedSitesTitle": {
+    "message": "Siti consentiti"
+  },
+  "optionsAllowedSitesSubtitle": {
+    "message": "Scegli i siti che vuoi supportare; lì gli annunci restano visibili."
+  },
+  "optionsAllowedSitesAddButton": {
+    "message": "Aggiungi sito"
+  },
+  "optionsAllowedSitesEmpty": {
+    "message": "Nessun sito aggiunto."
+  },
+  "footerSupportLink": {
+    "message": "Supporto"
+  },
+  "footerManageSubscriptionLink": {
+    "message": "Gestisci abbonamento"
+  },
+  "footerWhatsNewLink": {
+    "message": "Novità"
+  },
+  "footerPrivacyPolicyLink": {
+    "message": "Informativa sulla privacy"
+  },
+  "footerTermsLink": {
+    "message": "Termini di servizio"
+  },
+  "footerRemoveLicenseLink": {
+    "message": "Rimuovi licenza"
+  },
+  "footerRemoveLicenseConfirm": {
+    "message": "Rimuovere la licenza da questo dispositivo? Puoi riattivare in qualsiasi momento."
+  },
+  "popupSettingsLink": {
+    "message": "Impostazioni"
+  },
+  "popupPrivacyLink": {
+    "message": "Informativa privacy"
+  },
+  "strictblockTitle": {
+    "message": "Talon Defender - Sito bloccato"
+  },
+  "strictblockSentence1": {
+    "message": "Talon Defender ha bloccato questo sito per proteggerti. Se ti fidi, puoi continuare."
+  },
+  "strictblockSponsoredSentence1": {
+    "message": "Questo sembra essere un collegamento sponsorizzato. Continua se questo era intenzionale."
+  },
+  "strictblockDontWarn": {
+    "message": "Non avvisare più per questo sito"
+  },
+  "strictblockBack": {
+    "message": "Indietro"
+  },
+  "strictblockClose": {
+    "message": "Chiudi scheda"
+  },
+  "strictblockProceed": {
+    "message": "Continua al sito"
+  },
+  "strictblockNoParamsPrompt": {
+    "message": "Indirizzo del sito"
+  },
+  "strictblockReasonSentence1": {
+    "message": "Bloccato dalle liste di sicurezza di Talon Defender."
+  },
+  "strictblockSponsoredReasonSentence1": {
+    "message": "Bloccato dalla protezione dei link sponsorizzati Talon Defender."
+  },
+  "strictblockRedirectSentence1": {
+    "message": "È disponibile una versione più sicura di questa pagina: {{url}}"
+  },
+  "pickerTitle": {
+    "message": "Talon Defender - Blocca un elemento"
+  },
+  "unpickerTitle": {
+    "message": "Talon Defender - Ripristina un elemento bloccato"
+  },
+  "pickerQuit": {
+    "message": "Chiudi strumento"
+  },
+  "pickerSliderLabel": {
+    "message": "Scegli cosa bloccare"
+  },
+  "pickerPick": {
+    "message": "Seleziona"
+  },
+  "pickerPreview": {
+    "message": "Anteprima"
+  },
+  "pickerCreate": {
+    "message": "Blocca questo elemento"
+  },
+  "popupMoreButton": {
+    "message": "Più opzioni"
+  },
+  "popupLessButton": {
+    "message": "Meno opzioni"
+  },
+  "unpickerUsage": {
+    "message": "Fai clic su un elemento bloccato per mostrarlo di nuovo oppure sull'icona del cestino per rimuoverlo definitivamente."
+  },
+  "subscriptionTrialAfterNote": {
+    "message": "Dopo la prova, annunci e tracker non verranno più bloccati."
+  },
+  "licenseRecoverLink": {
+    "message": "Reinvia la chiave di licenza"
+  },
+  "licenseRevealButton": {
+    "message": "Mostra la chiave di licenza"
+  },
+  "licenseHideButton": {
+    "message": "Nascondi la chiave di licenza"
+  },
+  "subscriptionPaidManageNote": {
+    "message": "Gestisci o annulla in qualsiasi momento."
+  },
+  "licenseStatusUseThisDevice": {
+    "message": "Questa licenza è già attiva sul numero massimo di computer. Fare clic su Usa questo computer per spostarlo qui."
+  },
+  "licenseStatusUsingThisDevice": {
+    "message": "Usando questo computer..."
+  },
+  "licenseUseThisDeviceButton": {
+    "message": "Usa questo computer"
+  }
+}

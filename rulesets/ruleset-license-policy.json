@@ -1,0 +1,47 @@
+{
+  "rulesets": {
+    "ublock-filters": {
+      "license": "GPL-3.0-or-later",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/uBlockOrigin/uAssets",
+      "proof": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/LICENSE",
+      "attributionRequired": true
+    },
+    "easylist": {
+      "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://easylist.to/",
+      "proof": "https://easylist.to/pages/licence.html",
+      "attributionRequired": true
+    },
+    "easyprivacy": {
+      "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://easylist.to/",
+      "proof": "https://easylist.to/pages/licence.html",
+      "attributionRequired": true
+    },
+    "annoyances-overlays": {
+      "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/easylist/easylist#fanboy-lists",
+      "proof": "https://easylist.to/pages/licence.html",
+      "attributionRequired": true
+    },
+    "ublock-badware": {
+      "license": "GPL-3.0-or-later",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/uBlockOrigin/uAssets",
+      "proof": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/LICENSE",
+      "attributionRequired": true
+    },
+    "urlhaus-full": {
+      "license": "MIT",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://gitlab.com/malware-filter/urlhaus-filter",
+      "proof": "https://gitlab.com/malware-filter/urlhaus-filter/-/raw/main/LICENSE",
+      "attributionRequired": true
+    }
+  },
+  "allowlistedUnknown": {}
+}

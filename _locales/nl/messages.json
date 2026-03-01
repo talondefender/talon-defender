@@ -1,0 +1,636 @@
+{
+  "filterPacksSummaryUnavailable": {
+    "message": "Status van filterpakketten niet beschikbaar."
+  },
+  "filterPacksSummarySettingsHint": {
+    "message": "Open instellingen om filterpakketten te beheren."
+  },
+  "filterPacksSummaryComingSoon": {
+    "message": "Filterpakketten binnenkort beschikbaar."
+  },
+  "filterPacksSummaryEmptyHint": {
+    "message": "Optionele filterpakketten verschijnen hier."
+  },
+  "filterPacksSummaryActive": {
+    "message": "Actieve filterpakketten: $ENABLED$ van $TOTAL$",
+    "placeholders": {
+      "enabled": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      },
+      "plural": {
+        "content": "$3"
+      }
+    }
+  },
+  "filterPacksSummaryNone": {
+    "message": "Geen optionele pakketten ingeschakeld. Gebruik instellingen om extra's te kiezen."
+  },
+  "filterPacksSummaryMore": {
+    "message": "+$REMAINING$ meer actief",
+    "placeholders": {
+      "remaining": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterPacksStatusReady": {
+    "message": "Filterpakketten klaar."
+  },
+  "filterPacksStatusUnavailable": {
+    "message": "Status van filterpakketten niet beschikbaar."
+  },
+  "popupStatusFilterError": {
+    "message": "Filterpakketten niet beschikbaar; controleer de instellingen."
+  },
+  "popupStatusFilterWarn": {
+    "message": "Optionele filterpakketten hebben aandacht nodig."
+  },
+  "filterPacksStatusRulesApplied": {
+    "message": "$COUNT$ regels toegepast",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterPacksStatusEnabledCount": {
+    "message": "$COUNT$ pakketten ingeschakeld",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksStatusUnknown": {
+    "message": "Status van filterpakketten onbekend."
+  },
+  "filterPacksStatusDisabled": {
+    "message": "Filterpakketten uitgeschakeld: limiet voor declarativeNetRequest-regels bereikt."
+  },
+  "filterPacksStatusTrimmed": {
+    "message": "Filterpakketten beperkt tot $CURRENT$ / $TOTAL$ regels (quotum bereikt).",
+    "placeholders": {
+      "current": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksStatusActiveDetail": {
+    "message": "Actieve filterpakketten: $ENABLED$ ($RULES$ regels).",
+    "placeholders": {
+      "enabled": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      },
+      "rules": {
+        "content": "$3"
+      }
+    }
+  },
+  "filterPacksStatusNone": {
+    "message": "Geen optionele pakketten ingeschakeld."
+  },
+  "filterPacksStatusCleared": {
+    "message": "Filterpakketten gewist."
+  },
+  "filterCatalogStatusUnavailable": {
+    "message": "Diagnostiek van filterpakketten niet beschikbaar."
+  },
+  "filterCatalogLicensePrefix": {
+    "message": "Licentie: $VALUE$",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterCatalogLicenseUnknown": {
+    "message": "Licentie: onbekend"
+  },
+  "filterCatalogStatusRulesApplied": {
+    "message": "$COUNT$ regels toegepast",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterCatalogStatusEnabled": {
+    "message": "$COUNT$ pakketten ingeschakeld",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksSyncFailed": {
+    "message": "Synchronisatie van filterpakketten mislukt."
+  },
+  "filterPacksClearFailed": {
+    "message": "Kon filterpakketregels niet wissen."
+  },
+  "filterPacksSummaryEnabledLabel": {
+    "message": "Ingeschakeld"
+  },
+  "filterCatalogDefaultDescription": {
+    "message": "Extra filterpakket."
+  },
+  "filterCatalogRequiredLabel": {
+    "message": "Vereist"
+  },
+  "extensionName": {
+    "message": "Talon Defender"
+  },
+  "extensionDescription": {
+    "message": "Blokkeert advertenties en trackers."
+  },
+  "actionDefaultTitle": {
+    "message": "Talon Defender"
+  },
+  "extName": {
+    "message": "Talon Defender"
+  },
+  "extShortDesc": {
+    "message": "Blokkeert advertenties en trackers."
+  },
+  "pickerTipEnter": {
+    "message": "Elementkiezer-modus openen"
+  },
+  "uiLoading": {
+    "message": "Laden..."
+  },
+  "uiWorking": {
+    "message": "Bezig..."
+  },
+  "uiSoon": {
+    "message": "binnenkort"
+  },
+  "uiSettings": {
+    "message": "Instellingen"
+  },
+  "uiPrivacy": {
+    "message": "Privacy"
+  },
+  "uiDisabled": {
+    "message": "Uitgeschakeld"
+  },
+  "uiActive": {
+    "message": "Actief"
+  },
+  "uiRemove": {
+    "message": "Verwijderen"
+  },
+  "uiRemoving": {
+    "message": "Bezig met verwijderen..."
+  },
+  "popupStatusCheckingProtection": {
+    "message": "Beveiliging controleren..."
+  },
+  "popupProtectionSummaryTitle": {
+    "message": "Beveiligingsoverzicht"
+  },
+  "popupSessionAdsLabel": {
+    "message": "Advertenties geblokkeerd deze sessie"
+  },
+  "popupSessionTrackersLabel": {
+    "message": "Trackers geblokkeerd deze sessie"
+  },
+  "popupLifetimeAdsLabel": {
+    "message": "Totaal advertenties geblokkeerd"
+  },
+  "popupLifetimeTrackersLabel": {
+    "message": "Totaal trackers geblokkeerd"
+  },
+  "popupDataSavedLabel": {
+    "message": "Bespaarde data"
+  },
+  "popupSessionLabel": {
+    "message": "Deze sessie"
+  },
+  "popupStatsAds": {
+    "message": "Advertenties worden geblokkeerd"
+  },
+  "popupStatsTrackers": {
+    "message": "Trackers worden geblokkeerd"
+  },
+  "popupStatsScripts": {
+    "message": "Verdachte scripts worden geblokkeerd"
+  },
+  "popupLifetimeLabel": {
+    "message": "Totaal"
+  },
+  "popupFilterPacksTitle": {
+    "message": "Extra bescherming"
+  },
+  "popupToggleActivateSubscription": {
+    "message": "Licentie activeren"
+  },
+  "popupToggleEnableProtection": {
+    "message": "Bescherming inschakelen"
+  },
+  "popupToggleDisableProtection": {
+    "message": "Bescherming uitschakelen"
+  },
+  "popupStatusTrialEndedActivate": {
+    "message": "Bescherming gepauzeerd. Activeer om door te gaan."
+  },
+  "expiredOverlayBadge": {
+    "message": "Actie vereist"
+  },
+  "expiredOverlayBadgeMaxDevices": {
+    "message": "Apparaatlimiet"
+  },
+  "expiredOverlayTitle": {
+    "message": "Bescherming gepauzeerd"
+  },
+  "expiredOverlayTitleMaxDevices": {
+    "message": "Apparaatlimiet bereikt"
+  },
+  "expiredOverlayBullet1": {
+    "message": "Advertentieblokkering is uitgeschakeld."
+  },
+  "expiredOverlayBullet2": {
+    "message": "Trackers kunnen je online activiteiten volgen."
+  },
+  "expiredOverlayBullet3": {
+    "message": "Oplichtingspagina's kunnen erdoorheen glippen."
+  },
+  "expiredOverlayBulletMax1": {
+    "message": "Je hebt je limiet van 5 computers bereikt."
+  },
+  "expiredOverlayBulletMax2": {
+    "message": "Bescherm deze computer door hem te gebruiken in plaats van een oudere."
+  },
+  "expiredOverlayBulletMax3": {
+    "message": "Dit maakt een oudere computer vrij."
+  },
+  "expiredOverlayPrimaryCta": {
+    "message": "Bescherming krijgen"
+  },
+  "expiredOverlaySecondaryCta": {
+    "message": "Heb je al een sleutel? Nu activeren"
+  },
+  "expiredOverlayStep1Label": {
+    "message": "STAP 1"
+  },
+  "expiredOverlayStep1Title": {
+    "message": "Haal je licentiesleutel op"
+  },
+  "expiredOverlayStep2Label": {
+    "message": "STAP 2"
+  },
+  "expiredOverlayStep2Title": {
+    "message": "Activeren"
+  },
+  "expiredOverlayTrialEndedMessage": {
+    "message": "Je gratis bescherming is afgelopen. Activeer om advertenties, pop-ups en scam-pagina’s te blijven blokkeren."
+  },
+  "expiredOverlayExpiredMessage": {
+    "message": "Activeer een licentie om advertenties, pop-ups en scam-pagina’s te blijven blokkeren."
+  },
+  "expiredOverlayTrialEndedOn": {
+    "message": "Gratis bescherming eindigde op $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "expiredOverlayLicenseEndedOn": {
+    "message": "Licentie eindigde op $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "expiredOverlayTrustMv3": {
+    "message": "Manifest V3-compatibel (MV3)."
+  },
+  "expiredOverlayKeyLabel": {
+    "message": "Heb je al een licentiesleutel?"
+  },
+  "expiredOverlayActivateButton": {
+    "message": "Nu activeren"
+  },
+  "expiredOverlayEmailKeyButton": {
+    "message": "E-mail mij mijn licentiesleutel"
+  },
+  "expiredOverlayHelpLink": {
+    "message": "Hulp nodig? Support openen"
+  },
+  "expiredOverlayNoReinstall": {
+    "message": "Geen herinstallatie nodig. Verwijderen en opnieuw installeren verlengt de proefperiode niet."
+  },
+  "popupStatusProtectionActive": {
+    "message": "Bescherming actief"
+  },
+  "popupStatusProtectionPaused": {
+    "message": "Bescherming gepauzeerd"
+  },
+  "popupSafetyMessage": {
+    "message": "Bescherming is actief"
+  },
+  "popupNoActiveTab": {
+    "message": "Geen doel gedetecteerd"
+  },
+  "popupFilteringDisabledSite": {
+    "message": "Bescherming uit voor deze site"
+  },
+  "popupFilteringEnabledSite": {
+    "message": "Bescherming aan voor deze site"
+  },
+  "popupFilteringCompleteSite": {
+    "message": "Extra bescherming aan voor deze site"
+  },
+  "subscriptionSectionTitle": {
+    "message": "Abonnement"
+  },
+  "optionsSubscriptionTitle": {
+    "message": "Blijf beschermd zonder iets te veranderen"
+  },
+  "optionsSubscriptionSubtitle": {
+    "message": "Talon Defender blokkeert advertenties, trackers en pop-ups automatisch."
+  },
+  "optionsSubscriptionBadge": {
+    "message": "Aanbevolen"
+  },
+  "optionsSubscriptionBenefit1": {
+    "message": "Minder pop-ups en enge waarschuwingen"
+  },
+  "optionsSubscriptionBenefit2": {
+    "message": "Schonere pagina's die sneller laden"
+  },
+  "optionsSubscriptionBenefit3": {
+    "message": "Automatische lijstupdates houden de bescherming actueel"
+  },
+  "optionsSubscriptionKeyHint": {
+    "message": "Heb je al een licentiesleutel? Voer hem hierboven in en klik op Licentie activeren."
+  },
+  "optionsSubscriptionCta": {
+    "message": "Verkrijg een licentie"
+  },
+  "optionsSubscriptionReassurance": {
+    "message": "Eenvoudige installatie. We houden je bescherming up-to-date."
+  },
+  "optionsSubscriptionGuarantee": {
+    "message": "30 dagen geld-terug-garantie."
+  },
+  "optionsSubscriptionDeviceLimit": {
+    "message": "Geschikt voor maximaal 5 computers."
+  },
+  "subscriptionStatusLoading": {
+    "message": "Status laden..."
+  },
+  "licenseKeyLabel": {
+    "message": "Licentiesleutel"
+  },
+  "licenseKeyPlaceholder": {
+    "message": "Licentiesleutel invoeren"
+  },
+  "licenseActivateButton": {
+    "message": "Licentie activeren"
+  },
+  "licenseGetButton": {
+    "message": "Licentie verkrijgen"
+  },
+  "licenseAlreadyPurchasedLink": {
+    "message": "Al gekocht? Voer uw licentiesleutel in"
+  },
+  "licenseHelpButton": {
+    "message": "Hulp"
+  },
+  "popupSubscriptionGuarantee": {
+    "message": "30 dagen geld-terug-garantie"
+  },
+  "popupSubscriptionDeviceLimit": {
+    "message": "Geschikt voor maximaal 5 computers."
+  },
+  "subscriptionPaid": {
+    "message": "Licentie actief."
+  },
+  "subscriptionPaidUntil": {
+    "message": "Renews on $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "subscriptionTrial": {
+    "message": "Gratis bescherming eindigt over $REMAINING$.",
+    "placeholders": {
+      "remaining": {
+        "content": "$1"
+      }
+    }
+  },
+  "subscriptionExpired": {
+    "message": "Proef afgelopen. Bescherming is gepauzeerd."
+  },
+  "subscriptionExpiredWithError": {
+    "message": "Proef afgelopen. Bescherming is gepauzeerd. ($ERROR$)",
+    "placeholders": {
+      "error": {
+        "content": "$1"
+      }
+    }
+  },
+  "licenseStatusEnterKey": {
+    "message": "Voer je licentiesleutel in om te activeren."
+  },
+  "licenseStatusActivating": {
+    "message": "Activeren..."
+  },
+  "licenseStatusActivationFailed": {
+    "message": "Activering mislukt. Probeer het opnieuw."
+  },
+  "licenseStatusActivated": {
+    "message": "Geactiveerd."
+  },
+  "licenseStatusRemoved": {
+    "message": "Licentie verwijderd."
+  },
+  "licenseStatusVerifyLater": {
+    "message": "Kon de licentie nog niet verifiëren. Probeer het opnieuw."
+  },
+  "licenseStatusActivationRequired": {
+    "message": "Activering vereist."
+  },
+  "optionsSubtitle": {
+    "message": "Pas aan hoe de blocker in je browser werkt."
+  },
+  "optionsFilterListsTitle": {
+    "message": "Aanbevolen beschermingslijsten"
+  },
+  "optionsFilterListsSubtitle": {
+    "message": "Deze worden automatisch bijgewerkt om advertenties en tracking te blokkeren."
+  },
+  "optionsFilterListsHint": {
+    "message": "Laat deze aan voor de beste bescherming. Zet er alleen één uit als een site niet werkt."
+  },
+  "optionsFilterEasyListLabel": {
+    "message": "De meeste advertenties blokkeren"
+  },
+  "optionsFilterEasyListNote": {
+    "message": "Dekt advertenties op de meeste websites."
+  },
+  "optionsFilterEasyPrivacyLabel": {
+    "message": "Tracking stoppen"
+  },
+  "optionsFilterEasyPrivacyNote": {
+    "message": "Blokkeert trackers die je tussen sites volgen."
+  },
+  "optionsFilterAnnoyancesLabel": {
+    "message": "Pop-ups en banners verbergen"
+  },
+  "optionsFilterAnnoyancesNote": {
+    "message": "Verwijdert cookie-pop-ups en overlays."
+  },
+  "optionsFilterSecurityLabel": {
+    "message": "Bekende gevaarlijke sites blokkeren"
+  },
+  "optionsFilterSecurityNote": {
+    "message": "Blokkeert bekende malware- en scamsites voordat ze laden."
+  },
+  "optionsAllowedSitesTitle": {
+    "message": "Toegestane sites"
+  },
+  "optionsAllowedSitesSubtitle": {
+    "message": "Kies sites die je wilt ondersteunen; advertenties blijven daar zichtbaar."
+  },
+  "optionsAllowedSitesAddButton": {
+    "message": "Site toevoegen"
+  },
+  "optionsAllowedSitesEmpty": {
+    "message": "Nog geen sites toegevoegd."
+  },
+  "footerSupportLink": {
+    "message": "Support"
+  },
+  "footerManageSubscriptionLink": {
+    "message": "Abonnement beheren"
+  },
+  "footerWhatsNewLink": {
+    "message": "Wat is er nieuw"
+  },
+  "footerPrivacyPolicyLink": {
+    "message": "Privacybeleid"
+  },
+  "footerTermsLink": {
+    "message": "Servicevoorwaarden"
+  },
+  "footerRemoveLicenseLink": {
+    "message": "Licentie verwijderen"
+  },
+  "footerRemoveLicenseConfirm": {
+    "message": "Licentie van dit apparaat verwijderen? Je kunt altijd opnieuw activeren."
+  },
+  "popupSettingsLink": {
+    "message": "Instellingen"
+  },
+  "popupPrivacyLink": {
+    "message": "Privacybeleid"
+  },
+  "strictblockTitle": {
+    "message": "Talon Defender - Site geblokkeerd"
+  },
+  "strictblockSentence1": {
+    "message": "Talon Defender heeft deze site geblokkeerd om je veilig te houden. Als je deze vertrouwt, kun je doorgaan."
+  },
+  "strictblockSponsoredSentence1": {
+    "message": "Dit lijkt een gesponsorde link te zijn. Ga door als dit opzettelijk was."
+  },
+  "strictblockDontWarn": {
+    "message": "Waarschuw me niet opnieuw voor deze site"
+  },
+  "strictblockBack": {
+    "message": "Terug"
+  },
+  "strictblockClose": {
+    "message": "Tab sluiten"
+  },
+  "strictblockProceed": {
+    "message": "Doorgaan naar de site"
+  },
+  "strictblockNoParamsPrompt": {
+    "message": "Websiteadres"
+  },
+  "strictblockReasonSentence1": {
+    "message": "Geblokkeerd door de beveiligingslijsten van Talon Defender."
+  },
+  "strictblockSponsoredReasonSentence1": {
+    "message": "Geblokkeerd door Talon Defender gesponsorde linkbescherming."
+  },
+  "strictblockRedirectSentence1": {
+    "message": "Er is een veiligere versie van deze pagina beschikbaar: {{url}}"
+  },
+  "pickerTitle": {
+    "message": "Talon Defender - Item blokkeren"
+  },
+  "unpickerTitle": {
+    "message": "Talon Defender - Geblokkeerd item herstellen"
+  },
+  "pickerQuit": {
+    "message": "Tool sluiten"
+  },
+  "pickerSliderLabel": {
+    "message": "Kies wat je wilt blokkeren"
+  },
+  "pickerPick": {
+    "message": "Selecteren"
+  },
+  "pickerPreview": {
+    "message": "Voorbeeld"
+  },
+  "pickerCreate": {
+    "message": "Blokkeer dit item"
+  },
+  "popupMoreButton": {
+    "message": "Meer keuzes"
+  },
+  "popupLessButton": {
+    "message": "Minder keuzes"
+  },
+  "unpickerUsage": {
+    "message": "Klik op een geblokkeerd item om het weer te tonen, of klik op het prullenbakpictogram om het permanent te verwijderen."
+  },
+  "subscriptionTrialAfterNote": {
+    "message": "Na de proefperiode worden advertenties en trackers niet meer geblokkeerd."
+  },
+  "licenseRecoverLink": {
+    "message": "Licentiesleutel opnieuw verzenden"
+  },
+  "licenseRevealButton": {
+    "message": "Licentiesleutel tonen"
+  },
+  "licenseHideButton": {
+    "message": "Licentiesleutel verbergen"
+  },
+  "subscriptionPaidManageNote": {
+    "message": "Altijd beheren of opzeggen."
+  },
+  "licenseStatusUseThisDevice": {
+    "message": "Deze licentie is al actief op het maximale aantal computers. Klik op Deze computer gebruiken om deze hierheen te verplaatsen."
+  },
+  "licenseStatusUsingThisDevice": {
+    "message": "Met behulp van deze computer..."
+  },
+  "licenseUseThisDeviceButton": {
+    "message": "Deze computer gebruiken"
+  }
+}
