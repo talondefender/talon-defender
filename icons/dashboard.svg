@@ -1,0 +1,14 @@
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="dashGrad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38BDF8"/>
+      <stop offset="1" stop-color="#0284C7"/>
+    </linearGradient>
+  </defs>
+  <rect x="3" y="3" width="7" height="7" rx="1.5" stroke="url(#dashGrad)" stroke-width="2"/>
+  <rect x="14" y="3" width="7" height="7" rx="1.5" stroke="url(#dashGrad)" stroke-width="2" stroke-opacity="0.6"/>
+  <rect x="14" y="14" width="7" height="7" rx="1.5" stroke="url(#dashGrad)" stroke-width="2" stroke-opacity="0.6"/>
+  <rect x="3" y="14" width="7" height="7" rx="1.5" stroke="url(#dashGrad)" stroke-width="2"/>
+  <!-- Active Indicator -->
+  <circle cx="6.5" cy="6.5" r="1.5" fill="#38BDF8"/>
+</svg>

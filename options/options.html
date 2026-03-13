@@ -1,0 +1,140 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <title data-i18n="extensionName">_</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+
+<body>
+  <main class="container">
+    <header class="page-hero">
+      <div class="header-brand">
+        <div class="brand-logo-shell">
+          <img src="../icons/icon128.png" alt="Talon Defender" class="brand-logo" />
+        </div>
+        <div class="header-copy">
+          <h1 data-i18n="extensionName">_</h1>
+          <p class="subtitle" data-i18n="optionsSubtitle">_</p>
+        </div>
+      </div>
+    </header>
+
+    <section class="card subscription-card" id="subscriptionCard">
+      <div class="subscription-header">
+        <div class="subscription-heading">
+          <h2 class="subscription-title" data-i18n="optionsSubscriptionTitle">_</h2>
+          <p class="subscription-subtitle" data-i18n="optionsSubscriptionSubtitle">_</p>
+        </div>
+        <span class="subscription-badge" data-i18n="optionsSubscriptionBadge">_</span>
+      </div>
+      <div class="subscription-benefits">
+        <p class="subscription-benefit" data-i18n="optionsSubscriptionBenefit1">_</p>
+        <p class="subscription-benefit" data-i18n="optionsSubscriptionBenefit2">_</p>
+        <p class="subscription-benefit" data-i18n="optionsSubscriptionBenefit3">_</p>
+      </div>
+      <p id="subscriptionStatus" class="subscription-status" data-i18n="subscriptionStatusLoading">_</p>
+      <p id="subscriptionSubstatus" class="subscription-substatus" data-i18n="subscriptionTrialAfterNote" hidden>_</p>
+      <div id="licenseLocked" class="subscription-locked" hidden>
+        <label class="subscription-locked-label" for="licenseKeyLocked" data-i18n="licenseKeyLabel">_</label>
+        <input id="licenseKeyLocked" type="text" class="allowlist-input license-locked-input" readonly />
+        <button id="licenseRevealButton" class="secondary-button small" type="button" data-i18n="licenseRevealButton">_</button>
+      </div>
+      <div class="subscription-actions">
+        <button id="subscribeNow" class="primary-button subscription-cta" type="button"
+          data-i18n="optionsSubscriptionCta">_</button>
+      </div>
+      <button id="showLicenseEntry" class="subscription-secondary-link" type="button"
+        data-i18n="licenseAlreadyPurchasedLink">_</button>
+      <button id="recoverLicenseLink" class="subscription-secondary-link" type="button"
+        data-i18n="licenseRecoverLink">_</button>
+      <form id="licenseForm" class="subscription-form" hidden>
+        <label for="licenseKey" class="sr-only" data-i18n="licenseKeyLabel">_</label>
+        <input id="licenseKey" type="text" class="allowlist-input" placeholder="licenseKeyPlaceholder"
+          data-i18n-aria-label="licenseKeyLabel" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+        <button id="licenseActivate" class="primary-button" type="submit"
+          data-i18n="licenseActivateButton">_</button>
+      </form>
+      <p class="subscription-key-hint" data-i18n="optionsSubscriptionKeyHint" hidden>_</p>
+      <p id="licenseStatus" class="form-status" aria-live="polite" hidden></p>
+      <button id="useThisDeviceButton" class="primary-button" type="button" hidden
+        data-i18n="licenseUseThisDeviceButton">_</button>
+      <p class="subscription-reassurance" data-i18n="optionsSubscriptionReassurance">_</p>
+      <p class="subscription-footnote" data-i18n="optionsSubscriptionGuarantee">_</p>
+      <p class="subscription-footnote" data-i18n="optionsSubscriptionDeviceLimit">_</p>
+    </section>
+
+    <section class="card">
+      <h2 data-i18n="optionsFilterListsTitle">_</h2>
+      <p class="card-subtitle" data-i18n="optionsFilterListsSubtitle">_</p>
+      <div class="core-filter-list">
+        <p class="card-subtitle small" data-i18n="optionsFilterListsHint">_</p>
+        <label class="toggle">
+          <input type="checkbox" id="filterEasyList" />
+          <span>
+            <span data-i18n="optionsFilterEasyListLabel">_</span>
+            <em id="filterEasyListStatus" class="toggle-status muted" data-i18n="uiDisabled">_</em>
+          </span>
+        </label>
+        <p class="toggle-note" data-i18n="optionsFilterEasyListNote">_</p>
+        <label class="toggle">
+          <input type="checkbox" id="filterEasyPrivacy" />
+          <span>
+            <span data-i18n="optionsFilterEasyPrivacyLabel">_</span>
+            <em id="filterEasyPrivacyStatus" class="toggle-status muted" data-i18n="uiDisabled">_</em>
+          </span>
+        </label>
+        <p class="toggle-note" data-i18n="optionsFilterEasyPrivacyNote">_</p>
+        <label class="toggle">
+          <input type="checkbox" id="filterFanboyAnnoyance" />
+          <span>
+            <span data-i18n="optionsFilterAnnoyancesLabel">_</span>
+            <em id="filterFanboyAnnoyanceStatus" class="toggle-status muted" data-i18n="uiDisabled">_</em>
+          </span>
+        </label>
+        <p class="toggle-note" data-i18n="optionsFilterAnnoyancesNote">_</p>
+        <label class="toggle">
+          <input type="checkbox" id="filterSecurity" />
+          <span>
+            <span data-i18n="optionsFilterSecurityLabel">_</span>
+            <em id="filterSecurityStatus" class="toggle-status muted" data-i18n="uiDisabled">_</em>
+          </span>
+        </label>
+        <p class="toggle-note" data-i18n="optionsFilterSecurityNote">_</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 data-i18n="optionsAllowedSitesTitle">_</h2>
+      <p class="card-subtitle" data-i18n="optionsAllowedSitesSubtitle">_</p>
+      <form id="allowlistForm" class="allowlist-form">
+        <label for="allowlistInput" class="sr-only" data-i18n="optionsAllowedSitesTitle">_</label>
+        <input id="allowlistInput" type="text" class="allowlist-input" placeholder="example.com"
+          data-i18n-aria-label="optionsAllowedSitesTitle" autocomplete="off" />
+        <button id="allowlistAdd" class="primary-button small" type="submit"
+          data-i18n="optionsAllowedSitesAddButton">_</button>
+      </form>
+      <div id="allowlistEmpty" class="empty-state" hidden data-i18n="optionsAllowedSitesEmpty">_</div>
+      <ul id="allowlistList" class="allowlist-list"></ul>
+    </section>
+
+    <footer class="options-footer">
+      <nav class="footer-links">
+        <a id="footerSupport" class="footer-link" href="#" data-i18n="footerSupportLink">_</a>
+        <a id="footerManage" class="footer-link" href="#" data-i18n="footerManageSubscriptionLink">_</a>
+        <a id="footerWhatsNew" class="footer-link" href="#" data-i18n="footerWhatsNewLink">_</a>
+        <a id="footerPrivacy" class="footer-link" href="#" data-i18n="footerPrivacyPolicyLink">_</a>
+        <a id="footerTerms" class="footer-link" href="#" data-i18n="footerTermsLink">_</a>
+        <a id="footerSourceCode" class="footer-link" href="#" target="_blank" rel="noopener">Source code for this version</a>
+        <a id="footerAttributions" class="footer-link" href="#">Third-Party Notices</a>
+        <a id="footerRemoveLicense" class="footer-link" href="#" data-i18n="footerRemoveLicenseLink">_</a>
+      </nav>
+    </footer>
+  </main>
+
+  <script type="module" src="../js/i18n.js"></script>
+  <script type="module" src="options.js"></script>
+</body>
+
+</html>

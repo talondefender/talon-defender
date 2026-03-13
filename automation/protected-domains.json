@@ -1,0 +1,87 @@
+[
+  {
+    "pattern": "accounts.google.com",
+    "category": "auth/account",
+    "allowedRiskTier": 1
+  },
+  {
+    "pattern": "myaccount.google.com",
+    "category": "auth/account",
+    "allowedRiskTier": 1
+  },
+  {
+    "pattern": "account.microsoft.com",
+    "category": "auth/account",
+    "allowedRiskTier": 1
+  },
+  {
+    "pattern": "login.microsoftonline.com",
+    "category": "auth/account",
+    "allowedRiskTier": 1
+  },
+  {
+    "pattern": "appleid.apple.com",
+    "category": "auth/account",
+    "allowedRiskTier": 1
+  },
+  {
+    "pattern": "signin.ebay.com",
+    "category": "auth/account",
+    "allowedRiskTier": 1
+  },
+  {
+    "pattern": "checkout.shopify.com",
+    "category": "checkout/payment",
+    "allowedRiskTier": 1
+  },
+  {
+    "pattern": "*.stripe.com",
+    "category": "checkout/payment",
+    "allowedRiskTier": 1
+  },
+  {
+    "pattern": "*.paypal.com",
+    "category": "checkout/payment",
+    "allowedRiskTier": 1
+  },
+  {
+    "pattern": "docs.google.com",
+    "category": "docs/productivity",
+    "allowedRiskTier": 1
+  },
+  {
+    "pattern": "drive.google.com",
+    "category": "docs/productivity",
+    "allowedRiskTier": 1
+  },
+  {
+    "pattern": "*.office.com",
+    "category": "docs/productivity",
+    "allowedRiskTier": 1
+  },
+  {
+    "pattern": "*.notion.so",
+    "category": "docs/productivity",
+    "allowedRiskTier": 1
+  },
+  {
+    "pattern": "*.gov",
+    "category": "government/education/health",
+    "allowedRiskTier": 1
+  },
+  {
+    "pattern": "*.edu",
+    "category": "government/education/health",
+    "allowedRiskTier": 1
+  },
+  {
+    "pattern": "*.ac.uk",
+    "category": "government/education/health",
+    "allowedRiskTier": 1
+  },
+  {
+    "pattern": "*.nhs.uk",
+    "category": "government/education/health",
+    "allowedRiskTier": 1
+  }
+]

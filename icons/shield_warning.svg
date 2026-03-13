@@ -1,0 +1,13 @@
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="shieldWarn" x1="12" y1="2" x2="12" y2="22" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EF4444"/>
+      <stop offset="1" stop-color="#B91C1C"/>
+    </linearGradient>
+  </defs>
+  <path d="M12 22C12 22 20 18 20 12V5L12 2L4 5V12C4 18 12 22 12 22Z" fill="url(#shieldWarn)" stroke="#EF4444" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="M12 8V12" stroke="white" stroke-width="2" stroke-linecap="round"/>
+  <rect x="11" y="15" width="2" height="2" rx="1" fill="white"/>
+  <!-- Glitch effect line -->
+  <path d="M3 12H21" stroke="#FEF2F2" stroke-width="1" stroke-opacity="0.2"/>
+</svg>

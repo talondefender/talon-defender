@@ -1,0 +1,15 @@
+node_modules/
+dist/
+artifacts/
+test-results/
+playwright-report/
+.env
+.env.*
+keys/
+*.log
+*.zip
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer

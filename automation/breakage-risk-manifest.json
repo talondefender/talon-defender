@@ -1,0 +1,83 @@
+[
+  {
+    "id": "dnr-annoyances-static",
+    "tier": 1,
+    "hostScope": "ruleset host scoping",
+    "runTiming": "network",
+    "frameScope": "all frames",
+    "mutationType": "block or hide known nuisance resources",
+    "protectedExposure": "low"
+  },
+  {
+    "id": "css-specific-procedural",
+    "tier": 2,
+    "hostScope": "enabled rulesets",
+    "runTiming": "document_start",
+    "frameScope": "all frames",
+    "mutationType": "hide DOM nodes via packaged selectors",
+    "protectedExposure": "medium"
+  },
+  {
+    "id": "ad-shell-styles",
+    "tier": 1,
+    "hostScope": "basic, optimal, and complete modes",
+    "runTiming": "document_start",
+    "frameScope": "all frames",
+    "mutationType": "hide known ad-shell wrappers before paint",
+    "protectedExposure": "low"
+  },
+  {
+    "id": "post-hide-cleanup",
+    "tier": 2,
+    "hostScope": "optimal and complete modes",
+    "runTiming": "document_idle",
+    "frameScope": "all frames",
+    "mutationType": "collapse containers after hides",
+    "protectedExposure": "medium-high"
+  },
+  {
+    "id": "native-heuristics",
+    "tier": 3,
+    "hostScope": "optimal and complete modes",
+    "runTiming": "document_idle",
+    "frameScope": "all frames",
+    "mutationType": "infer, hide, and collapse containers from page signals",
+    "protectedExposure": "high"
+  },
+  {
+    "id": "automation",
+    "tier": 3,
+    "hostScope": "optimal and complete modes plus remote directives",
+    "runTiming": "document_idle",
+    "frameScope": "all frames",
+    "mutationType": "click, hide, or remove matched DOM nodes",
+    "protectedExposure": "high"
+  },
+  {
+    "id": "remote-cosmetics",
+    "tier": 3,
+    "hostScope": "community bundle host patterns",
+    "runTiming": "document_start",
+    "frameScope": "all frames",
+    "mutationType": "inject remote hide selectors",
+    "protectedExposure": "high"
+  },
+  {
+    "id": "remote-scriptlets",
+    "tier": 3,
+    "hostScope": "community bundle host patterns",
+    "runTiming": "document_start",
+    "frameScope": "frame-dependent",
+    "mutationType": "execute bundled scriptlets on remote instructions",
+    "protectedExposure": "high"
+  },
+  {
+    "id": "community-dnr",
+    "tier": 2,
+    "hostScope": "community bundle DNR hosts",
+    "runTiming": "network",
+    "frameScope": "all frames",
+    "mutationType": "block or redirect remote rules",
+    "protectedExposure": "medium"
+  }
+]

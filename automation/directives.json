@@ -1,0 +1,132 @@
+[
+  {
+    "id": "onetrust-dismiss",
+    "category": "consent",
+    "hosts": ["*"],
+    "action": "click",
+    "selectors": [
+      "#onetrust-reject-all-handler",
+      ".onetrust-close-btn-handler",
+      "#onetrust-close-btn-container button"
+    ],
+    "fallbackAction": "hide",
+    "fallbackSelectors": [
+      "#onetrust-banner-sdk",
+      "#onetrust-pc-sdk",
+      ".onetrust-pc-dark-filter"
+    ],
+    "postActions": ["unlockScroll"]
+  },
+  {
+    "id": "quantcast-hide",
+    "category": "consent",
+    "hosts": ["*"],
+    "action": "hide",
+    "selectors": [
+      ".qc-cmp2-container",
+      ".qc-cmp2-ui",
+      "#qc-cmp2-ui"
+    ]
+  },
+  {
+    "id": "consentmanager-hide",
+    "category": "consent",
+    "hosts": ["*"],
+    "action": "hide",
+    "selectors": [
+      "#cmp-ui-iframe",
+      "iframe[src*=\"consentmanager.net\" i]",
+      "[id^=\"cmpbox\"]",
+      ".cmpboxinner",
+      ".cmpboxbg",
+      "div#consentframe"
+    ],
+    "postActions": ["unlockScroll"]
+  },
+  {
+    "id": "didomi-hide",
+    "category": "consent",
+    "hosts": ["*"],
+    "action": "hide",
+    "selectors": [
+      "#didomi-notice",
+      ".didomi-popup-view",
+      ".didomi-consent-popup"
+    ]
+  },
+  {
+    "id": "cookiebot-dismiss",
+    "category": "consent",
+    "hosts": ["*"],
+    "action": "click",
+    "selectors": [
+      "#CybotCookiebotDialogBodyButtonDecline",
+      "#CybotCookiebotDialogBodyLevelButtonLevelOptinDeclineAll",
+      "#CybotCookiebotDialogBodyButtonDetails"
+    ],
+    "fallbackAction": "hide",
+    "fallbackSelectors": [
+      "#CybotCookiebotDialog",
+      ".CookiebotDialog"
+    ],
+    "postActions": ["unlockScroll"]
+  },
+  {
+    "id": "sourcepoint-hide",
+    "category": "consent",
+    "hosts": ["*"],
+    "action": "hide",
+    "selectors": [
+      ".sp_message_container",
+      "div[id^=\"sp_message_container\"]"
+    ],
+    "postActions": ["unlockScroll"]
+  },
+  {
+    "id": "trustarc-hide",
+    "category": "consent",
+    "hosts": ["*"],
+    "action": "hide",
+    "selectors": [
+      "#truste-consent-track",
+      ".truste_overlay",
+      ".truste_box_overlay",
+      ".truste-banner",
+      ".truste-consent",
+      "div[id^=\"truste-consent\"]"
+    ],
+    "postActions": ["unlockScroll"]
+  },
+  {
+    "id": "cookieyes-dismiss",
+    "category": "consent",
+    "hosts": ["*"],
+    "action": "click",
+    "selectors": [
+      ".cky-btn-reject",
+      ".cky-btn-close",
+      "#cookie_action_close_header",
+      "#cookie_action_close"
+    ],
+    "fallbackAction": "hide",
+    "fallbackSelectors": [
+      ".cky-consent-container",
+      ".cky-consent-bar",
+      ".cookieyes"
+    ],
+    "postActions": ["unlockScroll"]
+  },
+  {
+    "id": "iubenda-hide",
+    "category": "consent",
+    "hosts": ["*"],
+    "action": "hide",
+    "selectors": [
+      ".iubenda-cs-banner",
+      ".iubenda-cs-container",
+      "#iubenda-cs-banner",
+      "#iubenda-cs-overlay"
+    ],
+    "postActions": ["unlockScroll"]
+  }
+]

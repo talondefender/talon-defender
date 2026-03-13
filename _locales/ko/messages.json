@@ -1,0 +1,636 @@
+{
+  "filterPacksSummaryUnavailable": {
+    "message": "필터 팩 상태를 사용할 수 없습니다."
+  },
+  "filterPacksSummarySettingsHint": {
+    "message": "필터 팩을 관리하려면 설정을 여세요."
+  },
+  "filterPacksSummaryComingSoon": {
+    "message": "필터 팩이 곧 제공됩니다."
+  },
+  "filterPacksSummaryEmptyHint": {
+    "message": "선택적 필터 팩이 여기에 표시됩니다."
+  },
+  "filterPacksSummaryActive": {
+    "message": "활성 필터 팩: $ENABLED$ / $TOTAL$",
+    "placeholders": {
+      "enabled": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      },
+      "plural": {
+        "content": "$3"
+      }
+    }
+  },
+  "filterPacksSummaryNone": {
+    "message": "활성화된 선택 팩이 없습니다. 설정에서 추가 항목을 선택하세요."
+  },
+  "filterPacksSummaryMore": {
+    "message": "+$REMAINING$개 추가 활성",
+    "placeholders": {
+      "remaining": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterPacksStatusReady": {
+    "message": "필터 팩 준비됨."
+  },
+  "filterPacksStatusUnavailable": {
+    "message": "필터 팩 상태를 사용할 수 없습니다."
+  },
+  "popupStatusFilterError": {
+    "message": "필터 팩을 사용할 수 없습니다. 설정을 확인하세요."
+  },
+  "popupStatusFilterWarn": {
+    "message": "선택적 필터 팩에 주의가 필요합니다."
+  },
+  "filterPacksStatusRulesApplied": {
+    "message": "$COUNT$개 규칙 적용됨",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterPacksStatusEnabledCount": {
+    "message": "$COUNT$개 팩 활성화됨",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksStatusUnknown": {
+    "message": "필터 팩 상태를 알 수 없습니다."
+  },
+  "filterPacksStatusDisabled": {
+    "message": "필터 팩이 비활성화됨: declarativeNetRequest 규칙 한도에 도달했습니다."
+  },
+  "filterPacksStatusTrimmed": {
+    "message": "필터 팩이 $CURRENT$ / $TOTAL$개 규칙으로 제한되었습니다(한도 도달).",
+    "placeholders": {
+      "current": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksStatusActiveDetail": {
+    "message": "활성 필터 팩: $ENABLED$개 ($RULES$개 규칙)",
+    "placeholders": {
+      "enabled": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      },
+      "rules": {
+        "content": "$3"
+      }
+    }
+  },
+  "filterPacksStatusNone": {
+    "message": "활성화된 선택 팩이 없습니다."
+  },
+  "filterPacksStatusCleared": {
+    "message": "필터 팩이 정리되었습니다."
+  },
+  "filterCatalogStatusUnavailable": {
+    "message": "필터 팩 진단을 사용할 수 없습니다."
+  },
+  "filterCatalogLicensePrefix": {
+    "message": "라이선스: $VALUE$",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterCatalogLicenseUnknown": {
+    "message": "라이선스: 알 수 없음"
+  },
+  "filterCatalogStatusRulesApplied": {
+    "message": "$COUNT$개 규칙 적용됨",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterCatalogStatusEnabled": {
+    "message": "$COUNT$개 팩 활성화됨",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksSyncFailed": {
+    "message": "필터 팩 동기화에 실패했습니다."
+  },
+  "filterPacksClearFailed": {
+    "message": "필터 팩 규칙을 지우지 못했습니다."
+  },
+  "filterPacksSummaryEnabledLabel": {
+    "message": "활성"
+  },
+  "filterCatalogDefaultDescription": {
+    "message": "추가 필터 팩."
+  },
+  "filterCatalogRequiredLabel": {
+    "message": "필수"
+  },
+  "extensionName": {
+    "message": "Talon Defender"
+  },
+  "extensionDescription": {
+    "message": "광고와 추적기를 차단합니다."
+  },
+  "actionDefaultTitle": {
+    "message": "Talon Defender"
+  },
+  "extName": {
+    "message": "Talon Defender"
+  },
+  "extShortDesc": {
+    "message": "광고와 추적기를 차단합니다."
+  },
+  "pickerTipEnter": {
+    "message": "요소 선택기 모드로 들어가기"
+  },
+  "uiLoading": {
+    "message": "로딩 중..."
+  },
+  "uiWorking": {
+    "message": "작업 중..."
+  },
+  "uiSoon": {
+    "message": "곧"
+  },
+  "uiSettings": {
+    "message": "설정"
+  },
+  "uiPrivacy": {
+    "message": "개인정보"
+  },
+  "uiDisabled": {
+    "message": "비활성"
+  },
+  "uiActive": {
+    "message": "활성"
+  },
+  "uiRemove": {
+    "message": "제거"
+  },
+  "uiRemoving": {
+    "message": "제거 중..."
+  },
+  "popupStatusCheckingProtection": {
+    "message": "보호 확인 중..."
+  },
+  "popupProtectionSummaryTitle": {
+    "message": "보호 요약"
+  },
+  "popupSessionAdsLabel": {
+    "message": "이번 세션에서 차단된 광고"
+  },
+  "popupSessionTrackersLabel": {
+    "message": "이번 세션에서 차단된 추적기"
+  },
+  "popupLifetimeAdsLabel": {
+    "message": "전체 차단된 광고"
+  },
+  "popupLifetimeTrackersLabel": {
+    "message": "전체 차단된 추적기"
+  },
+  "popupDataSavedLabel": {
+    "message": "절약된 데이터"
+  },
+  "popupSessionLabel": {
+    "message": "이번 세션"
+  },
+  "popupStatsAds": {
+    "message": "광고가 차단되고 있습니다"
+  },
+  "popupStatsTrackers": {
+    "message": "추적기가 차단되고 있습니다"
+  },
+  "popupStatsScripts": {
+    "message": "의심스러운 스크립트가 차단되고 있습니다"
+  },
+  "popupLifetimeLabel": {
+    "message": "전체"
+  },
+  "popupFilterPacksTitle": {
+    "message": "추가 보호"
+  },
+  "popupToggleActivateSubscription": {
+    "message": "라이선스 활성화"
+  },
+  "popupToggleEnableProtection": {
+    "message": "보호 켜기"
+  },
+  "popupToggleDisableProtection": {
+    "message": "보호 끄기"
+  },
+  "popupStatusTrialEndedActivate": {
+    "message": "보호가 일시 중지되었습니다. 계속하려면 활성화하세요."
+  },
+  "expiredOverlayBadge": {
+    "message": "조치가 필요합니다"
+  },
+  "expiredOverlayBadgeMaxDevices": {
+    "message": "Device limit"
+  },
+  "expiredOverlayTitle": {
+    "message": "보호가 일시 중지되었습니다"
+  },
+  "expiredOverlayTitleMaxDevices": {
+    "message": "기기 한도에 도달했습니다"
+  },
+  "expiredOverlayBullet1": {
+    "message": "광고 차단이 비활성화되었습니다."
+  },
+  "expiredOverlayBullet2": {
+    "message": "추적기가 온라인 활동을 추적할 수 있습니다."
+  },
+  "expiredOverlayBullet3": {
+    "message": "사기 사이트가 차단을 피해갈 수 있습니다."
+  },
+  "expiredOverlayBulletMax1": {
+    "message": "5대 기기 한도에 도달했습니다."
+  },
+  "expiredOverlayBulletMax2": {
+    "message": "이 컴퓨터를 보호하려면 이전 컴퓨터 대신 이 컴퓨터를 사용하세요."
+  },
+  "expiredOverlayBulletMax3": {
+    "message": "이전 컴퓨터 1대가 해제됩니다."
+  },
+  "expiredOverlayPrimaryCta": {
+    "message": "보호 받기"
+  },
+  "expiredOverlaySecondaryCta": {
+    "message": "키가 있나요? 지금 활성화"
+  },
+  "expiredOverlayStep1Label": {
+    "message": "1단계"
+  },
+  "expiredOverlayStep1Title": {
+    "message": "라이선스 키 받기"
+  },
+  "expiredOverlayStep2Label": {
+    "message": "2단계"
+  },
+  "expiredOverlayStep2Title": {
+    "message": "활성화"
+  },
+  "expiredOverlayTrialEndedMessage": {
+    "message": "Your free protection ended. Activate to keep blocking ads, pop-ups, and scam pages."
+  },
+  "expiredOverlayExpiredMessage": {
+    "message": "Activate a license to keep blocking ads, pop-ups, and scam pages."
+  },
+  "expiredOverlayTrialEndedOn": {
+    "message": "Free protection ended on $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "expiredOverlayLicenseEndedOn": {
+    "message": "License ended on $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "expiredOverlayTrustMv3": {
+    "message": "Manifest V3 compliant (MV3)."
+  },
+  "expiredOverlayKeyLabel": {
+    "message": "이미 라이선스 키가 있나요?"
+  },
+  "expiredOverlayActivateButton": {
+    "message": "지금 활성화"
+  },
+  "expiredOverlayEmailKeyButton": {
+    "message": "라이선스 키 이메일로 받기"
+  },
+  "expiredOverlayHelpLink": {
+    "message": "도움이 필요하신가요? 지원 열기"
+  },
+  "expiredOverlayNoReinstall": {
+    "message": "No reinstall needed. Uninstalling and reinstalling will not extend the trial."
+  },
+  "popupStatusProtectionActive": {
+    "message": "보호 활성화"
+  },
+  "popupStatusProtectionPaused": {
+    "message": "보호가 일시 중지되었습니다"
+  },
+  "popupSafetyMessage": {
+    "message": "보호가 활성화되어 있습니다"
+  },
+  "popupNoActiveTab": {
+    "message": "대상을 찾지 못했습니다"
+  },
+  "popupFilteringDisabledSite": {
+    "message": "이 사이트의 보호 끔"
+  },
+  "popupFilteringEnabledSite": {
+    "message": "이 사이트의 보호 켬"
+  },
+  "popupFilteringCompleteSite": {
+    "message": "이 사이트의 추가 보호 켬"
+  },
+  "subscriptionSectionTitle": {
+    "message": "구독"
+  },
+  "optionsSubscriptionTitle": {
+    "message": "아무것도 바꾸지 않고 보호 유지"
+  },
+  "optionsSubscriptionSubtitle": {
+    "message": "Talon Defender가 광고, 추적기, 팝업을 자동으로 차단합니다."
+  },
+  "optionsSubscriptionBadge": {
+    "message": "권장"
+  },
+  "optionsSubscriptionBenefit1": {
+    "message": "팝업과 불안한 경고 감소"
+  },
+  "optionsSubscriptionBenefit2": {
+    "message": "더 깨끗한 페이지, 더 빠른 로딩"
+  },
+  "optionsSubscriptionBenefit3": {
+    "message": "자동 목록 업데이트로 보호가 최신 상태를 유지합니다"
+  },
+  "optionsSubscriptionKeyHint": {
+    "message": "이미 라이선스 키가 있나요? 위에 입력하고 라이선스 활성화를 누르세요."
+  },
+  "optionsSubscriptionCta": {
+    "message": "라이선스 받기"
+  },
+  "optionsSubscriptionReassurance": {
+    "message": "간편한 설정. 보호를 최신으로 유지해 드립니다."
+  },
+  "optionsSubscriptionGuarantee": {
+    "message": "30일 환불 보장."
+  },
+  "optionsSubscriptionDeviceLimit": {
+    "message": "최대 5대의 컴퓨터를 지원합니다."
+  },
+  "subscriptionStatusLoading": {
+    "message": "상태 로딩 중..."
+  },
+  "licenseKeyLabel": {
+    "message": "라이선스 키"
+  },
+  "licenseKeyPlaceholder": {
+    "message": "라이선스 키 입력"
+  },
+  "licenseActivateButton": {
+    "message": "라이선스 활성화"
+  },
+  "licenseGetButton": {
+    "message": "라이선스 받기"
+  },
+  "licenseAlreadyPurchasedLink": {
+    "message": "이미 구매하셨나요? 라이선스 키를 입력하세요"
+  },
+  "licenseHelpButton": {
+    "message": "도움말"
+  },
+  "popupSubscriptionGuarantee": {
+    "message": "30일 환불 보장"
+  },
+  "popupSubscriptionDeviceLimit": {
+    "message": "최대 5대의 컴퓨터를 지원합니다."
+  },
+  "subscriptionPaid": {
+    "message": "라이선스 활성화됨."
+  },
+  "subscriptionPaidUntil": {
+    "message": "Renews on $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "subscriptionTrial": {
+    "message": "무료 체험이 진행 중입니다. $REMAINING$ 종료됩니다.",
+    "placeholders": {
+      "remaining": {
+        "content": "$1"
+      }
+    }
+  },
+  "subscriptionExpired": {
+    "message": "체험이 종료되었습니다. 보호가 일시 중지되었습니다."
+  },
+  "subscriptionExpiredWithError": {
+    "message": "체험이 종료되었습니다. 보호가 일시 중지되었습니다. ($ERROR$)",
+    "placeholders": {
+      "error": {
+        "content": "$1"
+      }
+    }
+  },
+  "licenseStatusEnterKey": {
+    "message": "활성화하려면 라이선스 키를 입력하세요."
+  },
+  "licenseStatusActivating": {
+    "message": "활성화 중..."
+  },
+  "licenseStatusActivationFailed": {
+    "message": "활성화에 실패했습니다. 다시 시도하세요."
+  },
+  "licenseStatusActivated": {
+    "message": "활성화됨."
+  },
+  "licenseStatusRemoved": {
+    "message": "라이선스가 제거되었습니다."
+  },
+  "licenseStatusVerifyLater": {
+    "message": "라이선스를 아직 확인할 수 없습니다. 다시 시도하세요."
+  },
+  "licenseStatusActivationRequired": {
+    "message": "활성화가 필요합니다."
+  },
+  "optionsSubtitle": {
+    "message": "브라우저에서 차단기가 동작하는 방식을 조정합니다."
+  },
+  "optionsFilterListsTitle": {
+    "message": "권장 보호 목록"
+  },
+  "optionsFilterListsSubtitle": {
+    "message": "광고와 추적을 차단하도록 자동으로 업데이트됩니다."
+  },
+  "optionsFilterListsHint": {
+    "message": "최상의 보호를 위해 켜두세요. 사이트가 깨지는 경우에만 끄세요."
+  },
+  "optionsFilterEasyListLabel": {
+    "message": "대부분의 광고 차단"
+  },
+  "optionsFilterEasyListNote": {
+    "message": "대부분의 웹사이트 광고를 포함합니다."
+  },
+  "optionsFilterEasyPrivacyLabel": {
+    "message": "추적 중지"
+  },
+  "optionsFilterEasyPrivacyNote": {
+    "message": "사이트 간 추적하는 추적기를 차단합니다."
+  },
+  "optionsFilterAnnoyancesLabel": {
+    "message": "팝업과 배너 숨기기"
+  },
+  "optionsFilterAnnoyancesNote": {
+    "message": "쿠키 팝업과 오버레이를 제거합니다."
+  },
+  "optionsFilterSecurityLabel": {
+    "message": "알려진 위험 사이트 차단"
+  },
+  "optionsFilterSecurityNote": {
+    "message": "알려진 악성코드 및 사기 사이트를 로드 전에 차단합니다."
+  },
+  "optionsAllowedSitesTitle": {
+    "message": "허용된 사이트"
+  },
+  "optionsAllowedSitesSubtitle": {
+    "message": "지원하고 싶은 사이트를 선택하세요. 해당 사이트에서는 광고가 표시됩니다."
+  },
+  "optionsAllowedSitesAddButton": {
+    "message": "사이트 추가"
+  },
+  "optionsAllowedSitesEmpty": {
+    "message": "아직 추가된 사이트가 없습니다."
+  },
+  "footerSupportLink": {
+    "message": "지원"
+  },
+  "footerManageSubscriptionLink": {
+    "message": "구독 관리"
+  },
+  "footerWhatsNewLink": {
+    "message": "새 소식"
+  },
+  "footerPrivacyPolicyLink": {
+    "message": "개인정보 처리방침"
+  },
+  "footerTermsLink": {
+    "message": "서비스 약관"
+  },
+  "footerRemoveLicenseLink": {
+    "message": "라이선스 제거"
+  },
+  "footerRemoveLicenseConfirm": {
+    "message": "이 기기에서 라이선스를 제거할까요? 언제든 다시 활성화할 수 있습니다."
+  },
+  "popupSettingsLink": {
+    "message": "설정"
+  },
+  "popupPrivacyLink": {
+    "message": "개인정보"
+  },
+  "strictblockTitle": {
+    "message": "Talon Defender - 사이트 차단됨"
+  },
+  "strictblockSentence1": {
+    "message": "안전을 위해 Talon Defender가 이 사이트를 차단했습니다. 신뢰한다면 계속할 수 있습니다."
+  },
+  "strictblockSponsoredSentence1": {
+    "message": "스폰서 링크인 것 같습니다. 의도한 것이라면 계속하세요."
+  },
+  "strictblockDontWarn": {
+    "message": "이 사이트에 대해 다시 경고하지 않기"
+  },
+  "strictblockBack": {
+    "message": "뒤로"
+  },
+  "strictblockClose": {
+    "message": "탭 닫기"
+  },
+  "strictblockProceed": {
+    "message": "사이트로 계속"
+  },
+  "strictblockNoParamsPrompt": {
+    "message": "웹사이트 주소"
+  },
+  "strictblockReasonSentence1": {
+    "message": "Talon Defender 보안 목록에 의해 차단됨."
+  },
+  "strictblockSponsoredReasonSentence1": {
+    "message": "Talon Defender 스폰서 링크 보호로 인해 차단되었습니다."
+  },
+  "strictblockRedirectSentence1": {
+    "message": "더 안전한 버전의 페이지가 있습니다: {{url}}"
+  },
+  "pickerTitle": {
+    "message": "Talon Defender - 항목 차단"
+  },
+  "unpickerTitle": {
+    "message": "Talon Defender - 차단된 항목 복원"
+  },
+  "pickerQuit": {
+    "message": "도구 닫기"
+  },
+  "pickerSliderLabel": {
+    "message": "차단할 항목 선택"
+  },
+  "pickerPick": {
+    "message": "선택"
+  },
+  "pickerPreview": {
+    "message": "미리 보기"
+  },
+  "pickerCreate": {
+    "message": "이 항목 차단"
+  },
+  "popupMoreButton": {
+    "message": "더 많은 선택"
+  },
+  "popupLessButton": {
+    "message": "더 적은 선택"
+  },
+  "unpickerUsage": {
+    "message": "차단된 항목을 클릭해 다시 표시하거나, 휴지통 아이콘을 클릭해 영구적으로 제거하세요."
+  },
+  "subscriptionTrialAfterNote": {
+    "message": "체험이 끝나면 광고와 추적기가 더 이상 차단되지 않습니다."
+  },
+  "licenseRecoverLink": {
+    "message": "라이선스 키 다시 받기"
+  },
+  "licenseRevealButton": {
+    "message": "라이선스 키 표시"
+  },
+  "licenseHideButton": {
+    "message": "라이선스 키 숨기기"
+  },
+  "subscriptionPaidManageNote": {
+    "message": "언제든지 관리하거나 해지할 수 있습니다."
+  },
+  "licenseStatusUseThisDevice": {
+    "message": "이 라이선스는 이미 최대 수의 컴퓨터에서 활성화되어 있습니다. 여기로 이동하려면 이 컴퓨터 사용을 클릭하세요."
+  },
+  "licenseStatusUsingThisDevice": {
+    "message": "이 컴퓨터를 사용하는 중..."
+  },
+  "licenseUseThisDeviceButton": {
+    "message": "이 컴퓨터에서 사용하기"
+  }
+}

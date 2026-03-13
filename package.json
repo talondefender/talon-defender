@@ -1,0 +1,30 @@
+{
+  "name": "talon-defender-extension",
+  "version": "0.1.0",
+  "description": "Talon Defender browser extension",
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/talondefender/talon-defender.git"
+  },
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/auto-backoff.test.js test/automation-directives.test.js test/breakage-policy.test.js test/default-rulesets.test.js test/entitlement-regression.test.js",
+    "audit:public-content": "node scripts/audit-public-content.mjs",
+    "audit:public-safe": "node scripts/audit-public-safe.mjs && npm run audit:public-content",
+    "package:extension": "node scripts/package-extension.mjs",
+    "package:extension:edge": "node scripts/package-edge-extension.mjs",
+    "package:public-source": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-public-source.ps1",
+    "validate:mv3-package": "node scripts/validate-mv3-package.mjs",
+    "validate:mv3-package:edge": "node scripts/validate-mv3-package.mjs --dir dist/edge-extension",
+    "release:extension": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-extension.ps1",
+    "release:extension:edge": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-edge-extension.ps1",
+    "release:extension:all": "npm run release:extension && npm run release:extension:edge",
+    "lint": "npm test && npm run audit:public-safe && npm run package:extension && npm run validate:mv3-package",
+    "lint:edge": "npm test && npm run audit:public-safe && npm run package:extension:edge && npm run validate:mv3-package:edge",
+    "lint:strict": "npm run lint"
+  },
+  "devDependencies": {
+    "playwright": "^1.58.2"
+  }
+}

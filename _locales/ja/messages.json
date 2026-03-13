@@ -1,0 +1,636 @@
+{
+  "filterPacksSummaryUnavailable": {
+    "message": "フィルターパックの状態を取得できません。"
+  },
+  "filterPacksSummarySettingsHint": {
+    "message": "フィルターパックを管理するには設定を開いてください。"
+  },
+  "filterPacksSummaryComingSoon": {
+    "message": "フィルターパックは近日公開です。"
+  },
+  "filterPacksSummaryEmptyHint": {
+    "message": "任意のフィルターパックがここに表示されます。"
+  },
+  "filterPacksSummaryActive": {
+    "message": "有効なフィルターパック: $ENABLED$ / $TOTAL$",
+    "placeholders": {
+      "enabled": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      },
+      "plural": {
+        "content": "$3"
+      }
+    }
+  },
+  "filterPacksSummaryNone": {
+    "message": "有効な任意パックはありません。設定で追加を選んでください。"
+  },
+  "filterPacksSummaryMore": {
+    "message": "+$REMAINING$ 件が有効",
+    "placeholders": {
+      "remaining": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterPacksStatusReady": {
+    "message": "フィルターパックの準備完了。"
+  },
+  "filterPacksStatusUnavailable": {
+    "message": "フィルターパックの状態を取得できません。"
+  },
+  "popupStatusFilterError": {
+    "message": "フィルターパックを利用できません。設定を確認してください。"
+  },
+  "popupStatusFilterWarn": {
+    "message": "任意のフィルターパックに注意が必要です。"
+  },
+  "filterPacksStatusRulesApplied": {
+    "message": "$COUNT$ 件のルールを適用",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterPacksStatusEnabledCount": {
+    "message": "$COUNT$ 件のパックが有効",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksStatusUnknown": {
+    "message": "フィルターパックの状態が不明です。"
+  },
+  "filterPacksStatusDisabled": {
+    "message": "フィルターパックが無効になりました: declarativeNetRequest のルール上限に達しました。"
+  },
+  "filterPacksStatusTrimmed": {
+    "message": "フィルターパックは $CURRENT$ / $TOTAL$ ルールに制限されています（上限に達しました）。",
+    "placeholders": {
+      "current": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksStatusActiveDetail": {
+    "message": "有効なフィルターパック: $ENABLED$（$RULES$ ルール）",
+    "placeholders": {
+      "enabled": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      },
+      "rules": {
+        "content": "$3"
+      }
+    }
+  },
+  "filterPacksStatusNone": {
+    "message": "有効な任意パックはありません。"
+  },
+  "filterPacksStatusCleared": {
+    "message": "フィルターパックをクリアしました。"
+  },
+  "filterCatalogStatusUnavailable": {
+    "message": "フィルターパックの診断情報が利用できません。"
+  },
+  "filterCatalogLicensePrefix": {
+    "message": "ライセンス: $VALUE$",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterCatalogLicenseUnknown": {
+    "message": "ライセンス: 不明"
+  },
+  "filterCatalogStatusRulesApplied": {
+    "message": "$COUNT$ 件のルールを適用",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterCatalogStatusEnabled": {
+    "message": "$COUNT$ 件のパックが有効",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksSyncFailed": {
+    "message": "フィルターパックの同期に失敗しました。"
+  },
+  "filterPacksClearFailed": {
+    "message": "フィルターパックのルールをクリアできませんでした。"
+  },
+  "filterPacksSummaryEnabledLabel": {
+    "message": "有効"
+  },
+  "filterCatalogDefaultDescription": {
+    "message": "追加のフィルターパック。"
+  },
+  "filterCatalogRequiredLabel": {
+    "message": "必須"
+  },
+  "extensionName": {
+    "message": "Talon Defender"
+  },
+  "extensionDescription": {
+    "message": "広告とトラッカーをブロックします。"
+  },
+  "actionDefaultTitle": {
+    "message": "Talon Defender"
+  },
+  "extName": {
+    "message": "Talon Defender"
+  },
+  "extShortDesc": {
+    "message": "広告とトラッカーをブロックします。"
+  },
+  "pickerTipEnter": {
+    "message": "要素ピッカー モードに入る"
+  },
+  "uiLoading": {
+    "message": "読み込み中..."
+  },
+  "uiWorking": {
+    "message": "処理中..."
+  },
+  "uiSoon": {
+    "message": "わずか"
+  },
+  "uiSettings": {
+    "message": "設定"
+  },
+  "uiPrivacy": {
+    "message": "プライバシー"
+  },
+  "uiDisabled": {
+    "message": "無効"
+  },
+  "uiActive": {
+    "message": "有効"
+  },
+  "uiRemove": {
+    "message": "削除"
+  },
+  "uiRemoving": {
+    "message": "削除中..."
+  },
+  "popupStatusCheckingProtection": {
+    "message": "保護を確認中..."
+  },
+  "popupProtectionSummaryTitle": {
+    "message": "保護の概要"
+  },
+  "popupSessionAdsLabel": {
+    "message": "このセッションでブロックした広告"
+  },
+  "popupSessionTrackersLabel": {
+    "message": "このセッションでブロックしたトラッカー"
+  },
+  "popupLifetimeAdsLabel": {
+    "message": "合計でブロックした広告"
+  },
+  "popupLifetimeTrackersLabel": {
+    "message": "合計でブロックしたトラッカー"
+  },
+  "popupDataSavedLabel": {
+    "message": "節約したデータ"
+  },
+  "popupSessionLabel": {
+    "message": "このセッション"
+  },
+  "popupStatsAds": {
+    "message": "広告はブロックされています"
+  },
+  "popupStatsTrackers": {
+    "message": "トラッカーはブロックされています"
+  },
+  "popupStatsScripts": {
+    "message": "不審なスクリプトはブロックされています"
+  },
+  "popupLifetimeLabel": {
+    "message": "全期間"
+  },
+  "popupFilterPacksTitle": {
+    "message": "追加の保護"
+  },
+  "popupToggleActivateSubscription": {
+    "message": "ライセンスを有効化"
+  },
+  "popupToggleEnableProtection": {
+    "message": "保護をオンにする"
+  },
+  "popupToggleDisableProtection": {
+    "message": "保護を無効にする"
+  },
+  "popupStatusTrialEndedActivate": {
+    "message": "保護は一時停止中です。続行するには有効化してください。"
+  },
+  "expiredOverlayBadge": {
+    "message": "操作が必要です"
+  },
+  "expiredOverlayBadgeMaxDevices": {
+    "message": "Device limit"
+  },
+  "expiredOverlayTitle": {
+    "message": "保護は一時停止中です"
+  },
+  "expiredOverlayTitleMaxDevices": {
+    "message": "デバイス上限に達しました"
+  },
+  "expiredOverlayBullet1": {
+    "message": "広告ブロックが無効になっています。"
+  },
+  "expiredOverlayBullet2": {
+    "message": "トラッカーにオンライン行動を追跡される可能性があります。"
+  },
+  "expiredOverlayBullet3": {
+    "message": "詐欺サイトがすり抜ける可能性があります。"
+  },
+  "expiredOverlayBulletMax1": {
+    "message": "5台の上限に達しました。"
+  },
+  "expiredOverlayBulletMax2": {
+    "message": "このPCを保護するには、古いPCの代わりにこのPCを使用してください。"
+  },
+  "expiredOverlayBulletMax3": {
+    "message": "古いPCが1台解放されます。"
+  },
+  "expiredOverlayPrimaryCta": {
+    "message": "保護を再開"
+  },
+  "expiredOverlaySecondaryCta": {
+    "message": "キーをお持ちですか？今すぐ有効化"
+  },
+  "expiredOverlayStep1Label": {
+    "message": "ステップ1"
+  },
+  "expiredOverlayStep1Title": {
+    "message": "ライセンスキーを入手"
+  },
+  "expiredOverlayStep2Label": {
+    "message": "ステップ2"
+  },
+  "expiredOverlayStep2Title": {
+    "message": "有効化"
+  },
+  "expiredOverlayTrialEndedMessage": {
+    "message": "Your free protection ended. Activate to keep blocking ads, pop-ups, and scam pages."
+  },
+  "expiredOverlayExpiredMessage": {
+    "message": "Activate a license to keep blocking ads, pop-ups, and scam pages."
+  },
+  "expiredOverlayTrialEndedOn": {
+    "message": "Free protection ended on $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "expiredOverlayLicenseEndedOn": {
+    "message": "License ended on $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "expiredOverlayTrustMv3": {
+    "message": "Manifest V3 compliant (MV3)."
+  },
+  "expiredOverlayKeyLabel": {
+    "message": "ライセンスキーをお持ちですか？"
+  },
+  "expiredOverlayActivateButton": {
+    "message": "今すぐ有効化"
+  },
+  "expiredOverlayEmailKeyButton": {
+    "message": "ライセンスキーをメールで受け取る"
+  },
+  "expiredOverlayHelpLink": {
+    "message": "お困りですか？サポートを開く"
+  },
+  "expiredOverlayNoReinstall": {
+    "message": "No reinstall needed. Uninstalling and reinstalling will not extend the trial."
+  },
+  "popupStatusProtectionActive": {
+    "message": "保護は有効です"
+  },
+  "popupStatusProtectionPaused": {
+    "message": "保護は一時停止中です"
+  },
+  "popupSafetyMessage": {
+    "message": "保護は有効です"
+  },
+  "popupNoActiveTab": {
+    "message": "対象が見つかりません"
+  },
+  "popupFilteringDisabledSite": {
+    "message": "このサイトでは保護がオフ"
+  },
+  "popupFilteringEnabledSite": {
+    "message": "このサイトでは保護がオン"
+  },
+  "popupFilteringCompleteSite": {
+    "message": "このサイトでは追加保護がオン"
+  },
+  "subscriptionSectionTitle": {
+    "message": "サブスクリプション"
+  },
+  "optionsSubscriptionTitle": {
+    "message": "何も変えずに保護を維持"
+  },
+  "optionsSubscriptionSubtitle": {
+    "message": "Talon Defender は広告、トラッカー、ポップアップを自動でブロックします。"
+  },
+  "optionsSubscriptionBadge": {
+    "message": "おすすめ"
+  },
+  "optionsSubscriptionBenefit1": {
+    "message": "ポップアップや不安な警告が減ります"
+  },
+  "optionsSubscriptionBenefit2": {
+    "message": "ページがすっきりして読み込みが速くなります"
+  },
+  "optionsSubscriptionBenefit3": {
+    "message": "自動リスト更新で保護を最新の状態に保ちます"
+  },
+  "optionsSubscriptionKeyHint": {
+    "message": "すでにライセンスキーをお持ちですか？上に入力して「ライセンスを有効化」をクリックしてください。"
+  },
+  "optionsSubscriptionCta": {
+    "message": "ライセンスを購入する"
+  },
+  "optionsSubscriptionReassurance": {
+    "message": "設定はかんたん。保護は自動で最新の状態に保たれます。"
+  },
+  "optionsSubscriptionGuarantee": {
+    "message": "30日間の返金保証。"
+  },
+  "optionsSubscriptionDeviceLimit": {
+    "message": "最大5台まで利用できます。"
+  },
+  "subscriptionStatusLoading": {
+    "message": "ステータスを読み込み中..."
+  },
+  "licenseKeyLabel": {
+    "message": "ライセンスキー"
+  },
+  "licenseKeyPlaceholder": {
+    "message": "ライセンスキーを入力"
+  },
+  "licenseActivateButton": {
+    "message": "ライセンスを有効化"
+  },
+  "licenseGetButton": {
+    "message": "ライセンスを取得"
+  },
+  "licenseAlreadyPurchasedLink": {
+    "message": "すでに購入済みですか？ライセンスキーを入力"
+  },
+  "licenseHelpButton": {
+    "message": "ヘルプ"
+  },
+  "popupSubscriptionGuarantee": {
+    "message": "30日間の返金保証"
+  },
+  "popupSubscriptionDeviceLimit": {
+    "message": "最大5台まで利用できます。"
+  },
+  "subscriptionPaid": {
+    "message": "ライセンスは有効です。"
+  },
+  "subscriptionPaidUntil": {
+    "message": "Renews on $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "subscriptionTrial": {
+    "message": "無料トライアル中です。まもなく終了します（残り$REMAINING$）。",
+    "placeholders": {
+      "remaining": {
+        "content": "$1"
+      }
+    }
+  },
+  "subscriptionExpired": {
+    "message": "トライアルが終了しました。保護は一時停止中です。"
+  },
+  "subscriptionExpiredWithError": {
+    "message": "トライアルが終了しました。保護は一時停止中です。($ERROR$)",
+    "placeholders": {
+      "error": {
+        "content": "$1"
+      }
+    }
+  },
+  "licenseStatusEnterKey": {
+    "message": "有効化するにはライセンスキーを入力してください。"
+  },
+  "licenseStatusActivating": {
+    "message": "有効化中..."
+  },
+  "licenseStatusActivationFailed": {
+    "message": "有効化に失敗しました。もう一度お試しください。"
+  },
+  "licenseStatusActivated": {
+    "message": "有効化しました。"
+  },
+  "licenseStatusRemoved": {
+    "message": "ライセンスを削除しました。"
+  },
+  "licenseStatusVerifyLater": {
+    "message": "ライセンスをまだ確認できませんでした。もう一度お試しください。"
+  },
+  "licenseStatusActivationRequired": {
+    "message": "有効化が必要です。"
+  },
+  "optionsSubtitle": {
+    "message": "ブラウザでのブロッカーの動作を調整します。"
+  },
+  "optionsFilterListsTitle": {
+    "message": "推奨保護リスト"
+  },
+  "optionsFilterListsSubtitle": {
+    "message": "広告と追跡をブロックするために自動で更新されます。"
+  },
+  "optionsFilterListsHint": {
+    "message": "最適な保護のためにオンのままにしてください。サイトが壊れる場合のみオフにしてください。"
+  },
+  "optionsFilterEasyListLabel": {
+    "message": "ほとんどの広告をブロック"
+  },
+  "optionsFilterEasyListNote": {
+    "message": "多くのサイトの広告をカバーします。"
+  },
+  "optionsFilterEasyPrivacyLabel": {
+    "message": "追跡を停止"
+  },
+  "optionsFilterEasyPrivacyNote": {
+    "message": "サイト間で追跡するトラッカーをブロックします。"
+  },
+  "optionsFilterAnnoyancesLabel": {
+    "message": "ポップアップとバナーを非表示"
+  },
+  "optionsFilterAnnoyancesNote": {
+    "message": "クッキーのポップアップとオーバーレイを削除します。"
+  },
+  "optionsFilterSecurityLabel": {
+    "message": "既知の危険なサイトをブロック"
+  },
+  "optionsFilterSecurityNote": {
+    "message": "既知のマルウェアや詐欺サイトを読み込み前にブロックします。"
+  },
+  "optionsAllowedSitesTitle": {
+    "message": "許可したサイト"
+  },
+  "optionsAllowedSitesSubtitle": {
+    "message": "支援したいサイトを選んでください。そこでは広告が表示されます。"
+  },
+  "optionsAllowedSitesAddButton": {
+    "message": "サイトを追加"
+  },
+  "optionsAllowedSitesEmpty": {
+    "message": "まだサイトが追加されていません。"
+  },
+  "footerSupportLink": {
+    "message": "サポート"
+  },
+  "footerManageSubscriptionLink": {
+    "message": "サブスクリプションを管理"
+  },
+  "footerWhatsNewLink": {
+    "message": "更新情報"
+  },
+  "footerPrivacyPolicyLink": {
+    "message": "プライバシーポリシー"
+  },
+  "footerTermsLink": {
+    "message": "利用規約"
+  },
+  "footerRemoveLicenseLink": {
+    "message": "ライセンスを削除"
+  },
+  "footerRemoveLicenseConfirm": {
+    "message": "この端末からライセンスを削除しますか？いつでも再度有効化できます。"
+  },
+  "popupSettingsLink": {
+    "message": "設定"
+  },
+  "popupPrivacyLink": {
+    "message": "プライバシー"
+  },
+  "strictblockTitle": {
+    "message": "Talon Defender - サイトをブロックしました"
+  },
+  "strictblockSentence1": {
+    "message": "安全のため、Talon Defender がこのサイトをブロックしました。信頼できる場合は続行できます。"
+  },
+  "strictblockSponsoredSentence1": {
+    "message": "これはスポンサーリンクのようです。これが意図的であれば続行します。"
+  },
+  "strictblockDontWarn": {
+    "message": "このサイトでは今後警告しない"
+  },
+  "strictblockBack": {
+    "message": "戻る"
+  },
+  "strictblockClose": {
+    "message": "タブを閉じる"
+  },
+  "strictblockProceed": {
+    "message": "サイトへ進む"
+  },
+  "strictblockNoParamsPrompt": {
+    "message": "ウェブサイトのアドレス"
+  },
+  "strictblockReasonSentence1": {
+    "message": "Talon Defender のセキュリティリストによってブロックされました。"
+  },
+  "strictblockSponsoredReasonSentence1": {
+    "message": "Talon Defender スポンサー リンク保護によってブロックされています。"
+  },
+  "strictblockRedirectSentence1": {
+    "message": "より安全なページが利用できます: {{url}}"
+  },
+  "pickerTitle": {
+    "message": "Talon Defender - 要素をブロック"
+  },
+  "unpickerTitle": {
+    "message": "Talon Defender - ブロックした要素を復元"
+  },
+  "pickerQuit": {
+    "message": "ツールを閉じる"
+  },
+  "pickerSliderLabel": {
+    "message": "ブロックする内容を選択"
+  },
+  "pickerPick": {
+    "message": "選択"
+  },
+  "pickerPreview": {
+    "message": "プレビュー"
+  },
+  "pickerCreate": {
+    "message": "この要素をブロック"
+  },
+  "popupMoreButton": {
+    "message": "さらに表示"
+  },
+  "popupLessButton": {
+    "message": "表示を減らす"
+  },
+  "unpickerUsage": {
+    "message": "ブロックされた要素をクリックして再表示するか、ゴミ箱アイコンをクリックして完全に削除します。"
+  },
+  "subscriptionTrialAfterNote": {
+    "message": "トライアル終了後は、広告とトラッカーのブロックが停止します。"
+  },
+  "licenseRecoverLink": {
+    "message": "ライセンスキーを再送する"
+  },
+  "licenseRevealButton": {
+    "message": "ライセンスキーを表示"
+  },
+  "licenseHideButton": {
+    "message": "ライセンスキーを隠す"
+  },
+  "subscriptionPaidManageNote": {
+    "message": "いつでも管理・解約できます。"
+  },
+  "licenseStatusUseThisDevice": {
+    "message": "このライセンスは、最大数のコンピュータですでにアクティブです。 「このコンピュータを使用してここに移動する」をクリックします。"
+  },
+  "licenseStatusUsingThisDevice": {
+    "message": "このコンピュータを使用して..."
+  },
+  "licenseUseThisDeviceButton": {
+    "message": "この端末で使う"
+  }
+}

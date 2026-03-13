@@ -1,0 +1,636 @@
+{
+  "filterPacksSummaryUnavailable": {
+    "message": "Suodatinpakettien tila ei ole saatavilla."
+  },
+  "filterPacksSummarySettingsHint": {
+    "message": "Avaa asetukset hallitaksesi suodatinpaketteja."
+  },
+  "filterPacksSummaryComingSoon": {
+    "message": "Suodatinpaketit tulossa pian."
+  },
+  "filterPacksSummaryEmptyHint": {
+    "message": "Valinnaiset suodatinpaketit näkyvät täällä."
+  },
+  "filterPacksSummaryActive": {
+    "message": "Aktiiviset suodatinpaketit: $ENABLED$ / $TOTAL$",
+    "placeholders": {
+      "enabled": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      },
+      "plural": {
+        "content": "$3"
+      }
+    }
+  },
+  "filterPacksSummaryNone": {
+    "message": "Valinnaisia paketteja ei ole käytössä. Valitse lisät asetuksista."
+  },
+  "filterPacksSummaryMore": {
+    "message": "+$REMAINING$ lisää aktiivisena",
+    "placeholders": {
+      "remaining": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterPacksStatusReady": {
+    "message": "Suodatinpaketit valmiina."
+  },
+  "filterPacksStatusUnavailable": {
+    "message": "Suodatinpakettien tila ei ole saatavilla."
+  },
+  "popupStatusFilterError": {
+    "message": "Suodatinpaketteja ei ole saatavilla; tarkista asetukset."
+  },
+  "popupStatusFilterWarn": {
+    "message": "Valinnaiset suodatinpaketit vaativat huomiota."
+  },
+  "filterPacksStatusRulesApplied": {
+    "message": "$COUNT$ sääntöä käytössä",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterPacksStatusEnabledCount": {
+    "message": "$COUNT$ pakettia käytössä",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksStatusUnknown": {
+    "message": "Suodatinpakettien tila tuntematon."
+  },
+  "filterPacksStatusDisabled": {
+    "message": "Suodatinpaketit poistettu käytöstä: declarativeNetRequest-sääntöjen raja saavutettu."
+  },
+  "filterPacksStatusTrimmed": {
+    "message": "Suodatinpaketit rajattu $CURRENT$ / $TOTAL$ sääntöön (kiintiö täynnä).",
+    "placeholders": {
+      "current": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksStatusActiveDetail": {
+    "message": "Aktiiviset suodatinpaketit: $ENABLED$ ($RULES$ sääntöä).",
+    "placeholders": {
+      "enabled": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      },
+      "rules": {
+        "content": "$3"
+      }
+    }
+  },
+  "filterPacksStatusNone": {
+    "message": "Valinnaisia paketteja ei ole käytössä."
+  },
+  "filterPacksStatusCleared": {
+    "message": "Suodatinpaketit tyhjennetty."
+  },
+  "filterCatalogStatusUnavailable": {
+    "message": "Suodatinpakettien diagnostiikka ei ole saatavilla."
+  },
+  "filterCatalogLicensePrefix": {
+    "message": "Lisenssi: $VALUE$",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterCatalogLicenseUnknown": {
+    "message": "Lisenssi: tuntematon"
+  },
+  "filterCatalogStatusRulesApplied": {
+    "message": "$COUNT$ sääntöä käytössä",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "filterCatalogStatusEnabled": {
+    "message": "$COUNT$ pakettia käytössä",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      },
+      "plural": {
+        "content": "$2"
+      }
+    }
+  },
+  "filterPacksSyncFailed": {
+    "message": "Suodatinpakettien synkronointi epäonnistui."
+  },
+  "filterPacksClearFailed": {
+    "message": "Suodatinpakettien sääntöjä ei voitu tyhjentää."
+  },
+  "filterPacksSummaryEnabledLabel": {
+    "message": "Käytössä"
+  },
+  "filterCatalogDefaultDescription": {
+    "message": "Lisäsuodatinpaketti."
+  },
+  "filterCatalogRequiredLabel": {
+    "message": "Pakollinen"
+  },
+  "extensionName": {
+    "message": "Talon Defender"
+  },
+  "extensionDescription": {
+    "message": "Estää mainokset ja seurannan."
+  },
+  "actionDefaultTitle": {
+    "message": "Talon Defender"
+  },
+  "extName": {
+    "message": "Talon Defender"
+  },
+  "extShortDesc": {
+    "message": "Estää mainokset ja seurannan."
+  },
+  "pickerTipEnter": {
+    "message": "Siirry elementin valintatilaan"
+  },
+  "uiLoading": {
+    "message": "Ladataan..."
+  },
+  "uiWorking": {
+    "message": "Työskennellään..."
+  },
+  "uiSoon": {
+    "message": "pian"
+  },
+  "uiSettings": {
+    "message": "Asetukset"
+  },
+  "uiPrivacy": {
+    "message": "Tietosuoja"
+  },
+  "uiDisabled": {
+    "message": "Pois käytöstä"
+  },
+  "uiActive": {
+    "message": "Käytössä"
+  },
+  "uiRemove": {
+    "message": "Poista"
+  },
+  "uiRemoving": {
+    "message": "Poistetaan..."
+  },
+  "popupStatusCheckingProtection": {
+    "message": "Tarkistetaan suojausta..."
+  },
+  "popupProtectionSummaryTitle": {
+    "message": "Suojauksen yhteenveto"
+  },
+  "popupSessionAdsLabel": {
+    "message": "Mainoksia estetty tässä istunnossa"
+  },
+  "popupSessionTrackersLabel": {
+    "message": "Seurantaa estetty tässä istunnossa"
+  },
+  "popupLifetimeAdsLabel": {
+    "message": "Yhteensä estettyjä mainoksia"
+  },
+  "popupLifetimeTrackersLabel": {
+    "message": "Yhteensä estettyjä seuraajia"
+  },
+  "popupDataSavedLabel": {
+    "message": "Säästetty data"
+  },
+  "popupSessionLabel": {
+    "message": "Tämä istunto"
+  },
+  "popupStatsAds": {
+    "message": "Mainoksia estetään"
+  },
+  "popupStatsTrackers": {
+    "message": "Seurantaa estetään"
+  },
+  "popupStatsScripts": {
+    "message": "Epäilyttävät skriptit estetään"
+  },
+  "popupLifetimeLabel": {
+    "message": "Yhteensä"
+  },
+  "popupFilterPacksTitle": {
+    "message": "Lisäsuojaus"
+  },
+  "popupToggleActivateSubscription": {
+    "message": "Aktivoi lisenssi"
+  },
+  "popupToggleEnableProtection": {
+    "message": "Ota suojaus käyttöön"
+  },
+  "popupToggleDisableProtection": {
+    "message": "Poista suojaus käytöstä"
+  },
+  "popupStatusTrialEndedActivate": {
+    "message": "Suojaus on tauolla. Aktivoi jatkaaksesi."
+  },
+  "expiredOverlayBadge": {
+    "message": "Toimenpide vaaditaan"
+  },
+  "expiredOverlayBadgeMaxDevices": {
+    "message": "Laite-etuus täynnä"
+  },
+  "expiredOverlayTitle": {
+    "message": "Suojaus on tauolla"
+  },
+  "expiredOverlayTitleMaxDevices": {
+    "message": "Laitekiintiö täynnä"
+  },
+  "expiredOverlayBullet1": {
+    "message": "Mainosten esto on pois käytöstä."
+  },
+  "expiredOverlayBullet2": {
+    "message": "Seurantateknologiat voivat seurata toimintaasi verkossa."
+  },
+  "expiredOverlayBullet3": {
+    "message": "Huijaussivut voivat päästä läpi."
+  },
+  "expiredOverlayBulletMax1": {
+    "message": "Olet saavuttanut 5 tietokoneen rajan."
+  },
+  "expiredOverlayBulletMax2": {
+    "message": "Suojaa tämä tietokone käyttämällä sitä vanhemman sijaan."
+  },
+  "expiredOverlayBulletMax3": {
+    "message": "Tämä vapauttaa vanhemman tietokoneen."
+  },
+  "expiredOverlayPrimaryCta": {
+    "message": "Hanki suojaus"
+  },
+  "expiredOverlaySecondaryCta": {
+    "message": "Onko sinulla avain? Aktivoi nyt"
+  },
+  "expiredOverlayStep1Label": {
+    "message": "VAIHE 1"
+  },
+  "expiredOverlayStep1Title": {
+    "message": "Hanki lisenssiavain"
+  },
+  "expiredOverlayStep2Label": {
+    "message": "VAIHE 2"
+  },
+  "expiredOverlayStep2Title": {
+    "message": "Aktivoi"
+  },
+  "expiredOverlayTrialEndedMessage": {
+    "message": "Ilmainen suojaus on päättynyt. Aktivoi, jotta mainokset, ponnahdusikkunat ja huijaussivut pysyvät estettyinä."
+  },
+  "expiredOverlayExpiredMessage": {
+    "message": "Aktivoi lisenssi, jotta mainokset, ponnahdusikkunat ja huijaussivut pysyvät estettyinä."
+  },
+  "expiredOverlayTrialEndedOn": {
+    "message": "Ilmainen suojaus päättyi $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "expiredOverlayLicenseEndedOn": {
+    "message": "Lisenssi päättyi $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "expiredOverlayTrustMv3": {
+    "message": "Manifest V3 -yhteensopiva (MV3)."
+  },
+  "expiredOverlayKeyLabel": {
+    "message": "Onko sinulla jo lisenssiavain?"
+  },
+  "expiredOverlayActivateButton": {
+    "message": "Aktivoi nyt"
+  },
+  "expiredOverlayEmailKeyButton": {
+    "message": "Lähetä lisenssiavaimeni sähköpostitse"
+  },
+  "expiredOverlayHelpLink": {
+    "message": "Tarvitsetko apua? Avaa tuki"
+  },
+  "expiredOverlayNoReinstall": {
+    "message": "Uudelleenasennusta ei tarvita. Poistaminen ja uudelleenasennus ei pidennä kokeilua."
+  },
+  "popupStatusProtectionActive": {
+    "message": "Suojaus käytössä"
+  },
+  "popupStatusProtectionPaused": {
+    "message": "Suojaus tauolla"
+  },
+  "popupSafetyMessage": {
+    "message": "Suojaus on käytössä"
+  },
+  "popupNoActiveTab": {
+    "message": "Kohdetta ei havaittu"
+  },
+  "popupFilteringDisabledSite": {
+    "message": "Suojaus pois päältä tällä sivustolla"
+  },
+  "popupFilteringEnabledSite": {
+    "message": "Suojaus päällä tällä sivustolla"
+  },
+  "popupFilteringCompleteSite": {
+    "message": "Lisäsuojaus päällä tällä sivustolla"
+  },
+  "subscriptionSectionTitle": {
+    "message": "Tilaus"
+  },
+  "optionsSubscriptionTitle": {
+    "message": "Pysy suojattuna muuttamatta mitään"
+  },
+  "optionsSubscriptionSubtitle": {
+    "message": "Talon Defender estää mainokset, seuraimet ja ponnahdusikkunat automaattisesti."
+  },
+  "optionsSubscriptionBadge": {
+    "message": "Suositeltu"
+  },
+  "optionsSubscriptionBenefit1": {
+    "message": "Vähemmän ponnahdusikkunoita ja pelottavia varoituksia"
+  },
+  "optionsSubscriptionBenefit2": {
+    "message": "Siistimmät sivut, jotka latautuvat nopeammin"
+  },
+  "optionsSubscriptionBenefit3": {
+    "message": "Automaattiset listapäivitykset pitävät suojauksen ajan tasalla"
+  },
+  "optionsSubscriptionKeyHint": {
+    "message": "Onko sinulla jo lisenssiavain? Syötä se yllä ja valitse Aktivoi lisenssi."
+  },
+  "optionsSubscriptionCta": {
+    "message": "Hanki lisenssi"
+  },
+  "optionsSubscriptionReassurance": {
+    "message": "Helppo käyttöönotto. Pidämme suojauksen ajan tasalla puolestasi."
+  },
+  "optionsSubscriptionGuarantee": {
+    "message": "30 päivän rahat takaisin -takuu."
+  },
+  "optionsSubscriptionDeviceLimit": {
+    "message": "Kattaa jopa 5 tietokonetta."
+  },
+  "subscriptionStatusLoading": {
+    "message": "Ladataan tilaa..."
+  },
+  "licenseKeyLabel": {
+    "message": "Lisenssiavain"
+  },
+  "licenseKeyPlaceholder": {
+    "message": "Syötä lisenssiavain"
+  },
+  "licenseActivateButton": {
+    "message": "Aktivoi lisenssi"
+  },
+  "licenseGetButton": {
+    "message": "Hanki lisenssi"
+  },
+  "licenseAlreadyPurchasedLink": {
+    "message": "Oletko jo ostanut? Syötä lisenssiavaimesi"
+  },
+  "licenseHelpButton": {
+    "message": "Ohje"
+  },
+  "popupSubscriptionGuarantee": {
+    "message": "30 päivän rahat takaisin -takuu"
+  },
+  "popupSubscriptionDeviceLimit": {
+    "message": "Kattaa jopa 5 tietokonetta."
+  },
+  "subscriptionPaid": {
+    "message": "Lisenssi aktiivinen."
+  },
+  "subscriptionPaidUntil": {
+    "message": "Renews on $DATE$.",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "subscriptionTrial": {
+    "message": "Ilmainen kokeilu on käynnissä. Päättyy $REMAINING$.",
+    "placeholders": {
+      "remaining": {
+        "content": "$1"
+      }
+    }
+  },
+  "subscriptionExpired": {
+    "message": "Kokeilu päättynyt. Suojaus on tauolla."
+  },
+  "subscriptionExpiredWithError": {
+    "message": "Kokeilu päättynyt. Suojaus on tauolla. ($ERROR$)",
+    "placeholders": {
+      "error": {
+        "content": "$1"
+      }
+    }
+  },
+  "licenseStatusEnterKey": {
+    "message": "Syötä lisenssiavaimesi aktivoidaksesi."
+  },
+  "licenseStatusActivating": {
+    "message": "Aktivoidaan..."
+  },
+  "licenseStatusActivationFailed": {
+    "message": "Aktivointi epäonnistui. Yritä uudelleen."
+  },
+  "licenseStatusActivated": {
+    "message": "Aktivoitu."
+  },
+  "licenseStatusRemoved": {
+    "message": "Lisenssi poistettu."
+  },
+  "licenseStatusVerifyLater": {
+    "message": "Lisenssiä ei voitu vielä vahvistaa. Yritä uudelleen."
+  },
+  "licenseStatusActivationRequired": {
+    "message": "Aktivointi vaaditaan."
+  },
+  "optionsSubtitle": {
+    "message": "Säädä, miten esto toimii selaimessasi."
+  },
+  "optionsFilterListsTitle": {
+    "message": "Suositellut suojalistat"
+  },
+  "optionsFilterListsSubtitle": {
+    "message": "Nämä päivittyvät automaattisesti estämään mainoksia ja seurantaa."
+  },
+  "optionsFilterListsHint": {
+    "message": "Pidä nämä päällä parhaan suojan vuoksi. Poista käytöstä vain, jos sivusto ei toimi."
+  },
+  "optionsFilterEasyListLabel": {
+    "message": "Estä useimmat mainokset"
+  },
+  "optionsFilterEasyListNote": {
+    "message": "Kattaa mainokset useimmilla sivustoilla."
+  },
+  "optionsFilterEasyPrivacyLabel": {
+    "message": "Lopeta seuranta"
+  },
+  "optionsFilterEasyPrivacyNote": {
+    "message": "Estää seuraimet, jotka seuraavat sinua sivustojen välillä."
+  },
+  "optionsFilterAnnoyancesLabel": {
+    "message": "Piilota ponnahdusikkunat ja bannerit"
+  },
+  "optionsFilterAnnoyancesNote": {
+    "message": "Poistaa evästeponnahdukset ja päällekkäiset näkymät."
+  },
+  "optionsFilterSecurityLabel": {
+    "message": "Estä tunnetut vaaralliset sivustot"
+  },
+  "optionsFilterSecurityNote": {
+    "message": "Estää tunnetut haitta- ja huijaussivustot ennen latausta."
+  },
+  "optionsAllowedSitesTitle": {
+    "message": "Sallitut sivustot"
+  },
+  "optionsAllowedSitesSubtitle": {
+    "message": "Valitse sivustot, joita haluat tukea; mainokset pysyvät näkyvissä siellä."
+  },
+  "optionsAllowedSitesAddButton": {
+    "message": "Lisää sivusto"
+  },
+  "optionsAllowedSitesEmpty": {
+    "message": "Sivustoja ei ole vielä lisätty."
+  },
+  "footerSupportLink": {
+    "message": "Tuki"
+  },
+  "footerManageSubscriptionLink": {
+    "message": "Hallitse tilausta"
+  },
+  "footerWhatsNewLink": {
+    "message": "Uutta"
+  },
+  "footerPrivacyPolicyLink": {
+    "message": "Tietosuojakäytäntö"
+  },
+  "footerTermsLink": {
+    "message": "Palveluehdot"
+  },
+  "footerRemoveLicenseLink": {
+    "message": "Poista lisenssi"
+  },
+  "footerRemoveLicenseConfirm": {
+    "message": "Poistetaanko lisenssi tältä laitteelta? Voit aktivoida uudelleen milloin tahansa."
+  },
+  "popupSettingsLink": {
+    "message": "Asetukset"
+  },
+  "popupPrivacyLink": {
+    "message": "Tietosuoja"
+  },
+  "strictblockTitle": {
+    "message": "Talon Defender - Sivusto estetty"
+  },
+  "strictblockSentence1": {
+    "message": "Talon Defender esti tämän sivuston pitääkseen sinut turvassa. Jos luotat siihen, voit jatkaa."
+  },
+  "strictblockSponsoredSentence1": {
+    "message": "Tämä näyttää olevan sponsoroitu linkki. Jatka, jos tämä oli tahallista."
+  },
+  "strictblockDontWarn": {
+    "message": "Älä varoita uudelleen tästä sivustosta"
+  },
+  "strictblockBack": {
+    "message": "Takaisin"
+  },
+  "strictblockClose": {
+    "message": "Sulje välilehti"
+  },
+  "strictblockProceed": {
+    "message": "Jatka sivustolle"
+  },
+  "strictblockNoParamsPrompt": {
+    "message": "Sivuston osoite"
+  },
+  "strictblockReasonSentence1": {
+    "message": "Estetty Talon Defenderin turvallisuuslistojen toimesta."
+  },
+  "strictblockSponsoredReasonSentence1": {
+    "message": "Estetty Talon Defender sponsoroidun linkin suojauksella."
+  },
+  "strictblockRedirectSentence1": {
+    "message": "Tämän sivun turvallisempi versio on saatavilla: {{url}}"
+  },
+  "pickerTitle": {
+    "message": "Talon Defender - Estä kohde"
+  },
+  "unpickerTitle": {
+    "message": "Talon Defender - Palauta estetty kohde"
+  },
+  "pickerQuit": {
+    "message": "Sulje työkalu"
+  },
+  "pickerSliderLabel": {
+    "message": "Valitse mitä estetään"
+  },
+  "pickerPick": {
+    "message": "Valitse"
+  },
+  "pickerPreview": {
+    "message": "Esikatselu"
+  },
+  "pickerCreate": {
+    "message": "Estä tämä kohde"
+  },
+  "popupMoreButton": {
+    "message": "Lisää vaihtoehtoja"
+  },
+  "popupLessButton": {
+    "message": "Vähemmän vaihtoehtoja"
+  },
+  "unpickerUsage": {
+    "message": "Napsauta estettyä kohdetta näyttääksesi sen uudelleen, tai napsauta roskakorin kuvaketta poistaaksesi sen pysyvästi."
+  },
+  "subscriptionTrialAfterNote": {
+    "message": "Kokeilun jälkeen mainoksia ja seuraimia ei enää estetä."
+  },
+  "licenseRecoverLink": {
+    "message": "Lähetä lisenssiavain uudelleen"
+  },
+  "licenseRevealButton": {
+    "message": "Näytä lisenssiavain"
+  },
+  "licenseHideButton": {
+    "message": "Piilota lisenssiavain"
+  },
+  "subscriptionPaidManageNote": {
+    "message": "Hallitse tai peruuta milloin tahansa."
+  },
+  "licenseStatusUseThisDevice": {
+    "message": "Tämä lisenssi on jo aktiivinen enimmäismäärässä tietokoneita. Siirrä se tänne napsauttamalla Käytä tätä tietokonetta."
+  },
+  "licenseStatusUsingThisDevice": {
+    "message": "Käyttämällä tätä tietokonetta..."
+  },
+  "licenseUseThisDeviceButton": {
+    "message": "Käytä tätä tietokonetta"
+  }
+}

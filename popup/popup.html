@@ -1,0 +1,214 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title data-i18n="extensionName">Talon Defender</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+
+<body>
+  <div class="popup" hidden>
+    <!-- Header -->
+    <header class="header card-style-header">
+      <div class="card-header-top">
+        <div class="brand-group">
+          <img src="../icons/icon128.png" alt="Talon Defender" class="header-logo" />
+          <h1 class="header-title" data-i18n="extensionName">_</h1>
+        </div>
+        <div class="header-actions">
+          <!-- The Header Tuck: Settings Icon moved here -->
+          <button id="openSettings" class="header-icon-button" data-i18n-aria-label="uiSettings">
+            <img src="../icons/settings.svg" alt="" aria-hidden="true" class="header-icon" />
+          </button>
+          <div id="statusIndicator" class="status-dot"></div>
+        </div>
+      </div>
+      <div class="card-header-bottom">
+        <span id="statusLabel" class="status-text">_</span>
+        <button id="toggleProtection" class="switch-toggle" role="switch" aria-checked="true"
+          data-i18n-aria-label="popupToggleDisableProtection">
+          <span class="switch-track">
+            <span class="switch-knob"></span>
+          </span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Protection Summary (Option 1: The Shield - Polished for Seniors) -->
+    <!-- Priority #1 -->
+    <section class="card stats-card shield-style">
+      <div class="shield-container">
+        <!-- Hero Visual -->
+        <div class="shield-hero">
+          <!-- Reassuring "Pulse" effect on this shield -->
+          <div class="shield-icon-wrapper">
+            <div class="shield-pulse"></div>
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round" class="shield-icon">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+              <path d="M9 12l2 2 4-4"></path>
+            </svg>
+          </div>
+
+          <div class="shield-text-group">
+            <div class="safety-status" id="safetyStatus" data-i18n="popupSafetyMessage">_</div>
+
+            <div class="metrics-list">
+              <div class="metric-row">
+                <img class="metric-icon" src="../icons/stats.svg" alt="" aria-hidden="true" />
+                <span class="metric-label" data-i18n="popupStatsAds">_</span>
+              </div>
+              <div class="metric-row">
+                <img class="metric-icon" src="../icons/whitelist.svg" alt="" aria-hidden="true" />
+                <span class="metric-label" data-i18n="popupStatsTrackers">_</span>
+              </div>
+              <div class="metric-row">
+                <img class="metric-icon" src="../icons/dashboard.svg" alt="" aria-hidden="true" />
+                <span class="metric-label" data-i18n="popupStatsScripts">_</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Value Badge (Consistent Reminder of Value) -->
+
+      </div>
+    </section>
+
+    <!-- Subscription Section (Option C: The Golden Ticket) -->
+    <!-- Priority #2 -->
+    <section id="subscriptionCard" class="subscription-section" hidden>
+      <!-- Zone 1: Status -->
+      <div class="subscription-zone status-zone">
+        <h2 class="section-title golden" data-i18n="subscriptionSectionTitle">_</h2>
+        <div id="subscriptionStatus" class="status-note bold-status" data-i18n="subscriptionStatusLoading">_</div>
+        <div id="subscriptionSubstatus" class="status-note muted text-center" data-i18n="subscriptionTrialAfterNote" hidden>_</div>
+      </div>
+
+      <!-- Zone 2: Action -->
+      <div class="subscription-zone action-zone">
+        <button id="subscribeNow" class="pill-button golden-hero" type="button" data-i18n="licenseGetButton">_</button>
+
+        <div class="subscription-cta-note" aria-live="polite">
+          <svg class="guarantee-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            <path d="M9 12l2 2 4-4"></path>
+          </svg>
+          <span data-i18n="popupSubscriptionGuarantee">_</span>
+        </div>
+
+        <button id="showLicenseEntry" class="secondary-link" type="button" data-i18n="licenseAlreadyPurchasedLink">_</button>
+        <button id="recoverLicenseLink" class="secondary-link" type="button" data-i18n="licenseRecoverLink">_</button>
+
+        <form id="licenseForm" class="license-form-row golden-style" hidden>
+          <label for="licenseKey" class="sr-only" data-i18n="licenseKeyLabel">_</label>
+          <input id="licenseKey" class="license-input golden" type="text" autocomplete="off" autocapitalize="characters"
+            spellcheck="false" inputmode="text" placeholder="licenseKeyPlaceholder" data-i18n="licenseKeyPlaceholder" />
+          <button id="licenseActivate" class="pill-button outline" type="submit"
+            data-i18n="licenseActivateButton">_</button>
+        </form>
+        <div id="licenseStatus" class="status-note muted text-center" aria-live="polite" hidden></div>
+        <button id="useThisDeviceButton" class="pill-button outline" type="button" hidden
+          data-i18n="licenseUseThisDeviceButton">_</button>
+
+        <div class="subscription-actions-row">
+          <button id="supportLink" class="pill-button outline" type="button" data-i18n="licenseHelpButton">_</button>
+        </div>
+        <div class="subscription-footnote">
+          <span data-i18n="popupSubscriptionDeviceLimit">_</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Filter Card Removed (The Header Tuck) -->
+
+  </div>
+
+  <!-- Trial/License Expired Overlay -->
+  <div id="expiredOverlay" class="expired-overlay" hidden>
+    <div class="expired-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="expiredOverlayTitle">
+      <div class="expired-overlay-header">
+        <div id="expiredOverlayBadge" class="expired-overlay-badge" data-i18n="expiredOverlayBadge">_</div>
+        <h2 id="expiredOverlayTitle" class="expired-overlay-title" data-i18n="expiredOverlayTitle">_</h2>
+        <ul class="expired-overlay-bullets" data-i18n-aria-label="popupProtectionSummaryTitle">
+          <li class="expired-overlay-bullet">
+            <span class="expired-overlay-bullet-icon" aria-hidden="true">
+              <svg class="expired-overlay-bullet-icon-svg" viewBox="0 0 24 24" fill="none" focusable="false">
+                <path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"></path>
+                <path d="M12 8v5"></path>
+                <path d="M12 16.5h.01"></path>
+              </svg>
+            </span>
+            <span id="expiredOverlayBullet1" class="expired-overlay-bullet-text" data-i18n="expiredOverlayBullet1">_</span>
+          </li>
+          <li class="expired-overlay-bullet">
+            <span class="expired-overlay-bullet-icon" aria-hidden="true">
+              <svg class="expired-overlay-bullet-icon-svg" viewBox="0 0 24 24" fill="none" focusable="false">
+                <path d="M1.5 12s3.5-6 10.5-6s10.5 6 10.5 6s-3.5 6-10.5 6S1.5 12 1.5 12z"></path>
+                <path d="M12 9.5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 0 0 0-5z"></path>
+              </svg>
+            </span>
+            <span id="expiredOverlayBullet2" class="expired-overlay-bullet-text" data-i18n="expiredOverlayBullet2">_</span>
+          </li>
+          <li class="expired-overlay-bullet">
+            <span class="expired-overlay-bullet-icon" aria-hidden="true">
+              <svg class="expired-overlay-bullet-icon-svg" viewBox="0 0 24 24" fill="none" focusable="false">
+                <path d="M12 3.5 2.5 20h19L12 3.5z"></path>
+                <path d="M12 9.25v4.5"></path>
+                <path d="M12 16.75h.01"></path>
+              </svg>
+            </span>
+            <span id="expiredOverlayBullet3" class="expired-overlay-bullet-text" data-i18n="expiredOverlayBullet3">_</span>
+          </li>
+        </ul>
+        <div id="expiredOverlayMeta" class="expired-overlay-meta" hidden></div>
+      </div>
+
+      <div id="expiredOverlayStep1" class="expired-overlay-step expired-overlay-step-primary">
+        <div class="expired-overlay-step-label" data-i18n="expiredOverlayStep1Label">_</div>
+        <div class="expired-overlay-step-row">
+          <div class="expired-overlay-step-copy">
+            <div class="expired-overlay-step-title" data-i18n="expiredOverlayStep1Title">_</div>
+            <div class="expired-overlay-step-subtitle" data-i18n="popupSubscriptionGuarantee">_</div>
+          </div>
+          <button id="expiredUseThisDeviceButton" class="expired-step-button expired-step-button-primary" type="button" hidden
+            data-i18n="licenseUseThisDeviceButton">_</button>
+          <button id="expiredSubscribeNow" class="expired-step-button expired-step-button-primary" type="button"
+            data-i18n="expiredOverlayPrimaryCta">_</button>
+        </div>
+      </div>
+
+      <div id="expiredOverlayStep2" class="expired-overlay-step expired-overlay-step-secondary">
+        <div class="expired-overlay-step-row">
+          <div class="expired-overlay-step-copy">
+            <div class="expired-overlay-step-label" data-i18n="expiredOverlayStep2Label">_</div>
+            <div class="expired-overlay-step-title" data-i18n="expiredOverlayStep2Title">_</div>
+            <div class="expired-overlay-step-subtitle" data-i18n="expiredOverlayKeyLabel">_</div>
+          </div>
+          <button id="expiredShowKeyEntryButton" class="expired-step-button expired-step-button-outline" type="button"
+            data-i18n="expiredOverlaySecondaryCta">_</button>
+        </div>
+        <form id="expiredOverlayForm" class="expired-overlay-actions" hidden>
+          <label id="expiredOverlayKeyLabel" for="expiredLicenseKey" class="sr-only"
+            data-i18n="expiredOverlayKeyLabel">_</label>
+          <input id="expiredLicenseKey" class="license-input golden" type="text" autocomplete="off"
+            autocapitalize="characters" spellcheck="false" inputmode="text" placeholder="licenseKeyPlaceholder"
+            data-i18n="licenseKeyPlaceholder" />
+          <button id="expiredActivateButton" class="expired-step-button expired-step-button-primary" type="submit"
+            data-i18n="expiredOverlayActivateButton">_</button>
+        </form>
+      </div>
+
+      <div id="expiredOverlayStatus" class="status-note muted text-center" aria-live="polite" hidden></div>
+
+      <div class="expired-overlay-links">
+        <button id="expiredRecoverLicense" class="secondary-link" type="button" data-i18n="expiredOverlayEmailKeyButton">_</button>
+        <button id="expiredSupportLink" class="secondary-link" type="button" data-i18n="expiredOverlayHelpLink">_</button>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="popup.js"></script>
+</body>
+
+</html>

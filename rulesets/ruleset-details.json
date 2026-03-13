@@ -1,0 +1,164 @@
+[
+ {
+  "id": "ublock-filters",
+  "name": "uBlock filters – Ads, trackers, and more",
+  "group": "default",
+  "enabled": true,
+  "homeURL": "https://github.com/uBlockOrigin/uAssets",
+  "filters": {
+   "total": 9443,
+   "accepted": 9419,
+   "rejected": 1
+  },
+  "rules": {
+   "total": 5702,
+   "plain": 4550,
+   "regex": 173,
+   "strictblock": 23,
+   "urlskip": 185,
+   "rejected": 793
+  },
+  "css": {
+   "generic": 308,
+   "generichigh": 74,
+   "specific": 4528,
+   "procedural": 1659
+  },
+  "scriptlets": 62
+ },
+ {
+  "id": "easylist",
+  "name": "EasyList",
+  "group": "default",
+  "enabled": true,
+  "homeURL": "https://easylist.to/",
+  "filters": {
+   "total": 54414,
+   "accepted": 54390,
+   "rejected": 19
+  },
+  "rules": {
+   "total": 3604,
+   "plain": 3578,
+   "regex": 19,
+   "strictblock": 15,
+   "urlskip": 0,
+   "rejected": 7
+  },
+  "css": {
+   "generic": 4153,
+   "generichigh": 453,
+   "specific": 7898,
+   "procedural": 214
+  },
+  "scriptlets": 0
+ },
+ {
+  "id": "easyprivacy",
+  "name": "EasyPrivacy",
+  "group": "default",
+  "enabled": true,
+  "homeURL": "https://easylist.to/",
+  "filters": {
+   "total": 54466,
+   "accepted": 54433,
+   "rejected": 32
+  },
+  "rules": {
+   "total": 8354,
+   "plain": 8347,
+   "regex": 7,
+   "strictblock": 1,
+   "urlskip": 0,
+   "rejected": 0
+  },
+  "css": {
+   "generic": 2,
+   "generichigh": 0,
+   "specific": 0,
+   "procedural": 4
+  },
+  "scriptlets": 9
+ },
+ {
+  "id": "ublock-badware",
+  "name": "uBlock filters – Badware risks",
+  "group": "malware",
+  "enabled": true,
+  "homeURL": "https://github.com/uBlockOrigin/uAssets",
+  "filters": {
+   "total": 9902,
+   "accepted": 9871,
+   "rejected": 0
+  },
+  "rules": {
+   "total": 1275,
+   "plain": 1090,
+   "regex": 132,
+   "strictblock": 716,
+   "urlskip": 0,
+   "rejected": 53
+  },
+  "css": {
+   "generic": 14,
+   "generichigh": 0,
+   "specific": 195,
+   "procedural": 30
+  },
+  "scriptlets": 5
+ },
+ {
+  "id": "urlhaus-full",
+  "name": "Malicious URL Blocklist",
+  "group": "malware",
+  "enabled": true,
+  "homeURL": "https://gitlab.com/malware-filter/urlhaus-filter",
+  "filters": {
+   "total": 10555,
+   "accepted": 10555,
+   "rejected": 0
+  },
+  "rules": {
+   "total": 1,
+   "plain": 1,
+   "regex": 0,
+   "strictblock": 1,
+   "urlskip": 0,
+   "rejected": 0
+  },
+  "css": {
+   "generic": 0,
+   "generichigh": 0,
+   "specific": 0,
+   "procedural": 0
+  },
+  "scriptlets": 0
+ },
+ {
+  "id": "annoyances-overlays",
+  "name": "EasyList/uBO – Overlay Notices",
+  "group": "annoyances",
+  "enabled": true,
+  "homeURL": "https://github.com/easylist/easylist#fanboy-lists",
+  "filters": {
+   "total": 468,
+   "accepted": 468,
+   "rejected": 0
+  },
+  "rules": {
+   "total": 350,
+   "plain": 319,
+   "regex": 0,
+   "strictblock": 1,
+   "urlskip": 2,
+   "rejected": 29
+  },
+  "css": {
+   "generic": 1014,
+   "generichigh": 14,
+   "specific": 5367,
+   "procedural": 1218
+  },
+  "scriptlets": 31
+ }
+]

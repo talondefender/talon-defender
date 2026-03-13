@@ -1,0 +1,99 @@
+/**
+    Talon Defender click-to-load page styles.
+*/
+
+body {
+    align-items: center;
+    display: flex;
+    justify-content: center;
+    margin: 0;
+    min-height: 100vh;
+    padding: var(--default-gap-large);
+}
+
+body.loading {
+    visibility: hidden;
+}
+
+#rootContainer {
+    background: var(--surface-1);
+    border: 1px solid var(--border-1);
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgb(0 0 0 / 16%);
+    color: var(--ink-1);
+    max-width: 720px;
+    padding: var(--default-gap-large);
+    width: min(100%, 720px);
+}
+
+#titleText {
+    font-size: 1.2rem;
+    margin: 0 0 var(--default-gap-small) 0;
+}
+
+#summaryText {
+    margin: 0 0 var(--default-gap-small) 0;
+}
+
+#targetLine {
+    background: var(--surface-2);
+    border: 1px solid var(--border-1);
+    border-radius: 6px;
+    margin: 0 0 var(--default-gap-large) 0;
+    max-height: 10lh;
+    overflow: auto;
+    padding: var(--default-gap-small);
+    word-break: break-all;
+}
+
+#actionContainer {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--default-gap-small);
+}
+
+#openInTab {
+    color: var(--link-ink);
+    text-decoration: none;
+}
+
+#openInTab:hover {
+    color: var(--link-hover-ink);
+    text-decoration: underline;
+}
+
+#missingTargetText {
+    color: var(--ink-3);
+    margin: var(--default-gap-small) 0 0 0;
+}
+
+.hidden {
+    display: none;
+}
+
+button:disabled,
+a.disabled {
+    cursor: default;
+    opacity: 0.55;
+    pointer-events: none;
+}
+
+@media (max-width: 640px) {
+    body {
+        padding: var(--default-gap-small);
+    }
+
+    #rootContainer {
+        padding: var(--default-gap-large);
+    }
+
+    #actionContainer {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    #actionContainer > * {
+        width: 100%;
+    }
+}
