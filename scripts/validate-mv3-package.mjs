@@ -144,6 +144,10 @@ const hasWebAccessibleResource = (manifest, expectedPath) => {
   return false;
 };
 
+const REQUIRED_ALIASED_SCRIPTLET_PATHS = [
+  'rulesets/scripting/scriptlet/ublock-experimental.trusted-json-edit-xhr-request.js',
+];
+
 const checkPackagedComplianceFiles = async () => {
   const requiredFiles = [
     'LICENSE.txt',
@@ -299,6 +303,14 @@ const checkRulesetLicensingPolicy = async (manifest) => {
   }
 };
 
+const checkAliasedScriptletAssets = async () => {
+  for (const relativePath of REQUIRED_ALIASED_SCRIPTLET_PATHS) {
+    const absPath = path.join(targetDir, relativePath);
+    if (await pathExists(absPath)) { continue; }
+    addViolation(relativePath, 'Missing aliased scriptlet runtime asset');
+  }
+};
+
 const checkRulesetDefaultConsistency = async (manifest) => {
   const detailsPath = path.join(targetDir, 'rulesets', 'ruleset-details.json');
   if (await pathExists(detailsPath) === false) {
@@ -355,6 +367,27 @@ const checkManifest = async () => {
   } catch {
     addViolation('manifest.json', 'manifest.json is not valid JSON');
     return;
+  }
+
+  const edgeTarget = await pathExists(path.join(targetDir, 'edge-build-target.json'));
+  const hasManifestKey = (
+    Object.prototype.hasOwnProperty.call(manifest, 'key') &&
+    typeof manifest.key === 'string' &&
+    manifest.key.trim() !== ''
+  );
+
+  if (edgeTarget) {
+    if (hasManifestKey) {
+      addViolation('manifest.json', 'Edge package must not contain manifest.key');
+    }
+    if (Object.prototype.hasOwnProperty.call(manifest, 'update_url')) {
+      addViolation('manifest.json', 'Edge package must not contain update_url');
+    }
+  } else if (hasManifestKey === false) {
+    addViolation(
+      'manifest.json',
+      'Chrome package must include the pinned manifest key so Chrome treats unpacked builds as the published item'
+    );
   }
 
   if (manifest.manifest_version !== 3) {
@@ -555,7 +588,8 @@ const main = async () => {
     manifest = null;
   }
 
-  await checkPackagedComplianceFiles();
+await checkPackagedComplianceFiles();
+await checkAliasedScriptletAssets();
   if (manifest) {
     await checkSourceCodeMetadata(manifest);
     await checkRulesetLicensingPolicy(manifest);

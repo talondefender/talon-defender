@@ -24,6 +24,12 @@ import * as ut from './utils.js';
 import { browser, localRead, localRemove } from './ext.js';
 import { ubolErr, ubolLog } from './debug.js';
 
+import {
+    getScriptletHostExclusions,
+    normalizeYouTubeWatchOwnerProfile,
+    YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT,
+    YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY,
+} from './breakage-policy.js';
 import { fetchJSON } from './fetch.js';
 import { getEnabledRulesetsDetails } from './ruleset-manager.js';
 import { getFilteringModeDetails } from './mode-manager.js';
@@ -38,6 +44,15 @@ const AUTO_GENERIC_HIGH_KEY = 'autoGenericHighHosts';
 const INTERNAL_UNFILTERED_DOMAINS = [
     'talondefender.com',
 ];
+const SCRIPTLET_PATH_ALIASES = new Map([
+    // Upstream YouTube quick fixes now rely on the XHR request editor rather
+    // than the older fetch request variant. Reuse the bundled implementation
+    // until the next full ruleset refresh lands.
+    [
+        'ublock-filters.trusted-json-edit-xhr-request',
+        '/rulesets/scripting/scriptlet/ublock-experimental.trusted-json-edit-xhr-request.js',
+    ],
+]);
 
 function getScriptletDetails() {
     let promise = resourceDetailPromises.get('scriptlet');
@@ -93,6 +108,62 @@ const normalizeMatches = matches => {
     }
     matches.length = 0;
     matches.push('<all_urls>');
+};
+
+const getScriptletPath = id =>
+    SCRIPTLET_PATH_ALIASES.get(id) || `/rulesets/scripting/scriptlet/${id}.js`;
+
+const exactAndWildcardMatchesFromHostnames = hostnames => {
+    const out = [];
+    const seen = new Set();
+    for ( const hostname of hostnames || [] ) {
+        if ( typeof hostname !== 'string' || hostname.trim() === '' ) { continue; }
+        const normalized = hostname.trim();
+        for ( const match of [ `*://${normalized}/*`, ut.matchFromHostname(normalized) ] ) {
+            if ( seen.has(match) ) { continue; }
+            seen.add(match);
+            out.push(match);
+        }
+    }
+    return out;
+};
+
+const pushCompatibilityExcludeMatches = (excludeMatches, hostnames) => {
+    if ( Array.isArray(excludeMatches) === false || Array.isArray(hostnames) === false ) {
+        return;
+    }
+    const seen = new Set(excludeMatches);
+    for ( const match of exactAndWildcardMatchesFromHostnames(hostnames) ) {
+        if ( seen.has(match) ) { continue; }
+        seen.add(match);
+        excludeMatches.push(match);
+    }
+};
+
+const applyCompatibilityHostExclusions = (
+    scriptletId,
+    targetHostnames,
+    excludeMatches,
+    youtubeOwnerProfile = YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT,
+) => {
+    const compatibilityExclusions = getScriptletHostExclusions(scriptletId, {
+        youtubeOwnerProfile,
+    });
+    if ( compatibilityExclusions.length === 0 ) { return targetHostnames; }
+    const hostnames = Array.isArray(targetHostnames)
+        ? targetHostnames
+        : Array.from(targetHostnames || []);
+    if ( hostnames.length === 0 ) { return hostnames; }
+    if ( hostnames.includes('*') || hostnames.includes('all-urls') ) {
+        pushCompatibilityExcludeMatches(excludeMatches, compatibilityExclusions);
+        return hostnames;
+    }
+    const applicableExclusions = ut.intersectHostnameIters(
+        compatibilityExclusions,
+        hostnames,
+    );
+    if ( applicableExclusions.length === 0 ) { return hostnames; }
+    return ut.subtractHostnameIters(hostnames, applicableExclusions);
 };
 
 /******************************************************************************/
@@ -482,7 +553,7 @@ function registerSpecific(context) {
 /******************************************************************************/
 
 function registerScriptlet(context, scriptletDetails) {
-    const { before, filteringModeDetails, rulesetsDetails } = context;
+    const { before, filteringModeDetails, rulesetsDetails, youtubeWatchOwnerProfile } = context;
 
     const hasBroadHostPermission =
         filteringModeDetails.optimal.has('all-urls') ||
@@ -525,6 +596,12 @@ function registerScriptlet(context, scriptletDetails) {
                     );
                 }
             }
+            targetHostnames = applyCompatibilityHostExclusions(
+                id,
+                targetHostnames,
+                excludeMatches,
+                youtubeWatchOwnerProfile,
+            );
             if ( targetHostnames.length === 0 ) { continue; }
             matches.push(...ut.matchesFromHostnames(targetHostnames));
             normalizeMatches(matches);
@@ -533,7 +610,7 @@ function registerScriptlet(context, scriptletDetails) {
 
             const directive = {
                 id,
-                js: [ `/rulesets/scripting/scriptlet/${id}.js` ],
+                js: [ getScriptletPath(id) ],
                 matches,
                 allFrames: shouldUseAllFramesForScriptlet(rulesetId, token),
                 matchOriginAsFallback: shouldUseOriginFallbackForScriptlet(rulesetId, token),
@@ -633,7 +710,7 @@ function registerRemoteScriptlets(context, scriptletDetails) {
 
         const directive = {
             id,
-            js: [ `/rulesets/scripting/scriptlet/${baseId}.js` ],
+            js: [ getScriptletPath(baseId) ],
             matches,
             allFrames: shouldUseAllFramesForScriptlet(rulesetId, token),
             matchOriginAsFallback: shouldUseOriginFallbackForScriptlet(rulesetId, token),
@@ -716,8 +793,6 @@ function registerNativeHeuristics(context) {
         context.toAdd.push(directive);
     }
 }
-
-/******************************************************************************/
 
 function registerAutomation(context) {
     const { before, filteringModeDetails } = context;
@@ -945,6 +1020,7 @@ async function registerInjectables() {
         genericDetails,
         remoteScriptlets,
         autoGenericHighHosts,
+        youtubeWatchOwnerProfile,
         registered,
     ] = await Promise.all([
         getFilteringModeDetails(),
@@ -953,6 +1029,7 @@ async function registerInjectables() {
         getGenericDetails(),
         localRead(REMOTE_SCRIPTLETS_KEY),
         localRead(AUTO_GENERIC_HIGH_KEY),
+        localRead(YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY),
         browser.scripting.getRegisteredContentScripts(),
     ]);
     const before = new Map(
@@ -970,6 +1047,7 @@ async function registerInjectables() {
         toRemove,
         remoteScriptlets,
         autoGenericHighHosts: Array.isArray(autoGenericHighHosts) ? new Set(autoGenericHighHosts) : new Set(),
+        youtubeWatchOwnerProfile: normalizeYouTubeWatchOwnerProfile(youtubeWatchOwnerProfile),
     };
 
     await Promise.all([

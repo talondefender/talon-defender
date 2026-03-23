@@ -13,6 +13,7 @@ What each release script does:
 - runs the quality gate for the target store
 - packages the extension from source
 - validates the unpacked MV3 package
+- keeps the Chrome package on the published extension id while the Edge package strips store-specific `key` and `update_url`
 - verifies critical packaged files still match source hashes
 - verifies compliance files are present in the packaged output
 - creates the store zip in `dist/`

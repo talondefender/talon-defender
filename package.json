@@ -1,6 +1,6 @@
 {
   "name": "talon-defender-extension",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Talon Defender browser extension",
   "license": "GPL-3.0-or-later",
   "repository": {
@@ -9,7 +9,7 @@
   },
   "type": "module",
   "scripts": {
-    "test": "node --test test/auto-backoff.test.js test/automation-directives.test.js test/breakage-policy.test.js test/default-rulesets.test.js test/entitlement-regression.test.js",
+    "test": "node --test test/auto-backoff.test.js test/automation-directives.test.js test/breakage-policy.test.js test/default-rulesets.test.js test/entitlement-regression.test.js test/public-safe-audit.test.js",
     "audit:public-content": "node scripts/audit-public-content.mjs",
     "audit:public-safe": "node scripts/audit-public-safe.mjs && npm run audit:public-content",
     "package:extension": "node scripts/package-extension.mjs",

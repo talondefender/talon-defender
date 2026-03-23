@@ -61,6 +61,14 @@ const PRUNE_FILE_PATTERNS = [
   /^icons\/.*\.(?:html?|py)$/i,
 ];
 
+// Some runtime scriptlet aliases intentionally reuse implementations whose
+// file prefix does not match a bundled DNR ruleset id. Preserve those assets
+// when pruning packaged scriptlets or the extension will fail to register any
+// content scripts at startup.
+const EXTRA_PACKAGED_SCRIPTLET_IDS = new Set([
+  'ublock-experimental',
+]);
+
 const pathExists = async (p) => {
   try {
     await fs.stat(p);
@@ -214,7 +222,11 @@ const pruneUnbundledRulesetArtifacts = async (allowedIds) => {
   await pruneRulesetDirectoryById('rulesets/scripting/procedural', allowedIds);
   await pruneRulesetDirectoryById('rulesets/scripting/specific', allowedIds);
   await pruneRulesetDirectoryById('rulesets/scripting/generichigh', allowedIds);
-  await pruneRulesetDirectoryById('rulesets/scripting/scriptlet', allowedIds, 'prefix-before-dot');
+  await pruneRulesetDirectoryById(
+    'rulesets/scripting/scriptlet',
+    new Set([ ...allowedIds, ...EXTRA_PACKAGED_SCRIPTLET_IDS ]),
+    'prefix-before-dot'
+  );
 
   await pruneRulesetDetailsFile(allowedIds);
   await pruneTupleDetailsFile('rulesets/generic-details.json', allowedIds);

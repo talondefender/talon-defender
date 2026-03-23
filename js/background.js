@@ -28,10 +28,10 @@ import {
     getDefaultFilteringMode,
     getFilteringMode,
     getFilteringModeDetails,
-    setDefaultFilteringMode,
-    setFilteringMode,
-    setFilteringModeDetails,
-    syncWithBrowserPermissions,
+    setDefaultFilteringMode as setDefaultFilteringModeRaw,
+    setFilteringMode as setFilteringModeRaw,
+    setFilteringModeDetails as setFilteringModeDetailsRaw,
+    syncWithBrowserPermissions as syncWithBrowserPermissionsRaw,
 } from './mode-manager.js';
 
 import {
@@ -77,6 +77,14 @@ import {
 } from './auto-backoff.js';
 import {
     BREAKAGE_AUDIT_OVERRIDES_KEY,
+    getYouTubeWatchOwnerProfileConfig,
+    normalizeYouTubeWatchOwnerProfile,
+    YOUTUBE_WATCH_BOOTSTRAP_OPT_IN_STORAGE_KEY,
+    YOUTUBE_WATCH_BOOTSTRAP_PUBLIC_DEFAULT,
+    YOUTUBE_WATCH_RUNTIME_LANE_DEFAULT,
+    YOUTUBE_WATCH_PLAYER_RESPONSE_REWRITE_ENABLED,
+    YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT,
+    YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY,
     sanitizeBreakageAuditOverrides,
 } from './breakage-policy.js';
 
@@ -352,7 +360,9 @@ import {
 } from './debug.js';
 
 import { dnr } from './ext-compat.js';
-import { registerInjectables } from './scripting-manager.js';
+import {
+    registerInjectables,
+} from './scripting-manager.js';
 import { setToolbarIcon, toggleToolbarIcon } from './action.js';
 
 import {
@@ -456,6 +466,54 @@ let pendingPermissionRequest;
 
 const PAYWALL_RULE_BASE_ID = 8500000;
 const PAYWALL_RULE_PRIORITY = 3000000;
+const YOUTUBE_WATCH_BOOTSTRAP_HOST = 'www.youtube.com';
+const YOUTUBE_WATCH_BOOTSTRAP_URL = `https://${YOUTUBE_WATCH_BOOTSTRAP_HOST}/watch?v=talon_bootstrap`;
+const YOUTUBE_WATCH_BOOTSTRAP_COOKIE_NAME = 'td_yw_boot';
+const YOUTUBE_WATCH_REWRITE_MODE_COOKIE_NAME = 'td_yw_rw';
+const YOUTUBE_WATCH_RUNTIME_LANE_COOKIE_NAME = 'td_yw_lane';
+const YOUTUBE_WATCH_OWNER_PROFILE_COOKIE_NAME = 'td_yw_owner';
+const YOUTUBE_WATCH_BOOTSTRAP_COOKIE_SEEDED_KEY = 'youtubeWatchBootstrapCookieSeeded';
+const YOUTUBE_WATCH_BOOTSTRAP_COOKIE_TTL_SEC = 365 * 24 * 60 * 60;
+const YOUTUBE_FOLLOWUP_COOKIE_CLEAR_NAMES = new Set([
+    'GPS',
+    'YSC',
+    'VISITOR_INFO1_LIVE',
+    'VISITOR_PRIVACY_METADATA',
+    '__Secure-YNID',
+    '__Secure-ROLLOUT_TOKEN',
+    'PREF',
+]);
+const YOUTUBE_FOLLOWUP_TAB_STATE_TTL_MS = 2 * 60 * 1000;
+const YOUTUBE_FOLLOWUP_HEADER_STRIP_RULE_BASE_ID = 8650000;
+const YOUTUBE_FOLLOWUP_HEADER_STRIP_RULE_PRIORITY = 3000001;
+const YOUTUBE_FOLLOWUP_HEADER_STRIP_TTL_MS = 15000;
+const YOUTUBE_FOLLOWUP_NEXT_BLOCK_RULE_BASE_ID = 8651000;
+const YOUTUBE_FOLLOWUP_NEXT_BLOCK_RULE_PRIORITY = 3000002;
+const YOUTUBE_FOLLOWUP_NEXT_BLOCK_TTL_MS = 30000;
+const YOUTUBE_FOLLOWUP_NEUTRAL_HOP_URL = 'about:blank#td-yw-followup-hop';
+const YOUTUBE_FOLLOWUP_NEUTRAL_HOP_TTL_MS = 15000;
+const YOUTUBE_FOLLOWUP_DONOR_PREFETCH_TIMEOUT_MS = 4000;
+const YOUTUBE_FOLLOWUP_DONOR_MIN_FIRST_PAYLOAD_BYTES = 1024;
+const YOUTUBE_FOLLOWUP_ARCHITECTURE_PORT_NAME = 'td-yw-followup-architecture-proof';
+const YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A = 'track-a-controlled-entry';
+const YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_COMMIT = 'track-a-same-origin-commit';
+const YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_PREWARM = 'track-a-prewarm-pool';
+const YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_INTENT_LEASE = 'track-a-exact-anchor-intent-lease';
+const YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_DONOR_OWNER = 'track-a-exact-target-donor-tab-owner';
+const YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_B = 'track-b-background-relay';
+const YOUTUBE_FOLLOWUP_ARCHITECTURE_RELAY_PAGE = 'options/youtube-followup-relay.html';
+const YOUTUBE_FOLLOWUP_ARCHITECTURE_PREWARM_TTL_MS = 60000;
+const youtubeWatchTabState = new Map();
+const youtubeFollowupHeaderStripTimers = new Map();
+const youtubeFollowupNextBlockTimers = new Map();
+const youtubeFollowupNeutralHopTargets = new Map();
+const youtubeFollowupNeutralHopTimers = new Map();
+const youtubeFollowupDonorPrefetches = new Map();
+const youtubeFollowupDonorTabs = new Map();
+const youtubeFollowupArchitectureJobs = new Map();
+const youtubeFollowupArchitectureSubscribers = new Map();
+const youtubeFollowupArchitectureCompletedJobs = new Map();
+const youtubeFollowupArchitecturePrewarmPool = new Map();
 
 let entitlementStatus = { status: 'trial' };
 let paywallActive = false;
@@ -543,6 +601,1176 @@ const sanitizeFilteringModesPayload = value => {
 
 function isEntitled() {
     return shouldEnablePaywallForStatus(entitlementStatus) === false;
+}
+
+async function computeYouTubeWatchBootstrapEnabled() {
+    if ( shouldEnablePaywallForStatus(entitlementStatus) ) { return false; }
+    const bootstrapOptIn = await localRead(YOUTUBE_WATCH_BOOTSTRAP_OPT_IN_STORAGE_KEY)
+        .catch(() => false) === true;
+    if ( YOUTUBE_WATCH_BOOTSTRAP_PUBLIC_DEFAULT !== true && bootstrapOptIn !== true ) {
+        return false;
+    }
+    const level = await getFilteringMode(YOUTUBE_WATCH_BOOTSTRAP_HOST);
+    return level === MODE_OPTIMAL || level === MODE_COMPLETE;
+}
+
+async function getStoredYouTubeWatchBootstrapOptIn() {
+    return await localRead(YOUTUBE_WATCH_BOOTSTRAP_OPT_IN_STORAGE_KEY).catch(() => false) === true;
+}
+
+async function syncYouTubeWatchBootstrapCookie({ forceWrite = false } = {}) {
+    if ( browser.cookies?.set === undefined || browser.cookies?.get === undefined ) {
+        return false;
+    }
+
+    const enabled = await computeYouTubeWatchBootstrapEnabled().catch(( ) => false);
+    const nextValue = enabled ? '1' : '0';
+    const seeded = await localRead(YOUTUBE_WATCH_BOOTSTRAP_COOKIE_SEEDED_KEY);
+    let currentCookie;
+
+    if ( forceWrite === false ) {
+        try {
+            currentCookie = await browser.cookies.get({
+                url: YOUTUBE_WATCH_BOOTSTRAP_URL,
+                name: YOUTUBE_WATCH_BOOTSTRAP_COOKIE_NAME,
+            });
+        } catch(reason) {
+            ubolErr(`youtube-watch-bootstrap-cookie/get/${reason}`);
+        }
+    }
+
+    if ( forceWrite || currentCookie?.value !== nextValue ) {
+        try {
+            await browser.cookies.set({
+                url: YOUTUBE_WATCH_BOOTSTRAP_URL,
+                name: YOUTUBE_WATCH_BOOTSTRAP_COOKIE_NAME,
+                value: nextValue,
+                path: '/watch',
+                secure: true,
+                sameSite: 'lax',
+                expirationDate: Math.floor(Date.now() / 1000) + YOUTUBE_WATCH_BOOTSTRAP_COOKIE_TTL_SEC,
+            });
+        } catch(reason) {
+            ubolErr(`youtube-watch-bootstrap-cookie/set/${reason}`);
+        }
+    }
+
+    if ( seeded !== true ) {
+        await localWrite(YOUTUBE_WATCH_BOOTSTRAP_COOKIE_SEEDED_KEY, true).catch(ubolErr);
+    }
+
+    return enabled;
+}
+
+async function syncYouTubeWatchRewriteModeCookie({ forceWrite = false } = {}) {
+    if ( browser.cookies?.set === undefined || browser.cookies?.get === undefined ) {
+        return 'off';
+    }
+
+    const bootstrapEnabled = await computeYouTubeWatchBootstrapEnabled().catch(( ) => false);
+    const nextValue =
+        bootstrapEnabled && YOUTUBE_WATCH_PLAYER_RESPONSE_REWRITE_ENABLED === true
+            ? 'player'
+            : 'off';
+    let currentCookie;
+
+    if ( forceWrite === false ) {
+        try {
+            currentCookie = await browser.cookies.get({
+                url: YOUTUBE_WATCH_BOOTSTRAP_URL,
+                name: YOUTUBE_WATCH_REWRITE_MODE_COOKIE_NAME,
+            });
+        } catch(reason) {
+            ubolErr(`youtube-watch-rewrite-cookie/get/${reason}`);
+        }
+    }
+
+    if ( forceWrite || currentCookie?.value !== nextValue ) {
+        try {
+            await browser.cookies.set({
+                url: YOUTUBE_WATCH_BOOTSTRAP_URL,
+                name: YOUTUBE_WATCH_REWRITE_MODE_COOKIE_NAME,
+                value: nextValue,
+                path: '/watch',
+                secure: true,
+                sameSite: 'lax',
+                expirationDate: Math.floor(Date.now() / 1000) + YOUTUBE_WATCH_BOOTSTRAP_COOKIE_TTL_SEC,
+            });
+        } catch(reason) {
+            ubolErr(`youtube-watch-rewrite-cookie/set/${reason}`);
+        }
+    }
+
+    return nextValue;
+}
+
+async function syncYouTubeWatchRuntimeLaneCookie({ forceWrite = false } = {}) {
+    if ( browser.cookies?.set === undefined || browser.cookies?.get === undefined ) {
+        return YOUTUBE_WATCH_RUNTIME_LANE_DEFAULT;
+    }
+
+    const nextValue =
+        typeof YOUTUBE_WATCH_RUNTIME_LANE_DEFAULT === 'string' &&
+        YOUTUBE_WATCH_RUNTIME_LANE_DEFAULT !== ''
+            ? YOUTUBE_WATCH_RUNTIME_LANE_DEFAULT
+            : 'baseline';
+    let currentCookie;
+
+    if ( forceWrite === false ) {
+        try {
+            currentCookie = await browser.cookies.get({
+                url: YOUTUBE_WATCH_BOOTSTRAP_URL,
+                name: YOUTUBE_WATCH_RUNTIME_LANE_COOKIE_NAME,
+            });
+        } catch(reason) {
+            ubolErr(`youtube-watch-runtime-lane-cookie/get/${reason}`);
+        }
+    }
+
+    if ( forceWrite || currentCookie?.value !== nextValue ) {
+        try {
+            await browser.cookies.set({
+                url: YOUTUBE_WATCH_BOOTSTRAP_URL,
+                name: YOUTUBE_WATCH_RUNTIME_LANE_COOKIE_NAME,
+                value: nextValue,
+                path: '/watch',
+                secure: true,
+                sameSite: 'lax',
+                expirationDate: Math.floor(Date.now() / 1000) + YOUTUBE_WATCH_BOOTSTRAP_COOKIE_TTL_SEC,
+            });
+        } catch(reason) {
+            ubolErr(`youtube-watch-runtime-lane-cookie/set/${reason}`);
+        }
+    }
+
+    return nextValue;
+}
+
+async function getStoredYouTubeWatchOwnerProfile() {
+    const stored = await localRead(YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY).catch(() => null);
+    return normalizeYouTubeWatchOwnerProfile(stored);
+}
+
+async function syncYouTubeWatchOwnerProfileCookie({ forceWrite = false } = {}) {
+    if ( browser.cookies?.set === undefined || browser.cookies?.get === undefined ) {
+        return YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT;
+    }
+
+    const nextValue = await getStoredYouTubeWatchOwnerProfile();
+    let currentCookie;
+
+    if ( forceWrite === false ) {
+        try {
+            currentCookie = await browser.cookies.get({
+                url: YOUTUBE_WATCH_BOOTSTRAP_URL,
+                name: YOUTUBE_WATCH_OWNER_PROFILE_COOKIE_NAME,
+            });
+        } catch(reason) {
+            ubolErr(`youtube-watch-owner-profile-cookie/get/${reason}`);
+        }
+    }
+
+    if ( forceWrite || currentCookie?.value !== nextValue ) {
+        try {
+            await browser.cookies.set({
+                url: YOUTUBE_WATCH_BOOTSTRAP_URL,
+                name: YOUTUBE_WATCH_OWNER_PROFILE_COOKIE_NAME,
+                value: nextValue,
+                path: '/watch',
+                secure: true,
+                sameSite: 'lax',
+                expirationDate: Math.floor(Date.now() / 1000) + YOUTUBE_WATCH_BOOTSTRAP_COOKIE_TTL_SEC,
+            });
+        } catch(reason) {
+            ubolErr(`youtube-watch-owner-profile-cookie/set/${reason}`);
+        }
+    }
+
+    return nextValue;
+}
+
+async function syncYouTubeWatchControlCookies({ forceWrite = false } = {}) {
+    await syncYouTubeWatchBootstrapCookie({ forceWrite }).catch(ubolErr);
+    await syncYouTubeWatchRewriteModeCookie({ forceWrite }).catch(ubolErr);
+    await syncYouTubeWatchRuntimeLaneCookie({ forceWrite }).catch(ubolErr);
+    await syncYouTubeWatchOwnerProfileCookie({ forceWrite }).catch(ubolErr);
+}
+
+function isYouTubeFollowupClearCookie(cookie) {
+    if ( cookie instanceof Object === false ) { return false; }
+    if ( YOUTUBE_FOLLOWUP_COOKIE_CLEAR_NAMES.has(cookie.name) === false ) { return false; }
+    const rawDomain = typeof cookie.domain === 'string' ? cookie.domain : '';
+    const normalizedDomain = rawDomain.trim().toLowerCase().replace(/^\./, '');
+    return normalizedDomain === 'youtube.com' || normalizedDomain.endsWith('.youtube.com');
+}
+
+function normalizeCookiePartitionKey(partitionKey) {
+    if ( partitionKey instanceof Object && typeof partitionKey.topLevelSite === 'string' ) {
+        const normalized = {
+            topLevelSite: partitionKey.topLevelSite,
+        };
+        if ( typeof partitionKey.hasCrossSiteAncestor === 'boolean' ) {
+            normalized.hasCrossSiteAncestor = partitionKey.hasCrossSiteAncestor;
+        }
+        return normalized;
+    }
+    if ( typeof partitionKey === 'string' && partitionKey !== '' ) {
+        return { topLevelSite: partitionKey };
+    }
+    return null;
+}
+
+async function getSenderCookiePartitionKey(sender) {
+    if ( browser.cookies?.getPartitionKey === undefined ) { return null; }
+    const tabId = Number.isInteger(sender?.tab?.id) ? sender.tab.id : null;
+    const frameId = Number.isInteger(sender?.frameId) ? sender.frameId : 0;
+    if ( tabId === null || tabId < 0 ) { return null; }
+    try {
+        return normalizeCookiePartitionKey(await browser.cookies.getPartitionKey({
+            tabId,
+            frameId,
+        }));
+    } catch(reason) {
+        ubolErr(`youtube-followup-cookie-partition-key/${reason}`);
+    }
+    return null;
+}
+
+function youtubeCookieRemovalDetails(cookie, partitionKeyOverride = null) {
+    if ( isYouTubeFollowupClearCookie(cookie) === false ) { return []; }
+    const normalizedDomain = cookie.domain.trim().toLowerCase().replace(/^\./, '');
+    const path = typeof cookie.path === 'string' && cookie.path !== '' ? cookie.path : '/';
+    const secure = cookie.secure !== false;
+    const baseDetails = {
+        name: cookie.name,
+    };
+    if ( typeof cookie.storeId === 'string' && cookie.storeId !== '' ) {
+        baseDetails.storeId = cookie.storeId;
+    }
+    const partitionKey = normalizeCookiePartitionKey(partitionKeyOverride || cookie.partitionKey);
+    if ( partitionKey !== null && cookie.partitionKey !== undefined ) {
+        baseDetails.partitionKey = partitionKey;
+    }
+    const candidateHosts = [ normalizedDomain, YOUTUBE_WATCH_BOOTSTRAP_HOST ]
+        .filter(hostname => typeof hostname === 'string' && hostname !== '');
+    const uniqueHosts = [];
+    const seenHosts = new Set();
+    for ( const hostname of candidateHosts ) {
+        if ( seenHosts.has(hostname) ) { continue; }
+        seenHosts.add(hostname);
+        uniqueHosts.push(hostname);
+    }
+    return uniqueHosts.map(hostname => ({
+        ...baseDetails,
+        url: `${secure ? 'https' : 'http'}://${hostname}${path}`,
+    }));
+}
+
+async function clearYouTubeFollowupCookies(partitionKeyOverride = null) {
+    if ( browser.cookies?.getAll === undefined || browser.cookies?.remove === undefined ) {
+        return { ok: false, removedCount: 0 };
+    }
+    const cookies = await browser.cookies.getAll({}).catch(( ) => []);
+    let removedCount = 0;
+    for ( const cookie of cookies ) {
+        const detailsList = youtubeCookieRemovalDetails(cookie, partitionKeyOverride);
+        if ( detailsList.length === 0 ) { continue; }
+        for ( const details of detailsList ) {
+            try {
+                const removed = await browser.cookies.remove(details);
+                if ( removed ) {
+                    removedCount += 1;
+                    break;
+                }
+            } catch(reason) {
+                ubolErr(`clearYouTubeFollowupCookies/remove/${reason}`);
+            }
+        }
+    }
+    return { ok: true, removedCount };
+}
+
+function getYouTubeFollowupHeaderStripRuleIds(tabId) {
+    const baseId = YOUTUBE_FOLLOWUP_HEADER_STRIP_RULE_BASE_ID + (tabId * 4);
+    return [ baseId + 1, baseId + 2 ];
+}
+
+function getYouTubeFollowupNextBlockRuleIds(tabId) {
+    const baseId = YOUTUBE_FOLLOWUP_NEXT_BLOCK_RULE_BASE_ID + (tabId * 4);
+    return [ baseId + 1 ];
+}
+
+async function clearYouTubeFollowupHeaderStripRules(tabId) {
+    if ( Number.isInteger(tabId) === false || tabId < 0 ) { return false; }
+    const timer = youtubeFollowupHeaderStripTimers.get(tabId);
+    if ( timer !== undefined ) {
+        self.clearTimeout(timer);
+        youtubeFollowupHeaderStripTimers.delete(tabId);
+    }
+    if ( browser.declarativeNetRequest?.updateSessionRules === undefined ) {
+        return false;
+    }
+    const removeRuleIds = getYouTubeFollowupHeaderStripRuleIds(tabId);
+    try {
+        await browser.declarativeNetRequest.updateSessionRules({ removeRuleIds });
+        return true;
+    } catch(reason) {
+        ubolErr(`clearYouTubeFollowupHeaderStripRules/${reason}`);
+    }
+    return false;
+}
+
+async function clearYouTubeFollowupNextBlockRules(tabId) {
+    if ( Number.isInteger(tabId) === false || tabId < 0 ) { return false; }
+    const timer = youtubeFollowupNextBlockTimers.get(tabId);
+    if ( timer !== undefined ) {
+        self.clearTimeout(timer);
+        youtubeFollowupNextBlockTimers.delete(tabId);
+    }
+    if ( browser.declarativeNetRequest?.updateSessionRules === undefined ) {
+        return false;
+    }
+    const removeRuleIds = getYouTubeFollowupNextBlockRuleIds(tabId);
+    try {
+        await browser.declarativeNetRequest.updateSessionRules({ removeRuleIds });
+        return true;
+    } catch(reason) {
+        ubolErr(`clearYouTubeFollowupNextBlockRules/${reason}`);
+    }
+    return false;
+}
+
+async function armYouTubeFollowupHeaderStripRules(tabId) {
+    if ( Number.isInteger(tabId) === false || tabId < 0 ) { return false; }
+    if ( browser.declarativeNetRequest?.updateSessionRules === undefined ) {
+        return false;
+    }
+    const [ watchRuleId, nextRuleId ] = getYouTubeFollowupHeaderStripRuleIds(tabId);
+    const addRules = [
+        {
+            id: watchRuleId,
+            priority: YOUTUBE_FOLLOWUP_HEADER_STRIP_RULE_PRIORITY,
+            action: {
+                type: 'modifyHeaders',
+                requestHeaders: [
+                    { header: 'cookie', operation: 'remove' },
+                ],
+            },
+            condition: {
+                tabIds: [ tabId ],
+                urlFilter: '||www.youtube.com/watch?',
+                resourceTypes: [ 'main_frame' ],
+            },
+        },
+        {
+            id: nextRuleId,
+            priority: YOUTUBE_FOLLOWUP_HEADER_STRIP_RULE_PRIORITY,
+            action: {
+                type: 'modifyHeaders',
+                requestHeaders: [
+                    { header: 'cookie', operation: 'remove' },
+                ],
+            },
+            condition: {
+                tabIds: [ tabId ],
+                urlFilter: '||www.youtube.com/youtubei/v1/next',
+                resourceTypes: [ 'xmlhttprequest' ],
+            },
+        },
+    ];
+    try {
+        await browser.declarativeNetRequest.updateSessionRules({
+            addRules,
+            removeRuleIds: [ watchRuleId, nextRuleId ],
+        });
+        const existingTimer = youtubeFollowupHeaderStripTimers.get(tabId);
+        if ( existingTimer !== undefined ) {
+            self.clearTimeout(existingTimer);
+        }
+        const timer = self.setTimeout(() => {
+            clearYouTubeFollowupHeaderStripRules(tabId).catch(ubolErr);
+        }, YOUTUBE_FOLLOWUP_HEADER_STRIP_TTL_MS);
+        youtubeFollowupHeaderStripTimers.set(tabId, timer);
+        return true;
+    } catch(reason) {
+        ubolErr(`armYouTubeFollowupHeaderStripRules/${reason}`);
+    }
+    return false;
+}
+
+async function armYouTubeFollowupNextBlockRules(tabId) {
+    if ( Number.isInteger(tabId) === false || tabId < 0 ) { return false; }
+    if ( browser.declarativeNetRequest?.updateSessionRules === undefined ) {
+        return false;
+    }
+    const [ nextRuleId ] = getYouTubeFollowupNextBlockRuleIds(tabId);
+    const addRules = [
+        {
+            id: nextRuleId,
+            priority: YOUTUBE_FOLLOWUP_NEXT_BLOCK_RULE_PRIORITY,
+            action: {
+                type: 'block',
+            },
+            condition: {
+                initiatorDomains: [ YOUTUBE_WATCH_BOOTSTRAP_HOST ],
+                requestDomains: [ YOUTUBE_WATCH_BOOTSTRAP_HOST ],
+                urlFilter: '||www.youtube.com/youtubei/v1/next',
+            },
+        },
+    ];
+    try {
+        await browser.declarativeNetRequest.updateSessionRules({
+            addRules,
+            removeRuleIds: [ nextRuleId ],
+        });
+        const existingTimer = youtubeFollowupNextBlockTimers.get(tabId);
+        if ( existingTimer !== undefined ) {
+            self.clearTimeout(existingTimer);
+        }
+        const timer = self.setTimeout(() => {
+            clearYouTubeFollowupNextBlockRules(tabId).catch(ubolErr);
+        }, YOUTUBE_FOLLOWUP_NEXT_BLOCK_TTL_MS);
+        youtubeFollowupNextBlockTimers.set(tabId, timer);
+        return true;
+    } catch(reason) {
+        ubolErr(`armYouTubeFollowupNextBlockRules/${reason}`);
+    }
+    return false;
+}
+
+function clearYouTubeFollowupNeutralHop(tabId) {
+    if ( Number.isInteger(tabId) === false || tabId < 0 ) { return false; }
+    const timer = youtubeFollowupNeutralHopTimers.get(tabId);
+    if ( timer !== undefined ) {
+        self.clearTimeout(timer);
+        youtubeFollowupNeutralHopTimers.delete(tabId);
+    }
+    return youtubeFollowupNeutralHopTargets.delete(tabId);
+}
+
+function armYouTubeFollowupNeutralHop(tabId, targetUrl) {
+    if ( Number.isInteger(tabId) === false || tabId < 0 ) { return false; }
+    const normalizedTargetUrl = normalizeYouTubeFollowupTargetUrl(targetUrl);
+    if ( normalizedTargetUrl === '' ) { return false; }
+    clearYouTubeFollowupNeutralHop(tabId);
+    youtubeFollowupNeutralHopTargets.set(tabId, normalizedTargetUrl);
+    const timer = self.setTimeout(() => {
+        clearYouTubeFollowupNeutralHop(tabId);
+    }, YOUTUBE_FOLLOWUP_NEUTRAL_HOP_TTL_MS);
+    youtubeFollowupNeutralHopTimers.set(tabId, timer);
+    return true;
+}
+
+function parseYouTubeWatchVideoId(url) {
+    if ( typeof url !== 'string' || url === '' ) { return ''; }
+    try {
+        const parsed = new URL(url);
+        if ( parsed.hostname !== YOUTUBE_WATCH_BOOTSTRAP_HOST || parsed.pathname !== '/watch' ) {
+            return '';
+        }
+        const videoId = parsed.searchParams.get('v');
+        return typeof videoId === 'string' ? videoId.trim() : '';
+    } catch {
+    }
+    return '';
+}
+
+function normalizeYouTubeFollowupTargetUrl(value) {
+    if ( typeof value !== 'string' || value.trim() === '' ) { return ''; }
+    try {
+        const parsed = new URL(value);
+        if ( parsed.hostname !== YOUTUBE_WATCH_BOOTSTRAP_HOST || parsed.pathname !== '/watch' ) {
+            return '';
+        }
+        const videoId = parsed.searchParams.get('v');
+        if ( typeof videoId !== 'string' || videoId.trim() === '' ) { return ''; }
+        return `${parsed.origin}/watch?v=${videoId.trim()}`;
+    } catch {
+    }
+    return '';
+}
+
+function buildYouTubeFollowupDonorUrl(targetUrl, donorToken) {
+    const normalizedTargetUrl = normalizeYouTubeFollowupTargetUrl(targetUrl);
+    if ( normalizedTargetUrl === '' || typeof donorToken !== 'string' || donorToken === '' ) {
+        return '';
+    }
+    try {
+        const parsed = new URL(normalizedTargetUrl);
+        parsed.hash = `td-yw-donor=${encodeURIComponent(donorToken)}`;
+        return parsed.toString();
+    } catch {
+    }
+    return '';
+}
+
+function sanitizeYouTubeFollowupPrefetchSections(value) {
+    if ( value instanceof Object === false ) { return null; }
+    const ytInitialData = value.ytInitialData instanceof Object
+        ? JSON.parse(JSON.stringify(value.ytInitialData))
+        : null;
+    const fullPlayerResponse = value.fullPlayerResponse instanceof Object
+        ? JSON.parse(JSON.stringify(value.fullPlayerResponse))
+        : null;
+    const responseContext = value.responseContext instanceof Object
+        ? JSON.parse(JSON.stringify(value.responseContext))
+        : null;
+    const streamingData = value.streamingData instanceof Object
+        ? JSON.parse(JSON.stringify(value.streamingData))
+        : null;
+    const playbackTracking = value.playbackTracking instanceof Object
+        ? JSON.parse(JSON.stringify(value.playbackTracking))
+        : null;
+    const playerConfig = value.playerConfig instanceof Object
+        ? JSON.parse(JSON.stringify(value.playerConfig))
+        : null;
+    if (
+        fullPlayerResponse === null &&
+        (streamingData === null || playerConfig === null)
+    ) {
+        return null;
+    }
+    return {
+        ytInitialData,
+        fullPlayerResponse,
+        responseContext,
+        streamingData,
+        playbackTracking,
+        playerConfig,
+    };
+}
+
+function sanitizeYouTubeFollowupBootstrapEnvelope(value) {
+    if ( value instanceof Object === false ) { return null; }
+    const cloneObject = candidate =>
+        candidate instanceof Object
+            ? JSON.parse(JSON.stringify(candidate))
+            : null;
+    let rawPlayerResponse = cloneObject(value.rawPlayerResponse);
+    if ( rawPlayerResponse === null && typeof value.rawPlayerResponse === 'string' ) {
+        try {
+            const parsed = JSON.parse(value.rawPlayerResponse);
+            rawPlayerResponse = cloneObject(parsed);
+        } catch {}
+    }
+    return {
+        ytcfg: cloneObject(value.ytcfg),
+        ytInitialData: cloneObject(value.ytInitialData),
+        ytInitialPlayerResponse: cloneObject(value.ytInitialPlayerResponse),
+        ytPlayerConfig: cloneObject(value.ytPlayerConfig),
+        rawPlayerResponse,
+        bootstrapPlayerResponse: cloneObject(value.bootstrapPlayerResponse),
+        bootstrapWebPlayerContextConfig: cloneObject(value.bootstrapWebPlayerContextConfig),
+        wizGlobalData: cloneObject(value.wizGlobalData),
+    };
+}
+
+function sanitizeYouTubeFollowupDonorHealth(value) {
+    if ( value instanceof Object === false ) { return null; }
+    const firstPayloadBytes = Number(value.firstPayloadBytes);
+    const firstPayloadSubstantive = value.firstPayloadSubstantive === true;
+    const firstPayloadHost = typeof value.firstPayloadHost === 'string'
+        ? value.firstPayloadHost.trim()
+        : '';
+    const adShowing = value.adShowing === true;
+    const capturedAt = Number(value.capturedAt);
+    return {
+        firstPayloadBytes: Number.isFinite(firstPayloadBytes) ? firstPayloadBytes : -1,
+        firstPayloadSubstantive,
+        firstPayloadHost,
+        adShowing,
+        capturedAt: Number.isFinite(capturedAt) ? capturedAt : 0,
+    };
+}
+
+function sanitizeYouTubeFollowupSameOriginCommit(value) {
+    if ( value instanceof Object === false ) { return null; }
+    const storedAt = Number(value.storedAt);
+    const storedBytes = Number(value.storedBytes);
+    return {
+        storedAt: Number.isFinite(storedAt) ? storedAt : 0,
+        writeOk: value.writeOk === true,
+        storedBytes: Number.isFinite(storedBytes) ? storedBytes : 0,
+        readbackOk: value.readbackOk === true,
+        targetMatch: value.targetMatch === true,
+    };
+}
+
+function isYouTubeFollowupDonorAccepted(sections, health) {
+    if ( sections instanceof Object === false ) { return false; }
+    if (
+        sections.fullPlayerResponse === null &&
+        (
+            sections.streamingData === null ||
+            sections.playerConfig === null
+        )
+    ) {
+        return false;
+    }
+    if ( health instanceof Object === false ) { return false; }
+    if ( health.adShowing === true ) { return false; }
+    if ( health.firstPayloadSubstantive === true ) { return true; }
+    return health.firstPayloadBytes > YOUTUBE_FOLLOWUP_DONOR_MIN_FIRST_PAYLOAD_BYTES;
+}
+
+function isYouTubeFollowupBootstrapEnvelopeAccepted(envelope) {
+    if ( envelope instanceof Object === false ) { return false; }
+    return (
+        envelope.ytcfg instanceof Object &&
+        envelope.ytInitialPlayerResponse instanceof Object &&
+        envelope.ytPlayerConfig instanceof Object &&
+        envelope.bootstrapWebPlayerContextConfig instanceof Object
+    );
+}
+
+function isYouTubeFollowupSameOriginCommitAccepted(commit) {
+    if ( commit instanceof Object === false ) { return false; }
+    return commit.writeOk === true &&
+        commit.readbackOk === true &&
+        commit.targetMatch === true;
+}
+
+function finishYouTubeFollowupDonorPrefetch(donorToken, payload = {}) {
+    if ( typeof donorToken !== 'string' || donorToken === '' ) { return false; }
+    const entry = youtubeFollowupDonorPrefetches.get(donorToken);
+    if ( entry === undefined ) { return false; }
+    youtubeFollowupDonorPrefetches.delete(donorToken);
+    if ( entry.timeoutId !== undefined ) {
+        self.clearTimeout(entry.timeoutId);
+    }
+    if ( Number.isInteger(entry.donorTabId) ) {
+        youtubeFollowupDonorTabs.delete(entry.donorTabId);
+        browser.tabs?.remove?.(entry.donorTabId).catch(ignoreRuntimeError);
+    }
+    try {
+        entry.callback(payload instanceof Object ? payload : { ok: false });
+    } catch(reason) {
+        ubolErr(`finishYouTubeFollowupDonorPrefetch/callback/${reason}`);
+    }
+    return true;
+}
+
+function startYouTubeFollowupDonorPrefetch(tabId, targetUrl, callback) {
+    if ( Number.isInteger(tabId) === false || tabId < 0 || typeof callback !== 'function' ) {
+        callback({ ok: false });
+        return;
+    }
+    const normalizedTargetUrl = normalizeYouTubeFollowupTargetUrl(targetUrl);
+    if ( normalizedTargetUrl === '' ) {
+        callback({ ok: false });
+        return;
+    }
+    const donorToken = `tdyw-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const donorUrl = buildYouTubeFollowupDonorUrl(normalizedTargetUrl, donorToken);
+    if ( donorUrl === '' ) {
+        callback({ ok: false });
+        return;
+    }
+    const timeoutId = self.setTimeout(() => {
+        finishYouTubeFollowupDonorPrefetch(donorToken, { ok: false, error: 'timeout' });
+    }, YOUTUBE_FOLLOWUP_DONOR_PREFETCH_TIMEOUT_MS);
+    youtubeFollowupDonorPrefetches.set(donorToken, {
+        sourceTabId: tabId,
+        targetUrl: normalizedTargetUrl,
+        donorTabId: -1,
+        callback,
+        timeoutId,
+    });
+    browser.tabs?.create?.({
+        url: 'about:blank',
+        active: false,
+    }).then(async tab => {
+        const donorTabId = Number.isInteger(tab?.id) ? tab.id : -1;
+        const entry = youtubeFollowupDonorPrefetches.get(donorToken);
+        if ( entry === undefined ) { return; }
+        if ( donorTabId < 0 ) {
+            finishYouTubeFollowupDonorPrefetch(donorToken, { ok: false, error: 'missing-tab-id' });
+            return;
+        }
+        entry.donorTabId = donorTabId;
+        youtubeFollowupDonorPrefetches.set(donorToken, entry);
+        youtubeFollowupDonorTabs.set(donorTabId, donorToken);
+        await Promise.all([
+            armYouTubeFollowupHeaderStripRules(donorTabId).catch(reason => {
+                ubolErr(`startYouTubeFollowupDonorPrefetch/headerStrip/${reason}`);
+                return false;
+            }),
+            armYouTubeFollowupNextBlockRules(donorTabId).catch(reason => {
+                ubolErr(`startYouTubeFollowupDonorPrefetch/nextBlock/${reason}`);
+                return false;
+            }),
+        ]);
+        try {
+            await browser.tabs?.update?.(donorTabId, { url: donorUrl });
+        } catch(reason) {
+            ubolErr(`startYouTubeFollowupDonorPrefetch/update/${reason}`);
+            finishYouTubeFollowupDonorPrefetch(donorToken, { ok: false, error: `${reason}` });
+        }
+    }).catch(reason => {
+        ubolErr(`startYouTubeFollowupDonorPrefetch/${reason}`);
+        finishYouTubeFollowupDonorPrefetch(donorToken, { ok: false, error: `${reason}` });
+    });
+}
+
+function getYouTubeFollowupArchitecturePrewarmEntry(targetUrl) {
+    const normalizedTargetUrl = normalizeYouTubeFollowupTargetUrl(targetUrl);
+    if ( normalizedTargetUrl === '' ) { return null; }
+    const entry = youtubeFollowupArchitecturePrewarmPool.get(normalizedTargetUrl);
+    if ( entry === undefined ) { return null; }
+    if (
+        entry.status === 'ready' &&
+        Number.isFinite(entry.expiresAt) &&
+        entry.expiresAt <= Date.now()
+    ) {
+        const staleEntry = {
+            ...entry,
+            status: 'stale',
+            staleAt: Date.now(),
+            entry: null,
+        };
+        youtubeFollowupArchitecturePrewarmPool.set(normalizedTargetUrl, staleEntry);
+        return staleEntry;
+    }
+    return entry;
+}
+
+function storeYouTubeFollowupArchitecturePrewarmResult(jobEntry, payload = {}) {
+    if ( jobEntry instanceof Object === false ) { return; }
+    if ( jobEntry.strategy !== YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_PREWARM ) { return; }
+    const targetUrl = normalizeYouTubeFollowupTargetUrl(jobEntry.targetUrl);
+    if ( targetUrl === '' ) { return; }
+    const now = Date.now();
+    if ( payload.ok === true && payload.entry instanceof Object ) {
+        youtubeFollowupArchitecturePrewarmPool.set(targetUrl, {
+            strategy: jobEntry.strategy,
+            targetUrl,
+            targetVideoId: typeof payload.targetVideoId === 'string'
+                ? payload.targetVideoId
+                : parseYouTubeWatchVideoId(targetUrl),
+            status: 'ready',
+            requestedAt: jobEntry.donorStartedAt,
+            donorStartedAt: jobEntry.donorStartedAt,
+            donorReadyAt: typeof payload.donorReadyAt === 'number' ? payload.donorReadyAt : now,
+            createdAt: now,
+            expiresAt: now + YOUTUBE_FOLLOWUP_ARCHITECTURE_PREWARM_TTL_MS,
+            health: payload.health instanceof Object
+                ? JSON.parse(JSON.stringify(payload.health))
+                : null,
+            entry: JSON.parse(JSON.stringify(payload.entry)),
+        });
+        return;
+    }
+    youtubeFollowupArchitecturePrewarmPool.set(targetUrl, {
+        strategy: jobEntry.strategy,
+        targetUrl,
+        targetVideoId: parseYouTubeWatchVideoId(targetUrl),
+        status: payload.error === 'stale' ? 'stale' : 'failed',
+        requestedAt: jobEntry.donorStartedAt,
+        donorStartedAt: jobEntry.donorStartedAt,
+        donorReadyAt: null,
+        createdAt: now,
+        expiresAt: now + YOUTUBE_FOLLOWUP_ARCHITECTURE_PREWARM_TTL_MS,
+        staleAt: payload.error === 'stale' ? now : null,
+        error: typeof payload.error === 'string' ? payload.error : 'prewarm-failed',
+        entry: null,
+    });
+}
+
+function consumeYouTubeFollowupArchitecturePrewarmEntry(targetUrl) {
+    const normalizedTargetUrl = normalizeYouTubeFollowupTargetUrl(targetUrl);
+    if ( normalizedTargetUrl === '' ) {
+        return {
+            ok: false,
+            error: 'invalid-target-url',
+            targetUrl: '',
+            prewarmStatus: 'miss',
+            predictionHit: false,
+            predictionMiss: true,
+            staleEntry: false,
+        };
+    }
+    const poolEntry = getYouTubeFollowupArchitecturePrewarmEntry(normalizedTargetUrl);
+    if ( poolEntry === null ) {
+        return {
+            ok: false,
+            error: 'prewarm-miss',
+            targetUrl: normalizedTargetUrl,
+            prewarmStatus: 'miss',
+            predictionHit: false,
+            predictionMiss: true,
+            staleEntry: false,
+            prewarmRequested: false,
+        };
+    }
+    if ( poolEntry.status === 'ready' && poolEntry.entry instanceof Object ) {
+        const consumedAt = Date.now();
+        youtubeFollowupArchitecturePrewarmPool.set(normalizedTargetUrl, {
+            ...poolEntry,
+            status: 'consumed',
+            consumedAt,
+            entry: null,
+        });
+        return {
+            ok: true,
+            targetUrl: normalizedTargetUrl,
+            targetVideoId: poolEntry.targetVideoId,
+            donorStartedAt: poolEntry.donorStartedAt,
+            donorReadyAt: poolEntry.donorReadyAt,
+            prewarmStatus: 'hit',
+            predictionHit: true,
+            predictionMiss: false,
+            staleEntry: false,
+            prewarmRequested: true,
+            prewarmEntryCreatedAt: poolEntry.createdAt,
+            prewarmEntryAgeMs:
+                Number.isFinite(poolEntry.createdAt) ? consumedAt - poolEntry.createdAt : null,
+            entry: JSON.parse(JSON.stringify(poolEntry.entry)),
+        };
+    }
+    return {
+        ok: false,
+        error:
+            typeof poolEntry.error === 'string' && poolEntry.error !== ''
+                ? poolEntry.error
+                : poolEntry.status === 'stale'
+                    ? 'stale'
+                    : 'prewarm-miss',
+        targetUrl: normalizedTargetUrl,
+        targetVideoId: poolEntry.targetVideoId || parseYouTubeWatchVideoId(normalizedTargetUrl),
+        donorStartedAt: Number.isFinite(poolEntry.donorStartedAt) ? poolEntry.donorStartedAt : null,
+        donorReadyAt: Number.isFinite(poolEntry.donorReadyAt) ? poolEntry.donorReadyAt : null,
+        prewarmStatus: poolEntry.status === 'stale' ? 'stale' : 'miss',
+        predictionHit: false,
+        predictionMiss: poolEntry.status !== 'stale',
+        staleEntry: poolEntry.status === 'stale',
+        prewarmRequested: true,
+        prewarmEntryCreatedAt:
+            Number.isFinite(poolEntry.createdAt) ? poolEntry.createdAt : null,
+        prewarmEntryAgeMs:
+            Number.isFinite(poolEntry.createdAt) ? Date.now() - poolEntry.createdAt : null,
+    };
+}
+
+function isYouTubeFollowupArchitectureStrategy(value) {
+    return value === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A ||
+        value === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_COMMIT ||
+        value === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_PREWARM ||
+        value === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_INTENT_LEASE ||
+        value === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_DONOR_OWNER ||
+        value === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_B;
+}
+
+function findYouTubeFollowupArchitectureJobBySource(sourceTabId, strategy, targetUrl) {
+    if ( Number.isInteger(sourceTabId) === false || sourceTabId < 0 ) { return null; }
+    const normalizedTargetUrl = normalizeYouTubeFollowupTargetUrl(targetUrl);
+    if ( normalizedTargetUrl === '' ) { return null; }
+    for ( const [token, entry] of youtubeFollowupArchitectureJobs ) {
+        if ( entry instanceof Object === false ) { continue; }
+        if ( entry.sourceTabId !== sourceTabId ) { continue; }
+        if ( entry.strategy !== strategy ) { continue; }
+        if ( entry.targetUrl !== normalizedTargetUrl ) { continue; }
+        return {
+            token,
+            entry,
+        };
+    }
+    return null;
+}
+
+function findYouTubeFollowupCompletedArchitectureJobBySource(sourceTabId, strategy, targetUrl) {
+    if ( Number.isInteger(sourceTabId) === false || sourceTabId < 0 ) { return null; }
+    const normalizedTargetUrl = normalizeYouTubeFollowupTargetUrl(targetUrl);
+    if ( normalizedTargetUrl === '' ) { return null; }
+    for ( const [token, payload] of youtubeFollowupArchitectureCompletedJobs ) {
+        if ( payload instanceof Object === false ) { continue; }
+        if ( payload.sourceTabId !== sourceTabId ) { continue; }
+        if ( payload.strategy !== strategy ) { continue; }
+        if ( payload.targetUrl !== normalizedTargetUrl ) { continue; }
+        return {
+            token,
+            payload,
+        };
+    }
+    return null;
+}
+
+function takeYouTubeFollowupCompletedArchitectureJobBySource(sourceTabId, strategy, targetUrl) {
+    const match = findYouTubeFollowupCompletedArchitectureJobBySource(
+        sourceTabId,
+        strategy,
+        targetUrl
+    );
+    if ( match === null ) { return null; }
+    youtubeFollowupArchitectureCompletedJobs.delete(match.token);
+    return match;
+}
+
+function buildYouTubeFollowupArchitectureRelayUrl(token) {
+    if ( typeof token !== 'string' || token === '' ) { return ''; }
+    try {
+        return runtime.getURL(`${YOUTUBE_FOLLOWUP_ARCHITECTURE_RELAY_PAGE}#token=${encodeURIComponent(token)}`);
+    } catch {
+    }
+    return '';
+}
+
+function postArchitectureJobUpdate(token, payload) {
+    const subscribers = youtubeFollowupArchitectureSubscribers.get(token);
+    if ( subscribers instanceof Set === false || subscribers.size === 0 ) { return; }
+    for ( const port of Array.from(subscribers) ) {
+        try {
+            port.postMessage(payload);
+        } catch {
+            subscribers.delete(port);
+        }
+    }
+    if ( subscribers.size === 0 ) {
+        youtubeFollowupArchitectureSubscribers.delete(token);
+    }
+}
+
+function detachArchitectureSubscriber(port) {
+    for ( const [token, subscribers] of youtubeFollowupArchitectureSubscribers ) {
+        if ( subscribers.has(port) === false ) { continue; }
+        subscribers.delete(port);
+        if ( subscribers.size === 0 ) {
+            youtubeFollowupArchitectureSubscribers.delete(token);
+        }
+    }
+}
+
+function attachArchitectureSubscriber(token, port) {
+    if ( typeof token !== 'string' || token === '' || port == null ) { return; }
+    const existing = youtubeFollowupArchitectureSubscribers.get(token) || new Set();
+    existing.add(port);
+    youtubeFollowupArchitectureSubscribers.set(token, existing);
+}
+
+function finishYouTubeFollowupArchitectureJob(token, payload = {}) {
+    if ( typeof token !== 'string' || token === '' ) { return false; }
+    const entry = youtubeFollowupArchitectureJobs.get(token);
+    if ( entry === undefined ) { return false; }
+    storeYouTubeFollowupArchitecturePrewarmResult(entry, payload);
+    youtubeFollowupArchitectureJobs.delete(token);
+    if ( entry.timeoutId !== undefined ) {
+        self.clearTimeout(entry.timeoutId);
+    }
+    if ( Number.isInteger(entry.donorTabId) ) {
+        youtubeFollowupDonorTabs.delete(entry.donorTabId);
+        browser.tabs?.remove?.(entry.donorTabId).catch(ignoreRuntimeError);
+    }
+    const result = payload instanceof Object ? payload : { ok: false };
+    const finalPayload = {
+        requestId: entry.requestId,
+        token,
+        sourceTabId: entry.sourceTabId,
+        targetUrl: entry.targetUrl,
+        strategy: entry.strategy,
+        donorStartedAt: entry.donorStartedAt,
+        ...result,
+        done: true,
+    };
+    youtubeFollowupArchitectureCompletedJobs.set(token, finalPayload);
+    postArchitectureJobUpdate(token, finalPayload);
+    return true;
+}
+
+function startYouTubeFollowupArchitectureJob(sourceTabId, strategy, targetUrl, requestId = '') {
+    if ( Number.isInteger(sourceTabId) === false || sourceTabId < 0 ) {
+        return { ok: false, error: 'missing-tab-id' };
+    }
+    if ( isYouTubeFollowupArchitectureStrategy(strategy) === false ) {
+        return { ok: false, error: 'invalid-strategy' };
+    }
+    const normalizedTargetUrl = normalizeYouTubeFollowupTargetUrl(targetUrl);
+    if ( normalizedTargetUrl === '' ) {
+        return { ok: false, error: 'invalid-target-url' };
+    }
+    const donorToken = `tdyw-proof-${
+        strategy === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A
+            ? 'a'
+            : strategy === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_COMMIT
+                ? 'ac'
+            : strategy === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_PREWARM
+                ? 'ap'
+                : strategy === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_INTENT_LEASE
+                    ? 'a1'
+                    : strategy === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_DONOR_OWNER
+                        ? 'a2'
+                : 'b'
+    }-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const donorUrl = buildYouTubeFollowupDonorUrl(normalizedTargetUrl, donorToken);
+    if ( donorUrl === '' ) {
+        return { ok: false, error: 'invalid-donor-url' };
+    }
+    const timeoutId = self.setTimeout(() => {
+        finishYouTubeFollowupArchitectureJob(donorToken, {
+            ok: false,
+            error: 'timeout',
+            timedOut: true,
+        });
+    }, YOUTUBE_FOLLOWUP_DONOR_PREFETCH_TIMEOUT_MS);
+    const donorStartedAt = Date.now();
+    youtubeFollowupArchitectureJobs.set(donorToken, {
+        requestId,
+        sourceTabId,
+        strategy,
+        targetUrl: normalizedTargetUrl,
+        donorTabId: -1,
+        timeoutId,
+        donorStartedAt,
+    });
+    browser.tabs?.create?.({
+        url: 'about:blank',
+        active: false,
+    }).then(async tab => {
+        const donorTabId = Number.isInteger(tab?.id) ? tab.id : -1;
+        const entry = youtubeFollowupArchitectureJobs.get(donorToken);
+        if ( entry === undefined ) { return; }
+        if ( donorTabId < 0 ) {
+            finishYouTubeFollowupArchitectureJob(donorToken, { ok: false, error: 'missing-donor-tab-id' });
+            return;
+        }
+        entry.donorTabId = donorTabId;
+        youtubeFollowupArchitectureJobs.set(donorToken, entry);
+        youtubeFollowupDonorTabs.set(donorTabId, donorToken);
+        await Promise.all([
+            armYouTubeFollowupHeaderStripRules(donorTabId).catch(reason => {
+                ubolErr(`startYouTubeFollowupArchitectureJob/headerStrip/${reason}`);
+                return false;
+            }),
+            armYouTubeFollowupNextBlockRules(donorTabId).catch(reason => {
+                ubolErr(`startYouTubeFollowupArchitectureJob/nextBlock/${reason}`);
+                return false;
+            }),
+        ]);
+        try {
+            await browser.tabs?.update?.(donorTabId, { url: donorUrl });
+        } catch(reason) {
+            ubolErr(`startYouTubeFollowupArchitectureJob/update/${reason}`);
+            finishYouTubeFollowupArchitectureJob(donorToken, { ok: false, error: `${reason}` });
+        }
+    }).catch(reason => {
+        ubolErr(`startYouTubeFollowupArchitectureJob/${reason}`);
+        finishYouTubeFollowupArchitectureJob(donorToken, { ok: false, error: `${reason}` });
+    });
+    return {
+        ok: true,
+        token: donorToken,
+        relayUrl:
+            strategy === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_B
+                ? buildYouTubeFollowupArchitectureRelayUrl(donorToken)
+                : '',
+        donorStartedAt,
+        targetUrl: normalizedTargetUrl,
+        strategy,
+    };
+}
+
+function syncYouTubeWatchTabState(tabId, url) {
+    if ( Number.isInteger(tabId) === false || tabId < 0 ) { return; }
+    const videoId = parseYouTubeWatchVideoId(url);
+    if ( videoId === '' ) { return; }
+    youtubeWatchTabState.set(tabId, {
+        videoId,
+        seenAt: Date.now(),
+    });
+}
+
+async function maybeClearYouTubeFollowupCookiesForNavigation(details) {
+    if ( details?.frameId !== 0 ) { return; }
+    const tabId = Number.isInteger(details?.tabId) ? details.tabId : -1;
+    if ( tabId < 0 ) { return; }
+    const nextVideoId = parseYouTubeWatchVideoId(details?.url || '');
+    if ( nextVideoId === '' ) { return; }
+    const previousEntry = youtubeWatchTabState.get(tabId);
+    const previousVideoId = typeof previousEntry?.videoId === 'string'
+        ? previousEntry.videoId
+        : '';
+    const seenAt = Number.isFinite(previousEntry?.seenAt) ? previousEntry.seenAt : 0;
+    if ( previousVideoId !== '' && (Date.now() - seenAt) > YOUTUBE_FOLLOWUP_TAB_STATE_TTL_MS ) {
+        youtubeWatchTabState.delete(tabId);
+        return;
+    }
+    if ( previousVideoId === '' || previousVideoId === nextVideoId ) { return; }
+    await Promise.all([
+        clearYouTubeFollowupCookies().catch(reason => {
+            ubolErr(`maybeClearYouTubeFollowupCookiesForNavigation/cookies/${reason}`);
+        }),
+        armYouTubeFollowupHeaderStripRules(tabId).catch(reason => {
+            ubolErr(`maybeClearYouTubeFollowupCookiesForNavigation/headerStrip/${reason}`);
+        }),
+        armYouTubeFollowupNextBlockRules(tabId).catch(reason => {
+            ubolErr(`maybeClearYouTubeFollowupCookiesForNavigation/nextBlock/${reason}`);
+        }),
+    ]);
+}
+
+async function setDefaultFilteringMode(afterLevel) {
+    const out = await setDefaultFilteringModeRaw(afterLevel);
+    await syncYouTubeWatchControlCookies().catch(ubolErr);
+    return out;
+}
+
+if ( chrome.webNavigation?.onBeforeNavigate ) {
+    chrome.webNavigation.onBeforeNavigate.addListener(details => {
+        maybeClearYouTubeFollowupCookiesForNavigation(details).catch(ubolErr);
+    });
+}
+
+if ( chrome.webNavigation?.onCommitted ) {
+    chrome.webNavigation.onCommitted.addListener(details => {
+        if ( details?.frameId !== 0 ) { return; }
+        const pendingTargetUrl = youtubeFollowupNeutralHopTargets.get(details.tabId);
+        if ( typeof pendingTargetUrl === 'string' && pendingTargetUrl !== '' ) {
+            if ( details.url === YOUTUBE_FOLLOWUP_NEUTRAL_HOP_URL ) {
+                clearYouTubeFollowupNeutralHop(details.tabId);
+                browser.tabs?.update?.(details.tabId, { url: pendingTargetUrl }).catch(reason => {
+                    ubolErr(`youtubeFollowupNeutralHop/update/${reason}`);
+                });
+                return;
+            }
+            if ( normalizeYouTubeFollowupTargetUrl(details.url || '') === pendingTargetUrl ) {
+                clearYouTubeFollowupNeutralHop(details.tabId);
+            }
+        }
+        syncYouTubeWatchTabState(details.tabId, details.url || '');
+    });
+}
+
+if ( browser.tabs?.onRemoved ) {
+    browser.tabs.onRemoved.addListener(tabId => {
+        youtubeWatchTabState.delete(tabId);
+        clearYouTubeFollowupHeaderStripRules(tabId).catch(ubolErr);
+        clearYouTubeFollowupNextBlockRules(tabId).catch(ubolErr);
+        clearYouTubeFollowupNeutralHop(tabId);
+        const donorToken = youtubeFollowupDonorTabs.get(tabId);
+        if ( typeof donorToken === 'string' && donorToken !== '' ) {
+            if ( youtubeFollowupArchitectureJobs.has(donorToken) ) {
+                finishYouTubeFollowupArchitectureJob(donorToken, { ok: false, error: 'tab-removed' });
+            } else {
+                finishYouTubeFollowupDonorPrefetch(donorToken, { ok: false, error: 'tab-removed' });
+            }
+        }
+    });
+}
+
+async function setFilteringMode(hostname, afterLevel) {
+    const out = await setFilteringModeRaw(hostname, afterLevel);
+    await syncYouTubeWatchControlCookies().catch(ubolErr);
+    return out;
+}
+
+async function setFilteringModeDetails(details) {
+    const out = await setFilteringModeDetailsRaw(details);
+    await syncYouTubeWatchControlCookies().catch(ubolErr);
+    return out;
+}
+
+async function syncWithBrowserPermissions() {
+    const out = await syncWithBrowserPermissionsRaw();
+    await syncYouTubeWatchControlCookies().catch(ubolErr);
+    return out;
 }
 
 async function syncToolbarIconsForAllTabs() {
@@ -661,6 +1889,7 @@ async function enablePaywall({ broadcast = true } = {}) {
     } catch (reason) {
         ubolErr(`paywall/setAllowAllRules/${reason}`);
     }
+    await syncYouTubeWatchControlCookies({ forceWrite: true }).catch(ubolErr);
     await unregisterAllContentScripts();
     if (broadcast) {
         broadcastMessage({ entitlement: entitlementStatus });
@@ -713,6 +1942,7 @@ async function disablePaywall({ broadcast = true } = {}) {
     } catch (reason) {
         ubolErr(`paywall/clearAllowAllRules/${reason}`);
     }
+    await syncYouTubeWatchControlCookies({ forceWrite: true }).catch(ubolErr);
     await syncToolbarIconsForAllTabs().catch(ubolErr);
     if (broadcast) {
         broadcastMessage({ entitlement: entitlementStatus });
@@ -1069,6 +2299,255 @@ function onMessage(request, sender, callback) {
             return false;
         }
 
+        case 'prefetchYouTubeFollowupPlayerResponseSections': {
+            const senderUrl = typeof sender?.url === 'string' ? sender.url : '';
+            const tabId = Number.isInteger(sender?.tab?.id) ? sender.tab.id : -1;
+            const targetUrl = normalizeYouTubeFollowupTargetUrl(request.targetUrl);
+            if ( tabId < 0 || targetUrl === '' ) {
+                callback({ ok: false });
+                return false;
+            }
+            try {
+                const parsed = new URL(senderUrl);
+                if ( parsed.hostname !== YOUTUBE_WATCH_BOOTSTRAP_HOST || parsed.pathname !== '/watch' ) {
+                    callback({ ok: false });
+                    return false;
+                }
+            } catch {
+                callback({ ok: false });
+                return false;
+            }
+            startYouTubeFollowupDonorPrefetch(tabId, targetUrl, callback);
+            return true;
+        }
+
+        case 'completeYouTubeFollowupPrefetchDonor': {
+            const donorToken = typeof request.donorToken === 'string'
+                ? request.donorToken.trim()
+                : '';
+            const sections = sanitizeYouTubeFollowupPrefetchSections(request.sections);
+            const bootstrapEnvelope = sanitizeYouTubeFollowupBootstrapEnvelope(
+                request.bootstrapEnvelope
+            );
+            const health = sanitizeYouTubeFollowupDonorHealth(request.health);
+            const sameOriginCommit = sanitizeYouTubeFollowupSameOriginCommit(
+                request.sameOriginCommit
+            );
+            const targetUrl = normalizeYouTubeFollowupTargetUrl(request.targetUrl);
+            const targetVideoId = typeof request.targetVideoId === 'string'
+                ? request.targetVideoId.trim()
+                : '';
+            if ( donorToken === '' || sections === null ) {
+                callback({ ok: false });
+                return false;
+            }
+            const architectureEntry = youtubeFollowupArchitectureJobs.get(donorToken);
+            if ( architectureEntry !== undefined ) {
+                const senderTabId = Number.isInteger(sender?.tab?.id) ? sender.tab.id : -1;
+                if ( senderTabId < 0 || architectureEntry.donorTabId !== senderTabId ) {
+                    callback({ ok: false });
+                    return false;
+                }
+                const commitRequired =
+                    architectureEntry.strategy === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_COMMIT;
+                const commitAccepted =
+                    isYouTubeFollowupSameOriginCommitAccepted(sameOriginCommit);
+                if (
+                    isYouTubeFollowupDonorAccepted(sections, health) === false ||
+                    isYouTubeFollowupBootstrapEnvelopeAccepted(bootstrapEnvelope) === false ||
+                    (commitRequired && commitAccepted === false)
+                ) {
+                    finishYouTubeFollowupArchitectureJob(donorToken, {
+                        ok: false,
+                        error:
+                            commitRequired && commitAccepted === false
+                                ? 'same-origin-commit-failed'
+                                : 'donor-rejected',
+                        targetVideoId,
+                        health,
+                        sameOriginCommit,
+                        hasBootstrapEnvelope:
+                            isYouTubeFollowupBootstrapEnvelopeAccepted(bootstrapEnvelope),
+                    });
+                    callback({
+                        ok: false,
+                        error:
+                            commitRequired && commitAccepted === false
+                                ? 'same-origin-commit-failed'
+                                : 'donor-rejected',
+                    });
+                    return false;
+                }
+                finishYouTubeFollowupArchitectureJob(donorToken, {
+                    ok: true,
+                    targetVideoId,
+                    donorReadyAt: Date.now(),
+                    health,
+                    sameOriginCommit,
+                    entry: {
+                        kind: 'td-yw-architecture-envelope',
+                        strategy: architectureEntry.strategy,
+                        handoffSurface:
+                            architectureEntry.strategy === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_B
+                                ? 'windowName'
+                                : architectureEntry.strategy === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_COMMIT
+                                    ? 'localStorage'
+                                    : 'sessionStorage',
+                        targetUrl: architectureEntry.targetUrl,
+                        targetVideoId,
+                        prefetchedAt: Date.now(),
+                        sections,
+                        bootstrapEnvelope,
+                        health,
+                    },
+                });
+                callback({ ok: true });
+                return false;
+            }
+            const entry = youtubeFollowupDonorPrefetches.get(donorToken);
+            const senderTabId = Number.isInteger(sender?.tab?.id) ? sender.tab.id : -1;
+            if ( entry === undefined || senderTabId < 0 || entry.donorTabId !== senderTabId ) {
+                callback({ ok: false });
+                return false;
+            }
+            if (
+                isYouTubeFollowupDonorAccepted(sections, health) === false ||
+                isYouTubeFollowupBootstrapEnvelopeAccepted(bootstrapEnvelope) === false
+            ) {
+                finishYouTubeFollowupDonorPrefetch(donorToken, {
+                    ok: false,
+                    error: 'donor-rejected',
+                    targetUrl,
+                    targetVideoId,
+                    health,
+                    hasBootstrapEnvelope:
+                        isYouTubeFollowupBootstrapEnvelopeAccepted(bootstrapEnvelope),
+                });
+                callback({ ok: false, error: 'donor-rejected' });
+                return false;
+            }
+            finishYouTubeFollowupDonorPrefetch(donorToken, {
+                ok: true,
+                targetUrl,
+                targetVideoId,
+                sections,
+                bootstrapEnvelope,
+                health,
+            });
+            callback({ ok: true });
+            return false;
+        }
+
+        case 'clearYouTubeFollowupCookies': {
+            const senderUrl = typeof sender?.url === 'string' ? sender.url : '';
+            const tabId = Number.isInteger(sender?.tab?.id) ? sender.tab.id : -1;
+            const targetUrl = normalizeYouTubeFollowupTargetUrl(request.targetUrl);
+            try {
+                const parsed = new URL(senderUrl);
+                if ( parsed.hostname !== YOUTUBE_WATCH_BOOTSTRAP_HOST || parsed.pathname !== '/watch' ) {
+                    callback({ ok: false, removedCount: 0 });
+                    return false;
+                }
+            } catch {
+                callback({ ok: false, removedCount: 0 });
+                return false;
+            }
+            Promise.all([
+                getSenderCookiePartitionKey(sender).then(partitionKey => {
+                    return clearYouTubeFollowupCookies(partitionKey);
+                }).catch(reason => {
+                    ubolErr(`clearYouTubeFollowupCookies/partitioned/${reason}`);
+                    return { ok: false, removedCount: 0 };
+                }),
+                armYouTubeFollowupHeaderStripRules(tabId).catch(reason => {
+                    ubolErr(`clearYouTubeFollowupCookies/armHeaderStrip/${reason}`);
+                    return false;
+                }),
+                armYouTubeFollowupNextBlockRules(tabId).catch(reason => {
+                    ubolErr(`clearYouTubeFollowupCookies/armNextBlock/${reason}`);
+                    return false;
+                }),
+            ]).then(([ cookieResult, headerStripArmed, nextBlockArmed ]) => {
+                const neutralHopArmed = targetUrl !== ''
+                    ? armYouTubeFollowupNeutralHop(tabId, targetUrl)
+                    : false;
+                callback({
+                    ...(cookieResult instanceof Object ? cookieResult : { ok: false, removedCount: 0 }),
+                    ok: targetUrl !== ''
+                        ? neutralHopArmed === true
+                        : (headerStripArmed === true || nextBlockArmed === true),
+                    headerStripArmed: headerStripArmed === true,
+                    nextBlockArmed: nextBlockArmed === true,
+                    neutralHopArmed: neutralHopArmed === true,
+                    neutralHopUrl: neutralHopArmed === true ? YOUTUBE_FOLLOWUP_NEUTRAL_HOP_URL : '',
+                });
+            }).catch(reason => {
+                ubolErr(`clearYouTubeFollowupCookies/${reason}`);
+                callback({ ok: false, removedCount: 0 });
+            });
+            return true;
+        }
+
+        case 'releaseYouTubeFollowupNextBlock': {
+            const senderUrl = typeof sender?.url === 'string' ? sender.url : '';
+            const tabId = Number.isInteger(sender?.tab?.id) ? sender.tab.id : -1;
+            try {
+                const parsed = new URL(senderUrl);
+                if ( parsed.hostname !== YOUTUBE_WATCH_BOOTSTRAP_HOST || parsed.pathname !== '/watch' ) {
+                    callback({ ok: false });
+                    return false;
+                }
+            } catch {
+                callback({ ok: false });
+                return false;
+            }
+            clearYouTubeFollowupNextBlockRules(tabId).then(cleared => {
+                callback({ ok: cleared === true });
+            }).catch(reason => {
+                ubolErr(`releaseYouTubeFollowupNextBlock/${reason}`);
+                callback({ ok: false });
+            });
+            return true;
+        }
+
+        case 'navigateYouTubeFollowupWatch': {
+            const senderUrl = typeof sender?.url === 'string' ? sender.url : '';
+            const tabId = Number.isInteger(sender?.tab?.id) ? sender.tab.id : -1;
+            const targetUrl = normalizeYouTubeFollowupTargetUrl(request.targetUrl);
+            if ( tabId < 0 || targetUrl === '' ) {
+                callback({ ok: false });
+                return false;
+            }
+            try {
+                const parsed = new URL(senderUrl);
+                if ( parsed.hostname !== YOUTUBE_WATCH_BOOTSTRAP_HOST || parsed.pathname !== '/watch' ) {
+                    callback({ ok: false });
+                    return false;
+                }
+            } catch {
+                callback({ ok: false });
+                return false;
+            }
+            Promise.all([
+                armYouTubeFollowupHeaderStripRules(tabId).catch(reason => {
+                    ubolErr(`navigateYouTubeFollowupWatch/headerStrip/${reason}`);
+                    return false;
+                }),
+                armYouTubeFollowupNextBlockRules(tabId).catch(reason => {
+                    ubolErr(`navigateYouTubeFollowupWatch/nextBlock/${reason}`);
+                    return false;
+                }),
+            ]).then(() => {
+                return browser.tabs?.update?.(tabId, { url: targetUrl });
+            }).then(tab => {
+                callback({ ok: Boolean(tab), targetUrl });
+            }).catch(reason => {
+                ubolErr(`navigateYouTubeFollowupWatch/${reason}`);
+                callback({ ok: false });
+            });
+            return true;
+        }
+
         case 'setBreakageAuditOverrides': {
             if (rulesetConfig.developerMode !== true && isTrustedExtensionSender(sender) === false) {
                 return false;
@@ -1079,6 +2558,97 @@ function onMessage(request, sender, callback) {
             }).catch(reason => {
                 ubolErr(`setBreakageAuditOverrides/${reason}`);
                 callback({ global: {}, hosts: {} });
+            });
+            return true;
+        }
+
+        case 'setYouTubeWatchOwnerProfile': {
+            if (rulesetConfig.developerMode !== true && isTrustedExtensionSender(sender) === false) {
+                return false;
+            }
+            const profile = normalizeYouTubeWatchOwnerProfile(request.profile);
+            localWrite(YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY, profile).then(async () => {
+                await syncYouTubeWatchOwnerProfileCookie({ forceWrite: true }).catch(ubolErr);
+                await registerInjectablesIfEntitled().catch(ubolErr);
+                callback({
+                    profile,
+                    config: getYouTubeWatchOwnerProfileConfig(profile),
+                });
+            }).catch(reason => {
+                ubolErr(`setYouTubeWatchOwnerProfile/${reason}`);
+                callback({
+                    profile: YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT,
+                    config: getYouTubeWatchOwnerProfileConfig(YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT),
+                });
+            });
+            return true;
+        }
+
+        case 'setYouTubeWatchBootstrapEnabled': {
+            if (rulesetConfig.developerMode !== true && isTrustedExtensionSender(sender) === false) {
+                return false;
+            }
+            const enabled = request.enabled === true;
+            const updateBootstrapOverride = enabled
+                ? localWrite(YOUTUBE_WATCH_BOOTSTRAP_OPT_IN_STORAGE_KEY, true)
+                : localRemove(YOUTUBE_WATCH_BOOTSTRAP_OPT_IN_STORAGE_KEY);
+            updateBootstrapOverride.then(async () => {
+                await syncYouTubeWatchControlCookies({ forceWrite: true }).catch(ubolErr);
+                await registerInjectablesIfEntitled().catch(ubolErr);
+                callback({
+                    enabled: await computeYouTubeWatchBootstrapEnabled().catch(() => false),
+                    optIn: await getStoredYouTubeWatchBootstrapOptIn(),
+                });
+            }).catch(reason => {
+                ubolErr(`setYouTubeWatchBootstrapEnabled/${reason}`);
+                callback({
+                    enabled: false,
+                    optIn: false,
+                });
+            });
+            return true;
+        }
+
+        case 'clearYouTubeWatchBootstrapOverride': {
+            if (rulesetConfig.developerMode !== true && isTrustedExtensionSender(sender) === false) {
+                return false;
+            }
+            localRemove(YOUTUBE_WATCH_BOOTSTRAP_OPT_IN_STORAGE_KEY).then(async () => {
+                await syncYouTubeWatchControlCookies({ forceWrite: true }).catch(ubolErr);
+                await registerInjectablesIfEntitled().catch(ubolErr);
+                callback({
+                    enabled: await computeYouTubeWatchBootstrapEnabled().catch(() => false),
+                    optIn: await getStoredYouTubeWatchBootstrapOptIn(),
+                });
+            }).catch(reason => {
+                ubolErr(`clearYouTubeWatchBootstrapOverride/${reason}`);
+                callback({
+                    enabled: false,
+                    optIn: false,
+                });
+            });
+            return true;
+        }
+
+        case 'clearYouTubeWatchOwnerProfile': {
+            if (rulesetConfig.developerMode !== true && isTrustedExtensionSender(sender) === false) {
+                return false;
+            }
+            localRemove(YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY).then(async () => {
+                await syncYouTubeWatchOwnerProfileCookie({ forceWrite: true }).catch(ubolErr);
+                await registerInjectablesIfEntitled().catch(ubolErr);
+                const profile = YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT;
+                callback({
+                    profile,
+                    config: getYouTubeWatchOwnerProfileConfig(profile),
+                });
+            }).catch(reason => {
+                ubolErr(`clearYouTubeWatchOwnerProfile/${reason}`);
+                const profile = YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT;
+                callback({
+                    profile,
+                    config: getYouTubeWatchOwnerProfileConfig(profile),
+                });
             });
             return true;
         }
@@ -1102,12 +2672,27 @@ function onMessage(request, sender, callback) {
             }
             Promise.all([
                 localRead(BREAKAGE_AUDIT_OVERRIDES_KEY),
+                getStoredYouTubeWatchBootstrapOptIn(),
+                computeYouTubeWatchBootstrapEnabled(),
+                getStoredYouTubeWatchOwnerProfile(),
                 localRead(AUTO_BACKOFF_EVIDENCE_STORAGE_KEY),
                 dnr.getEnabledRulesets(),
                 getRegisteredContentScriptsAuditSnapshot(),
-            ]).then(([overrides, evidence, enabledRulesets, registeredContentScripts]) => {
+            ]).then(([
+                overrides,
+                youtubeWatchBootstrapOptIn,
+                youtubeWatchBootstrapEnabled,
+                youtubeOwnerProfile,
+                evidence,
+                enabledRulesets,
+                registeredContentScripts,
+            ]) => {
                 callback({
                     overrides: overrides || { global: {}, hosts: {} },
+                    youtubeWatchBootstrapOptIn,
+                    youtubeWatchBootstrapEnabled,
+                    youtubeOwnerProfile,
+                    youtubeOwnerConfig: getYouTubeWatchOwnerProfileConfig(youtubeOwnerProfile),
                     evidence: evidence || {},
                     activeBackoffs: serializeAutoBackoffState(),
                     enabledRulesets: Array.isArray(enabledRulesets)
@@ -1778,6 +3363,7 @@ async function start() {
         scheduleEntitlementAlarms(entitlementStatus);
         scheduleTrialExpiredReminderAlarm(entitlementStatus).catch(ubolErr);
     }).catch(ubolErr);
+    await syncYouTubeWatchControlCookies({ forceWrite: true }).catch(ubolErr);
 
     if (entitlementStatus?.status === 'expired') {
         await enablePaywall({ broadcast: false }).catch(ubolErr);
@@ -1817,6 +3403,232 @@ const isFullyInitialized = start().then(() => {
 }).then(restart => {
     if (restart !== true) { return; }
     runtime.reload();
+});
+
+runtime.onConnect.addListener(port => {
+    if ( port?.name !== YOUTUBE_FOLLOWUP_ARCHITECTURE_PORT_NAME ) { return; }
+    port.onDisconnect.addListener(() => {
+        detachArchitectureSubscriber(port);
+    });
+    port.onMessage.addListener(message => {
+        const what = typeof message?.what === 'string' ? message.what : '';
+        if ( what === 'startYouTubeFollowupArchitectureJob' ) {
+            const requestId = typeof message?.requestId === 'string' ? message.requestId : '';
+            const strategy = typeof message?.strategy === 'string' ? message.strategy : '';
+            const action = typeof message?.action === 'string' ? message.action : '';
+            const targetUrl = normalizeYouTubeFollowupTargetUrl(message?.targetUrl);
+            const sourceTabId = Number.isInteger(port.sender?.tab?.id) ? port.sender.tab.id : -1;
+            if (
+                strategy === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_DONOR_OWNER &&
+                action === 'start-donor-owner'
+            ) {
+                const completed = findYouTubeFollowupCompletedArchitectureJobBySource(
+                    sourceTabId,
+                    strategy,
+                    targetUrl
+                );
+                if ( completed !== null ) {
+                    try {
+                        port.postMessage({
+                            requestId,
+                            ok: completed.payload?.ok === true,
+                            started: true,
+                            token: completed.token,
+                            targetUrl,
+                            strategy,
+                            donorStartedAt:
+                                typeof completed.payload?.donorStartedAt === 'number'
+                                    ? completed.payload.donorStartedAt
+                                    : null,
+                            donorReadyAt:
+                                typeof completed.payload?.donorReadyAt === 'number'
+                                    ? completed.payload.donorReadyAt
+                                    : null,
+                            ready: completed.payload?.ok === true,
+                        });
+                    } catch {}
+                    return;
+                }
+                const running = findYouTubeFollowupArchitectureJobBySource(
+                    sourceTabId,
+                    strategy,
+                    targetUrl
+                );
+                if ( running !== null ) {
+                    try {
+                        port.postMessage({
+                            requestId,
+                            ok: true,
+                            started: true,
+                            token: running.token,
+                            targetUrl,
+                            strategy,
+                            donorStartedAt:
+                                typeof running.entry?.donorStartedAt === 'number'
+                                    ? running.entry.donorStartedAt
+                                    : null,
+                            ready: false,
+                        });
+                    } catch {}
+                    return;
+                }
+                const started = startYouTubeFollowupArchitectureJob(
+                    sourceTabId,
+                    strategy,
+                    targetUrl,
+                    requestId
+                );
+                try {
+                    port.postMessage({
+                        requestId,
+                        ...started,
+                        started: started.ok === true,
+                    });
+                } catch {}
+                return;
+            }
+            if (
+                strategy === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_DONOR_OWNER &&
+                action === 'consume-donor-owner'
+            ) {
+                const completed = takeYouTubeFollowupCompletedArchitectureJobBySource(
+                    sourceTabId,
+                    strategy,
+                    targetUrl
+                );
+                if ( completed !== null ) {
+                    try {
+                        port.postMessage({
+                            requestId,
+                            ...completed.payload,
+                            requestId,
+                            donorOwnerTransferOk: completed.payload?.ok === true,
+                            donorOwnerReuseDetected: false,
+                            donorOwnerContaminationDetected: false,
+                        });
+                    } catch {}
+                    return;
+                }
+                const running = findYouTubeFollowupArchitectureJobBySource(
+                    sourceTabId,
+                    strategy,
+                    targetUrl
+                );
+                try {
+                    port.postMessage({
+                        requestId,
+                        ok: false,
+                        error: running !== null ? 'owner-pending' : 'owner-miss',
+                        donorOwnerTransferOk: false,
+                        donorOwnerReuseDetected: false,
+                        donorOwnerContaminationDetected: false,
+                        done: true,
+                    });
+                } catch {}
+                return;
+            }
+            if (
+                strategy === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_PREWARM &&
+                action === 'consume-prewarmed-entry'
+            ) {
+                try {
+                    port.postMessage({
+                        requestId,
+                        ...consumeYouTubeFollowupArchitecturePrewarmEntry(targetUrl),
+                        done: true,
+                    });
+                } catch {}
+                return;
+            }
+            const started = startYouTubeFollowupArchitectureJob(
+                sourceTabId,
+                strategy,
+                targetUrl,
+                requestId
+            );
+            if ( started.ok !== true ) {
+                try {
+                    port.postMessage({
+                        requestId,
+                        ok: false,
+                        error: started.error || 'start-failed',
+                        done: true,
+                    });
+                } catch {}
+                return;
+            }
+            if (
+                (
+                    strategy === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A ||
+                    strategy === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_COMMIT ||
+                    strategy === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_INTENT_LEASE
+                ) &&
+                action === 'acquire-and-wait'
+            ) {
+                attachArchitectureSubscriber(started.token, port);
+                return;
+            }
+            if (
+                strategy === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_A_PREWARM &&
+                action === 'prewarm-target'
+            ) {
+                attachArchitectureSubscriber(started.token, port);
+                return;
+            }
+            if ( strategy === YOUTUBE_FOLLOWUP_ARCHITECTURE_TRACK_B && action === 'start-relay' ) {
+                try {
+                    port.postMessage({
+                        requestId,
+                        ...started,
+                        started: true,
+                    });
+                } catch {}
+                return;
+            }
+            try {
+                port.postMessage({
+                    requestId,
+                    ok: false,
+                    error: 'invalid-action',
+                    done: true,
+                });
+            } catch {}
+            return;
+        }
+        if ( what === 'subscribeYouTubeFollowupArchitectureJob' ) {
+            const token = typeof message?.token === 'string' ? message.token.trim() : '';
+            if ( token === '' ) {
+                try {
+                    port.postMessage({
+                        ok: false,
+                        error: 'missing-token',
+                        done: true,
+                    });
+                } catch {}
+                return;
+            }
+            const completed = youtubeFollowupArchitectureCompletedJobs.get(token);
+            if ( completed ) {
+                try {
+                    port.postMessage(completed);
+                } catch {}
+                youtubeFollowupArchitectureCompletedJobs.delete(token);
+                return;
+            }
+            if ( youtubeFollowupArchitectureJobs.has(token) ) {
+                attachArchitectureSubscriber(token, port);
+                return;
+            }
+            try {
+                port.postMessage({
+                    token,
+                    ok: false,
+                    error: 'job-missing',
+                    done: true,
+                });
+            } catch {}
+        }
+    });
 });
 
 runtime.onMessage.addListener((request, sender, callback) => {
@@ -1870,7 +3682,12 @@ runtime.onInstalled.addListener((details) => {
         queuedAt: Date.now(),
     }).catch(ubolErr);
     localRemove(FIRST_POPUP_WELCOME_SEEN_KEY).catch(ubolErr);
-    gotoURL(url).catch(ubolErr);
+    Promise.all([
+        syncYouTubeWatchControlCookies({ forceWrite: true }).catch(ubolErr),
+    ])
+        .finally(() => {
+            gotoURL(url).catch(ubolErr);
+        });
 });
 
 browser.alarms?.onAlarm.addListener(alarm => {

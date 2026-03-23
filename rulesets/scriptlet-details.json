@@ -21,7 +21,7 @@
     }
    ],
    [
-    "trusted-json-edit-fetch-request",
+    "trusted-json-edit-xhr-request",
     {
      "hostnames": [
       "www.youtube.com"

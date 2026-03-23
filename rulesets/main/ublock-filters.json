@@ -4548,5 +4548,12 @@
 {"action":{"type":"block"},"condition":{"resourceTypes":["script"],"urlFilter":"||mapple.uk/bundle-prod.js"},"id":4547,"priority":10},
 {"action":{"type":"block"},"condition":{"domainType":"firstParty","resourceTypes":["sub_frame"],"urlFilter":"||myhentaicomics.com/assets/frames/"},"id":4548,"priority":10},
 {"action":{"type":"block"},"condition":{"domainType":"thirdParty","urlFilter":"*two-gun-volley.pages.dev^"},"id":4549,"priority":10},
-{"action":{"type":"allow"},"condition":{"domainType":"firstParty","resourceTypes":["xmlhttprequest"],"urlFilter":"||dd.auspost.com.au/js/"},"id":4550,"priority":30}
+{"action":{"type":"allow"},"condition":{"domainType":"firstParty","resourceTypes":["xmlhttprequest"],"urlFilter":"||dd.auspost.com.au/js/"},"id":4550,"priority":30},
+{"action":{"type":"allow"},"condition":{"domainType":"firstParty","initiatorDomains":["youtube.com","www.youtube.com"],"resourceTypes":["image"],"urlFilter":"||youtube.com/generate_204?"},"id":4551,"priority":50},
+{"action":{"type":"allow"},"condition":{"initiatorDomains":["youtube.com","www.youtube.com"],"resourceTypes":["xmlhttprequest"],"urlFilter":"||youtube.com/api/stats/qoe?"},"id":4552,"priority":50},
+{"action":{"type":"block"},"condition":{"domainType":"firstParty","initiatorDomains":["youtube.com","www.youtube.com"],"resourceTypes":["image","xmlhttprequest"],"urlFilter":"||youtube.com/pagead/adview"},"id":4553,"priority":40},
+{"action":{"type":"block"},"condition":{"domainType":"firstParty","initiatorDomains":["youtube.com","www.youtube.com"],"resourceTypes":["image","xmlhttprequest"],"urlFilter":"||youtube.com/pagead/interaction/"},"id":4554,"priority":40},
+{"action":{"type":"block"},"condition":{"initiatorDomains":["youtube.com","www.youtube.com"],"resourceTypes":["xmlhttprequest"],"urlFilter":"||googleads.g.doubleclick.net/pagead/id"},"id":4555,"priority":40},
+{"action":{"type":"block"},"condition":{"initiatorDomains":["youtube.com","www.youtube.com"],"resourceTypes":["xmlhttprequest"],"urlFilter":"||youtube.com/ptracking?*pltype=adhost"},"id":4556,"priority":40},
+{"action":{"type":"block"},"condition":{"initiatorDomains":["youtube.com","www.youtube.com"],"resourceTypes":["script","sub_frame"],"urlFilter":"||tpc.googlesyndication.com/sodar/"},"id":4557,"priority":40}
 ]

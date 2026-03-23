@@ -7,6 +7,10 @@ Runtime behavior now:
 - the first popup flow can open `https://talondefender.com/welcome-live/?source=first_popup_open`.
 - the uninstall URL is always set to `https://talondefender.com/uninstall/` with `source` and `version` query parameters.
 - expired users can be reminded with `https://talondefender.com/trial-expired/` and a `trial_expired_reminder` source.
+- YouTube watch pages still have a manifest-declared `document_start` MAIN-world bootstrap script, but the public default now keeps its host-scoped enable cookie off unless an internal/private proof lane explicitly opts in.
+- YouTube watch pages now also support an internal owner-profile switch for private proofing, so Talon can compare `talon-current`, `upstream-core`, and `upstream-core+talon-wins` ownership without changing the public product surface.
+- Edge same-tab YouTube follow-up watch clicks now prep the tab, hop through a neutral `about:blank` document, and then re-enter the target watch URL so the next watch document is not bootstrapped directly from the prior watch page context.
+- same-tab YouTube follow-up watch prep now caches a clean donor bootstrap envelope from a donor watch tab and seeds that envelope back into the target watch page at `document_start` before YouTube consumes the follow-up bootstrap state.
 
 Entitlement behavior now:
 - the free trial is `7` days from first initialization
@@ -34,4 +38,5 @@ Community bundle behavior now:
 
 Release posture now:
 - this workspace is the only public-safe source surface
+- the Chrome source manifest now pins the Chrome Web Store public key so unpacked Chrome loads keep the published extension id and storage namespace
 - Chrome and Edge release scripts also refresh `../Talon Defender Latest/`

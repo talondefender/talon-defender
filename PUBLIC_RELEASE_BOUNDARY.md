@@ -24,6 +24,7 @@ Forbidden here:
 
 Release rules:
 - `npm run audit:public-safe` must pass before release
+- `public-safe-allowlist.txt` is the exact public file manifest; any new tracked public file must be added there in the same change
 - `source-code.json` must point to the public extension repository tag and tarball
 - the public source archive must be built from this workspace only
 - the public GitHub repo for this workspace is `https://github.com/talondefender/talon-defender`

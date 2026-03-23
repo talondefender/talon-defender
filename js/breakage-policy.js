@@ -5,6 +5,13 @@ export const RISK_TIERS = Object.freeze({
 });
 
 export const BREAKAGE_AUDIT_OVERRIDES_KEY = 'breakageAuditOverridesV1';
+export const YOUTUBE_WATCH_PLAYER_RESPONSE_REWRITE_ENABLED = false;
+export const YOUTUBE_WATCH_RUNTIME_LANE_DEFAULT = 'baseline';
+export const YOUTUBE_WATCH_BOOTSTRAP_PUBLIC_DEFAULT = false;
+export const YOUTUBE_WATCH_BOOTSTRAP_OPT_IN_STORAGE_KEY = 'youtubeWatchBootstrapOptInV1';
+export const YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY = 'youtubeWatchOwnerProfileV1';
+export const YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT = 'talon-current';
+export const YOUTUBE_WATCH_UPSTREAM_REFERENCE_SNAPSHOT = '2026.322.1735';
 
 export const AUDITABLE_SUBSYSTEMS = Object.freeze([
     'nativeHeuristics',
@@ -130,8 +137,129 @@ const CHECKOUT_HINT_SELECTOR = [
     '[data-paypal-checkout]',
 ].join(',');
 const REMOTE_SCRIPTLET_DENY_RE = /(?:trusted-click-element|trusted-set-constant|trusted-replace-|trusted-prevent-dom-bypass|abort-current-inline-script|set-attr|remove-class|remove-node-text|remove-node|trusted-dispatch-event)/i;
+const YOUTUBE_WATCH_OWNER_PROFILE_CONFIGS = Object.freeze({
+    'talon-current': Object.freeze({
+        upstreamSnapshot: YOUTUBE_WATCH_UPSTREAM_REFERENCE_SNAPSHOT,
+        activeUpstreamTacticFamilies: Object.freeze([]),
+        retainedTalonWinFamilies: Object.freeze([
+            'inline-player-response-sanitizer',
+            'get-watch-response-sanitizer',
+            'followup-diagnostics',
+        ]),
+        disabledTalonOverlapFamilies: Object.freeze([]),
+        talonWindowFetchNeutralizer: false,
+        talonInlinePlayerResponseSanitizer: true,
+        talonGetWatchResponseSanitizer: true,
+        talonPlayerBootstrapOwner: false,
+        excludedScriptletIds: Object.freeze([
+            'ublock-filters.trusted-replace-node-text',
+            'ublock-experimental.trusted-replace-node-text',
+            'annoyances-overlays.json-prune',
+            'ublock-filters.trusted-edit-inbound-object',
+            'ublock-filters.trusted-json-edit-fetch-request',
+            'ublock-filters.json-prune-fetch-response',
+            'ublock-filters.trusted-replace-fetch-response',
+            'ublock-filters.trusted-json-edit-xhr-request',
+            'ublock-filters.json-prune-xhr-response',
+            'ublock-filters.trusted-replace-xhr-response',
+            'ublock-filters.json-prune',
+            'ublock-experimental.trusted-json-edit-xhr-request',
+            'ublock-experimental.trusted-json-edit-xhr-response',
+            'ublock-filters.adjust-setTimeout',
+            'ublock-filters.trusted-prevent-dom-bypass',
+        ]),
+    }),
+    'upstream-core': Object.freeze({
+        upstreamSnapshot: YOUTUBE_WATCH_UPSTREAM_REFERENCE_SNAPSHOT,
+        activeUpstreamTacticFamilies: Object.freeze([
+            'trusted-prevent-dom-bypass',
+            'window-fetch-neutralizer',
+            'player-request-mutators',
+            'player-response-prune-replace',
+        ]),
+        retainedTalonWinFamilies: Object.freeze([
+            'followup-diagnostics',
+        ]),
+        disabledTalonOverlapFamilies: Object.freeze([
+            'inline-player-response-sanitizer',
+            'get-watch-response-sanitizer',
+            'player-bootstrap-owner',
+        ]),
+        talonWindowFetchNeutralizer: true,
+        talonInlinePlayerResponseSanitizer: false,
+        talonGetWatchResponseSanitizer: false,
+        talonPlayerBootstrapOwner: false,
+        excludedScriptletIds: Object.freeze([
+            'ublock-filters.trusted-replace-node-text',
+            'ublock-experimental.trusted-replace-node-text',
+            'annoyances-overlays.json-prune',
+            'ublock-filters.trusted-edit-inbound-object',
+            'ublock-filters.trusted-json-edit-fetch-request',
+            'ublock-filters.json-prune',
+            'ublock-experimental.trusted-json-edit-xhr-response',
+            'ublock-filters.adjust-setTimeout',
+        ]),
+    }),
+    'upstream-core+talon-wins': Object.freeze({
+        upstreamSnapshot: YOUTUBE_WATCH_UPSTREAM_REFERENCE_SNAPSHOT,
+        activeUpstreamTacticFamilies: Object.freeze([
+            'trusted-prevent-dom-bypass',
+            'window-fetch-neutralizer',
+            'player-request-mutators',
+            'player-response-prune-replace',
+        ]),
+        retainedTalonWinFamilies: Object.freeze([
+            'inline-player-response-sanitizer',
+            'get-watch-response-sanitizer',
+            'player-bootstrap-owner',
+            'followup-diagnostics',
+        ]),
+        disabledTalonOverlapFamilies: Object.freeze([]),
+        talonWindowFetchNeutralizer: true,
+        talonInlinePlayerResponseSanitizer: true,
+        talonGetWatchResponseSanitizer: true,
+        talonPlayerBootstrapOwner: true,
+        excludedScriptletIds: Object.freeze([
+            'ublock-filters.trusted-replace-node-text',
+            'ublock-experimental.trusted-replace-node-text',
+            'annoyances-overlays.json-prune',
+            'ublock-filters.trusted-edit-inbound-object',
+            'ublock-filters.trusted-json-edit-fetch-request',
+            'ublock-filters.json-prune',
+            'ublock-experimental.trusted-json-edit-xhr-response',
+            'ublock-filters.adjust-setTimeout',
+        ]),
+    }),
+});
 
 export const REMOTE_SCRIPTLET_DENYLIST_RE = REMOTE_SCRIPTLET_DENY_RE;
+
+export function normalizeYouTubeWatchOwnerProfile(value) {
+    if ( typeof value !== 'string' ) { return YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT; }
+    const normalized = value.trim().toLowerCase();
+    return YOUTUBE_WATCH_OWNER_PROFILE_CONFIGS[normalized]
+        ? normalized
+        : YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT;
+}
+
+export function getYouTubeWatchOwnerProfileConfig(value) {
+    return YOUTUBE_WATCH_OWNER_PROFILE_CONFIGS[
+        normalizeYouTubeWatchOwnerProfile(value)
+    ];
+}
+
+export function getScriptletHostExclusions(scriptletId, options = {}) {
+    if ( typeof scriptletId !== 'string' ) { return []; }
+    const normalizedId = scriptletId.trim();
+    if ( normalizedId === '' ) { return []; }
+    const ownerProfile = normalizeYouTubeWatchOwnerProfile(
+        options?.youtubeOwnerProfile
+    );
+    const config = getYouTubeWatchOwnerProfileConfig(ownerProfile);
+    return config.excludedScriptletIds.includes(normalizedId)
+        ? [ 'www.youtube.com' ]
+        : [];
+}
 
 export function patternMatchesHostname(pattern, hostname) {
     if ( typeof pattern !== 'string' || typeof hostname !== 'string' ) { return false; }

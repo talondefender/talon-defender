@@ -10,6 +10,7 @@ const allowedTestFiles = new Set([
   "test/breakage-policy.test.js",
   "test/default-rulesets.test.js",
   "test/entitlement-regression.test.js",
+  "test/public-safe-audit.test.js",
 ]);
 
 const allowedTestUrlHostnames = new Set([

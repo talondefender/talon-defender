@@ -30,7 +30,7 @@ Current product summary:
 Key commands:
 - `npm test`
 - `npm run audit:public-content`
-- `npm run audit:public-safe`
+- `npm run audit:public-safe` (`public-safe-allowlist.txt` is the exact release manifest)
 - `npm run package:extension`
 - `npm run validate:mv3-package`
 - `npm run package:extension:edge`
