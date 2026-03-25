@@ -38,16 +38,19 @@ Community bundle behavior now:
 - the default bundle URL is `https://api.talondefender.com/v1/community/latest.bundle.json`
 - the bundle must pass SHA-256 integrity validation and Ed25519 signature verification
 - community sync only runs while the extension is entitled
+- successful community sync now defaults to a `6` hour refresh cadence, accepts signed bundle TTLs only within `1..24` hours, and still retries failures after `15` minutes
 - community sync now runs through a single-flight lane, and a forced post-activation sync queues one follow-up run if another sync is already in flight
 - schema `v2` community bundles can now ship tightly scoped MV3-safe exception rules using exact-host `allow`, exact-host `allowAllRequests`, and packaged-resource `redirect` actions
+- signed public bundles can now also ship host-scoped directives and bundled-allowlist scriptlets in normal store builds without developer mode
 - when community sync is disabled or the configured bundle URL is invalid, the extension clears active community DNR rules plus stored remote cosmetics, heuristics, directives, scriptlets, and sync diagnostics state
-- public startup now scrubs private proof-lane directives, scriptlets, and breakage-audit overrides before injectable registration can reuse stale state from a prior private session
-- successful sync and private-state cleanup now trigger an immediate injectable refresh when remote cosmetics, heuristics, directives, or scriptlets changed
+- public startup now scrubs only proof-lane directives, scriptlets, and breakage-audit overrides before injectable registration, while preserving active public signed hotfix extras
+- successful sync and private-state cleanup now trigger an immediate full injectable refresh when remote cosmetics, heuristics, directives, or scriptlets changed
 - signed remote cosmetics can now carry both global selectors and host-scoped selectors without a store update
 - remote heuristics can now carry signed `labelRegexes`, `labelSelectors`, and `widgetSelectors` so the native ad-marker vocabulary and selector tuning can expand without a store update
 - when remote fetch or remote apply fails, the extension falls back to stored rules or a non-empty packaged DNR fallback bundle, clears stale private proof-lane state, and retries after `15` minutes without treating the failed attempt as a successful sync
+- the allow-all DNR helper now self-heals partial dynamic/session mismatches and reports those repairs through troubleshooting diagnostics
 - injectable registration now retries once after a full reset of extension-managed content scripts and persists the latest sync result for troubleshooting
-- troubleshooting/report output now exposes community bundle version, schema version, last success/error state, cleanup reason, active exception counts, remote heuristic regex counts, host-scoped cosmetic counts, and injectable sync recovery errors for operator diagnostics
+- troubleshooting/report output now exposes community bundle version, schema version, last success/error state, cleanup reason, public versus proof hotfix counts, dropped quota classes, partial DNR repair state, active exception counts, remote heuristic regex counts, host-scoped cosmetic counts, and injectable sync recovery errors for operator diagnostics
 
 Release posture now:
 - this workspace is the only public-safe source surface

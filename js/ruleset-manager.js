@@ -68,8 +68,23 @@ const COMMUNITY_RULES_RANGE = 1000000; // 6,000,000–6,999,999
 const COMMUNITY_RULES_MAX = 3500;
 const COMMUNITY_RESERVED_HEADROOM = 250;
 
-let dynamicRegexCount = 0;
-let sessionRegexCount = 0;
+const countRegexRules = rules => {
+    if ( Array.isArray(rules) === false ) { return 0; }
+    let count = 0;
+    for ( const rule of rules ) {
+        if ( rule?.condition?.regexFilter === undefined ) { continue; }
+        count += 1;
+    }
+    return count;
+};
+
+const getDynamicRegexRuleCount = async ( ) =>
+    countRegexRules(await dnr.getDynamicRules());
+
+const logDynamicRegexUsage = regexCount => {
+    if ( regexCount === 0 ) { return; }
+    ubolLog(`Using ${regexCount}/${dnr.MAX_NUMBER_OF_REGEX_RULES} dynamic regex-based DNR rules`);
+};
 
 const COMMUNITY_RULE_QUOTA_CLASS_PRIORITY = Object.freeze({
     exactExceptions: 0,
@@ -238,20 +253,16 @@ async function updateDynamicRules() {
     await updateRegexRules(currentRules, addRules, removeRuleIds);
     if ( addRules.length === 0 && removeRuleIds.length === 0 ) { return; }
 
-    dynamicRegexCount = 0;
     let ruleId = 1;
     for ( const rule of addRules ) {
-        if ( rule?.condition.regexFilter ) { dynamicRegexCount += 1; }
         rule.id = ruleId++;
-    }
-    if ( dynamicRegexCount !== 0 ) {
-        ubolLog(`Using ${dynamicRegexCount}/${dnr.MAX_NUMBER_OF_REGEX_RULES} dynamic regex-based DNR rules`);
     }
 
     const response = {};
 
     try {
         await dnr.updateDynamicRules({ addRules, removeRuleIds });
+        logDynamicRegexUsage(await getDynamicRegexRuleCount());
         if ( removeRuleIds.length !== 0 ) {
             ubolLog(`Remove ${removeRuleIds.length} dynamic DNR rules`);
         }
@@ -389,17 +400,24 @@ async function setStrictBlockMode(state, force = false) {
 async function updateSessionRules() {
     const addRulesUnfiltered = [];
     const removeRuleIds = [];
-    const currentRules = await dnr.getSessionRules();
+    const [
+        currentRules,
+        currentDynamicRules,
+    ] = await Promise.all([
+        dnr.getSessionRules(),
+        dnr.getDynamicRules(),
+    ]);
     await updateStrictBlockRules(currentRules, addRulesUnfiltered, removeRuleIds);
     if ( addRulesUnfiltered.length === 0 && removeRuleIds.length === 0 ) { return; }
     const maxRegexCount = dnr.MAX_NUMBER_OF_REGEX_RULES * 0.80;
+    const dynamicRegexCount = countRegexRules(currentDynamicRules);
     let regexCount = dynamicRegexCount;
     let ruleId = 1;
     for ( const rule of addRulesUnfiltered ) {
         if ( rule?.condition.regexFilter ) { regexCount += 1; }
         rule.id = regexCount < maxRegexCount ? ruleId++ : 0;
     }
-    sessionRegexCount = regexCount - dynamicRegexCount;
+    const sessionRegexCount = regexCount - dynamicRegexCount;
     const addRules = addRulesUnfiltered.filter(a => a.id !== 0);
     const rejectedRuleCount = addRulesUnfiltered.length - addRules.length;
     if ( rejectedRuleCount !== 0 ) {
@@ -664,6 +682,7 @@ async function updateUserRules() {
     const rejectedRegexes = [];
     let addRules = await pruneInvalidRegexRules('user', rules, rejectedRegexes);
     const out = { added: 0, removed: 0, errors: [] };
+    const beforeUserRegexCount = countRegexRules(userRules);
 
     if ( rejectedRegexes.length !== 0 ) {
         rejectedRegexes.forEach(e =>
@@ -744,11 +763,17 @@ async function updateUserRules() {
         ubolErr(`updateUserRules/${reason}`);
         out.errors.push(`${reason}`);
     } finally {
-        const userRules = await getEffectiveUserRules();
-        if ( userRules.length === 0 ) {
+        const effectiveUserRules = await getEffectiveUserRules();
+        if ( effectiveUserRules.length === 0 ) {
             await localRemove('userDnrRuleCount');
         } else {
-            await localWrite('userDnrRuleCount', addRules.length);
+            await localWrite('userDnrRuleCount', effectiveUserRules.length);
+        }
+        if ( beforeUserRegexCount !== countRegexRules(effectiveUserRules) ) {
+            const sessionResult = await updateSessionRules();
+            if ( sessionResult?.error ) {
+                out.errors.push(`session rules: ${sessionResult.error}`);
+            }
         }
     }
     return out;
@@ -799,10 +824,11 @@ async function updateCommunityRules(rulesIn = [], bundleMeta = {}) {
 
     const maxRegexDynamic = Math.floor((dnr.MAX_NUMBER_OF_REGEX_RULES || 0) * 0.80) ||
         (dnr.MAX_NUMBER_OF_REGEX_RULES || 0);
-    const baseDynamicRegexCount = Math.max(
-        0,
-        dynamicRegexCount - removedCommunityRegexCount
-    );
+    const baseDynamicRules = currentRules.filter(rule => (
+        rule.id < COMMUNITY_RULES_BASE_RULE_ID ||
+        rule.id >= COMMUNITY_RULES_BASE_RULE_ID + COMMUNITY_RULES_RANGE
+    ));
+    const baseDynamicRegexCount = countRegexRules(baseDynamicRules);
     let availableRegex = maxRegexDynamic - baseDynamicRegexCount;
     if ( availableRegex < 0 ) { availableRegex = 0; }
     if ( validRegexRules.length > availableRegex ) {
@@ -903,7 +929,6 @@ async function updateCommunityRules(rulesIn = [], bundleMeta = {}) {
 
         const regexChanged = removedCommunityRegexCount !== 0 || addedRegexCount !== 0;
         if ( regexChanged ) {
-            dynamicRegexCount = baseDynamicRegexCount + addedRegexCount;
             await updateSessionRules();
         }
 

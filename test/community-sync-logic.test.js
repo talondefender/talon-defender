@@ -3,13 +3,16 @@ import assert from 'node:assert/strict';
 
 import {
   COMMUNITY_HEURISTIC_LABEL_REGEX_MAX,
+  COMMUNITY_SYNC_MAX_TTL_HOURS,
   COMMUNITY_SYNC_DEFAULT_TTL_HOURS,
   COMMUNITY_SYNC_FAILURE_RETRY_MS,
+  COMMUNITY_SYNC_MIN_TTL_HOURS,
   countCommunityCosmeticSelectors,
   countCommunityHeuristicLabelRegexes,
   computeCommunitySyncState,
   hasCommunityInjectableStateChanged,
   normalizeCommunityHeuristicLabelRegexes,
+  normalizeCommunitySyncTtlHours,
 } from '../js/community-sync-logic.js';
 
 test('community sync respects success TTL until it expires', () => {
@@ -49,6 +52,12 @@ test('community sync failures retry after 15 minutes without consuming success T
   });
   assert.equal(retryState.due, true);
   assert.equal(retryState.reason, 'retry');
+});
+
+test('community sync clamps bundle TTLs into the public hotfix window', () => {
+  assert.equal(normalizeCommunitySyncTtlHours(undefined), COMMUNITY_SYNC_DEFAULT_TTL_HOURS);
+  assert.equal(normalizeCommunitySyncTtlHours(0.5), COMMUNITY_SYNC_MIN_TTL_HOURS);
+  assert.equal(normalizeCommunitySyncTtlHours(48), COMMUNITY_SYNC_MAX_TTL_HOURS);
 });
 
 test('community sync treats first-time failures as retry-backed attempts', () => {

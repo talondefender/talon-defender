@@ -60,21 +60,32 @@ const STORAGE_KEYS = {
     rules: 'communityBundleRules',
     cosmetics: 'communityBundleCosmetics',
     heuristics: 'communityBundleHeuristics',
-    directives: 'communityBundleDirectives',
-    scriptlets: 'communityBundleScriptlets',
+    publicDirectives: 'communityBundlePublicDirectives',
+    publicScriptlets: 'communityBundlePublicScriptlets',
+    privateDirectives: 'communityBundlePrivateDirectives',
+    privateScriptlets: 'communityBundlePrivateScriptlets',
     lastAttempt: 'communityBundleLastAttempt',
     lastSuccess: 'communityBundleLastSuccess',
     lastFetch: 'communityBundleLastFetch',
     lastError: 'communityBundleLastError',
 };
+const LEGACY_PRIVATE_STORAGE_KEYS = {
+    directives: 'communityBundleDirectives',
+    scriptlets: 'communityBundleScriptlets',
+};
 
 const ALARM_NAME = 'community-sync';
 const COMMUNITY_FETCH_TIMEOUT_MS = 10000;
 const COMMUNITY_PRIVATE_ONLY_KEYS = [
-    STORAGE_KEYS.directives,
-    STORAGE_KEYS.scriptlets,
+    STORAGE_KEYS.privateDirectives,
+    STORAGE_KEYS.privateScriptlets,
+    LEGACY_PRIVATE_STORAGE_KEYS.directives,
+    LEGACY_PRIVATE_STORAGE_KEYS.scriptlets,
 ];
-const COMMUNITY_STATE_KEYS = Object.values(STORAGE_KEYS);
+const COMMUNITY_STATE_KEYS = [
+    ...Object.values(STORAGE_KEYS),
+    ...Object.values(LEGACY_PRIVATE_STORAGE_KEYS),
+];
 
 const COMMUNITY_ALLOWED_HOSTS = (() => {
     const out = new Set();
@@ -118,6 +129,14 @@ const normalizeCommunityURL = value => {
     } catch {
     }
     return '';
+};
+
+const isPublicCommunityHotfixLane = value => {
+    try {
+        return COMMUNITY_ALLOWED_HOSTS.has(new URL(value).hostname.toLowerCase());
+    } catch {
+    }
+    return false;
 };
 
 const fetchWithTimeout = async (url, options = {}) => {
@@ -269,38 +288,79 @@ const getCommunityApplyError = applied => {
     return rawError.replace(/^Error:\s*/i, '').trim();
 };
 
-const readStoredCommunityInjectableState = async () => {
+const mergeCommunityExtras = (...inputs) => {
+    const out = [];
+    for ( const input of inputs ) {
+        if ( Array.isArray(input) === false ) { continue; }
+        out.push(...input);
+    }
+    return out.length === 0 ? null : out;
+};
+
+const readStoredCommunityInjectableSnapshot = async () => {
     const [
         cosmetics,
         heuristics,
-        directives,
-        scriptlets,
+        publicDirectives,
+        publicScriptlets,
+        privateDirectives,
+        privateScriptlets,
+        legacyDirectives,
+        legacyScriptlets,
     ] = await Promise.all([
         localRead(STORAGE_KEYS.cosmetics),
         localRead(STORAGE_KEYS.heuristics),
-        localRead(STORAGE_KEYS.directives),
-        localRead(STORAGE_KEYS.scriptlets),
+        localRead(STORAGE_KEYS.publicDirectives),
+        localRead(STORAGE_KEYS.publicScriptlets),
+        localRead(STORAGE_KEYS.privateDirectives),
+        localRead(STORAGE_KEYS.privateScriptlets),
+        localRead(LEGACY_PRIVATE_STORAGE_KEYS.directives),
+        localRead(LEGACY_PRIVATE_STORAGE_KEYS.scriptlets),
     ]);
     return {
         cosmetics: cosmetics ?? null,
         heuristics: heuristics ?? null,
-        directives: directives ?? null,
-        scriptlets: scriptlets ?? null,
+        publicDirectives: publicDirectives ?? null,
+        publicScriptlets: publicScriptlets ?? null,
+        privateDirectives: privateDirectives ?? null,
+        privateScriptlets: privateScriptlets ?? null,
+        legacyDirectives: legacyDirectives ?? null,
+        legacyScriptlets: legacyScriptlets ?? null,
     };
 };
 
-const buildPrivateStateAfterScrub = beforeState => ({
-    cosmetics: beforeState?.cosmetics ?? null,
-    heuristics: beforeState?.heuristics ?? null,
-    directives: null,
-    scriptlets: null,
+const snapshotToInjectableState = snapshot => ({
+    cosmetics: snapshot?.cosmetics ?? null,
+    heuristics: snapshot?.heuristics ?? null,
+    directives: mergeCommunityExtras(
+        snapshot?.publicDirectives,
+        snapshot?.privateDirectives,
+        snapshot?.legacyDirectives
+    ),
+    scriptlets: mergeCommunityExtras(
+        snapshot?.publicScriptlets,
+        snapshot?.privateScriptlets,
+        snapshot?.legacyScriptlets
+    ),
+});
+
+const readStoredCommunityInjectableState = async ( ) =>
+    snapshotToInjectableState(await readStoredCommunityInjectableSnapshot());
+
+const buildPrivateStateAfterScrub = beforeSnapshot => snapshotToInjectableState({
+    ...beforeSnapshot,
+    privateDirectives: null,
+    privateScriptlets: null,
+    legacyDirectives: null,
+    legacyScriptlets: null,
 });
 
 export async function scrubPrivateCommunityState(
     cleanupReason = 'developer-mode-off'
 ) {
-    const beforeState = await readStoredCommunityInjectableState();
-    const afterState = buildPrivateStateAfterScrub(beforeState);
+    const beforeSnapshot = await readStoredCommunityInjectableSnapshot();
+    const beforeState = snapshotToInjectableState(beforeSnapshot);
+    const afterState = buildPrivateStateAfterScrub(beforeSnapshot);
     await removeStoredCommunityKeys(COMMUNITY_PRIVATE_ONLY_KEYS);
     const requiresInjectableRefresh = hasCommunityInjectableStateChanged(
         beforeState,
@@ -452,6 +512,7 @@ export async function syncCommunityRules({ force = false } = {}) {
     if ( url === '' ) {
         return clearCommunityState('invalid-url');
     }
+    const publicHotfixLane = isPublicCommunityHotfixLane(url);
 
     const syncState = await getCommunitySyncState(force);
     if ( syncState.due === false ) {
@@ -552,7 +613,8 @@ export async function syncCommunityRules({ force = false } = {}) {
 
     // Extras are only trusted if covered by the signature.
     const extrasSigned = integrityScope === 'full';
-    const beforeInjectableState = await readStoredCommunityInjectableState();
+    const beforeInjectableSnapshot = await readStoredCommunityInjectableSnapshot();
+    const beforeInjectableState = snapshotToInjectableState(beforeInjectableSnapshot);
 
     const sanitizeStringArray = (input, limit, maxLen = 256) => {
         if ( Array.isArray(input) === false ) { return []; }
@@ -651,6 +713,29 @@ export async function syncCommunityRules({ force = false } = {}) {
         return Object.keys(out).length === 0 ? null : out;
     };
 
+    const sanitizeScopedHostPatterns = (input, limit) => {
+        const out = [];
+        const seen = new Set();
+        for ( const value of sanitizeStringArray(input, limit) ) {
+            const normalized = value.toLowerCase();
+            if ( normalized === '*' || normalized === 'all-urls' ) { continue; }
+            if ( normalized.includes('://') || normalized.includes('/') ) { continue; }
+            if ( normalized.startsWith('*.') ) {
+                const bare = normalized.slice(2);
+                if ( bare === '' || bare.includes('*') ) { continue; }
+            } else if ( normalized.endsWith('.*') ) {
+                const bare = normalized.slice(0, -2);
+                if ( bare === '' || bare.includes('*') ) { continue; }
+            } else if ( normalized.includes('*') ) {
+                continue;
+            }
+            if ( seen.has(normalized) ) { continue; }
+            seen.add(normalized);
+            out.push(normalized);
+        }
+        return out;
+    };
+
     const sanitizeDirectives = input => {
         if ( Array.isArray(input) === false ) { return null; }
         const out = [];
@@ -662,11 +747,15 @@ export async function syncCommunityRules({ force = false } = {}) {
                 .filter(selector => isSafeMutationSelector(selector, {
                     requireKnownConsent: d.category === 'consent',
                 }));
-            if ( id === '' || action === '' || selectors.length === 0 ) { continue; }
-            const hosts = sanitizeStringArray(d.hosts, 32);
-            const sanitizedHosts = hosts.length !== 0 ? hosts : [ '*' ];
-            const hasWildcardHost = sanitizedHosts.some(h => h === '*' || h === 'all-urls');
-            if ( action === 'remove' && hasWildcardHost ) { continue; }
+            const sanitizedHosts = sanitizeScopedHostPatterns(d.hosts, 32);
+            if (
+                id === '' ||
+                action === '' ||
+                selectors.length === 0 ||
+                sanitizedHosts.length === 0
+            ) {
+                continue;
+            }
             if ( sanitizedHosts.some(patternCouldMatchProtectedDomain) ) {
                 if ( d.category !== 'consent' ) { continue; }
                 if ( action === 'remove' ) { continue; }
@@ -703,8 +792,8 @@ export async function syncCommunityRules({ force = false } = {}) {
             const token = typeof s.token === 'string' ? s.token.trim() : '';
             if ( rulesetId === '' || token === '' ) { continue; }
             if ( isRemoteScriptletAllowed(token) === false ) { continue; }
-            const hosts = sanitizeStringArray(s.hosts, 80);
-            const sanitizedHosts = hosts.length !== 0 ? hosts : [ '*' ];
+            const sanitizedHosts = sanitizeScopedHostPatterns(s.hosts, 80);
+            if ( sanitizedHosts.length === 0 ) { continue; }
             if ( sanitizedHosts.some(patternCouldMatchProtectedDomain) ) { continue; }
             const world = s.world === 'MAIN' ? 'MAIN' : 'ISOLATED';
             out.push({ rulesetId, token, hosts: sanitizedHosts, world });
@@ -715,34 +804,57 @@ export async function syncCommunityRules({ force = false } = {}) {
 
     let cosmeticsToStore = null;
     let heuristicsToStore = null;
-    let directivesToStore = null;
-    let scriptletsToStore = null;
-    const allowRemoteDirectiveFeatures = extrasSigned &&
-        isDeveloperModeAllowed &&
+    let publicDirectivesToStore = beforeInjectableSnapshot.publicDirectives ?? null;
+    let publicScriptletsToStore = beforeInjectableSnapshot.publicScriptlets ?? null;
+    let privateDirectivesToStore = null;
+    let privateScriptletsToStore = null;
+    const allowPrivateDirectiveFeatures = isDeveloperModeAllowed &&
         rulesetConfig.developerMode === true;
     if ( extrasSigned ) {
         cosmeticsToStore = sanitizeCosmetics(bundle.cosmetics);
         heuristicsToStore = sanitizeHeuristics(bundle.heuristics);
-        if ( allowRemoteDirectiveFeatures ) {
-            directivesToStore = sanitizeDirectives(bundle.directives);
-            scriptletsToStore = sanitizeScriptlets(bundle.scriptlets);
+        const sanitizedDirectives = sanitizeDirectives(bundle.directives);
+        const sanitizedScriptlets = sanitizeScriptlets(bundle.scriptlets);
+        if ( publicHotfixLane ) {
+            publicDirectivesToStore = sanitizedDirectives;
+            publicScriptletsToStore = sanitizedScriptlets;
+        } else if ( allowPrivateDirectiveFeatures ) {
+            privateDirectivesToStore = sanitizedDirectives;
+            privateScriptletsToStore = sanitizedScriptlets;
         }
+    } else if ( publicHotfixLane ) {
+        publicDirectivesToStore = null;
+        publicScriptletsToStore = null;
     }
+    const totalDirectives = mergeCommunityExtras(
+        publicDirectivesToStore,
+        privateDirectivesToStore
+    );
+    const totalScriptlets = mergeCommunityExtras(
+        publicScriptletsToStore,
+        privateScriptletsToStore
+    );
 
     const metaToStore = {
         version: bundle.version,
         schemaVersion: normalizedSchemaVersion,
         generatedAt: bundle.generatedAt,
         ttlHours: normalizeCommunitySyncTtlHours(bundle.ttlHours),
+        retryMinutes: COMMUNITY_SYNC_FAILURE_RETRY_MS / (60 * 1000),
         integrity: integrity.value,
         applied,
         extrasSigned,
-        remoteDirectiveFeaturesEnabled: allowRemoteDirectiveFeatures,
+        hotfixLane: publicHotfixLane ? 'public' : 'private',
+        remoteDirectiveFeaturesEnabled: Boolean(totalDirectives || totalScriptlets),
         cosmeticsCount: countCommunityCosmeticSelectors(cosmeticsToStore),
         hostCosmeticsCount: countHostSpecificCommunityCosmeticSelectors(cosmeticsToStore),
         heuristicRegexCount: countCommunityHeuristicLabelRegexes(heuristicsToStore),
-        directivesCount: directivesToStore?.length || 0,
-        scriptletsCount: scriptletsToStore?.length || 0,
+        directivesCount: totalDirectives?.length || 0,
+        scriptletsCount: totalScriptlets?.length || 0,
+        publicDirectivesCount: publicDirectivesToStore?.length || 0,
+        publicScriptletsCount: publicScriptletsToStore?.length || 0,
+        proofDirectivesCount: privateDirectivesToStore?.length || 0,
+        proofScriptletsCount: privateScriptletsToStore?.length || 0,
     };
 
     const now = Date.now();
@@ -758,26 +870,38 @@ export async function syncCommunityRules({ force = false } = {}) {
         writes.push(
             localWrite(STORAGE_KEYS.cosmetics, cosmeticsToStore),
             localWrite(STORAGE_KEYS.heuristics, heuristicsToStore),
-            localWrite(STORAGE_KEYS.directives, directivesToStore),
-            localWrite(STORAGE_KEYS.scriptlets, scriptletsToStore),
+            localWrite(STORAGE_KEYS.publicDirectives, publicDirectivesToStore),
+            localWrite(STORAGE_KEYS.publicScriptlets, publicScriptletsToStore),
+            localWrite(STORAGE_KEYS.privateDirectives, privateDirectivesToStore),
+            localWrite(STORAGE_KEYS.privateScriptlets, privateScriptletsToStore),
+            localRemove(LEGACY_PRIVATE_STORAGE_KEYS.directives),
+            localRemove(LEGACY_PRIVATE_STORAGE_KEYS.scriptlets),
         );
     } else {
         writes.push(
             localWrite(STORAGE_KEYS.cosmetics, null),
             localWrite(STORAGE_KEYS.heuristics, null),
-            localWrite(STORAGE_KEYS.directives, null),
-            localWrite(STORAGE_KEYS.scriptlets, null),
+            localWrite(STORAGE_KEYS.publicDirectives, publicDirectivesToStore),
+            localWrite(STORAGE_KEYS.publicScriptlets, publicScriptletsToStore),
+            localWrite(STORAGE_KEYS.privateDirectives, privateDirectivesToStore),
+            localWrite(STORAGE_KEYS.privateScriptlets, privateScriptletsToStore),
+            localRemove(LEGACY_PRIVATE_STORAGE_KEYS.directives),
+            localRemove(LEGACY_PRIVATE_STORAGE_KEYS.scriptlets),
         );
     }
 
     await Promise.all(writes);
 
-    const afterInjectableState = {
+    const afterInjectableState = snapshotToInjectableState({
         cosmetics: cosmeticsToStore,
         heuristics: heuristicsToStore,
-        directives: directivesToStore,
-        scriptlets: scriptletsToStore,
-    };
+        publicDirectives: publicDirectivesToStore,
+        publicScriptlets: publicScriptletsToStore,
+        privateDirectives: privateDirectivesToStore,
+        privateScriptlets: privateScriptletsToStore,
+        legacyDirectives: null,
+        legacyScriptlets: null,
+    });
     const requiresInjectableRefresh = Boolean(
         privateStateResult.requiresInjectableRefresh ||
         hasCommunityInjectableStateChanged(beforeInjectableState, afterInjectableState)

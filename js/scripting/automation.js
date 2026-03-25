@@ -4,7 +4,9 @@
 (function uBOL_automation() {
 
 const DIRECTIVES_PATH = 'automation/directives.json';
-const REMOTE_DIRECTIVES_KEY = 'communityBundleDirectives';
+const PUBLIC_REMOTE_DIRECTIVES_KEY = 'communityBundlePublicDirectives';
+const PRIVATE_REMOTE_DIRECTIVES_KEY = 'communityBundlePrivateDirectives';
+const LEGACY_REMOTE_DIRECTIVES_KEY = 'communityBundleDirectives';
 
 const runtime = self.browser?.runtime || self.chrome?.runtime;
 const getURL = runtime?.getURL?.bind(runtime) || (p => p);
@@ -20,16 +22,34 @@ if ( self.TalonAutomationController ) {
 let directivesPromise;
 let remoteDirectivesPromise;
 
+const mergeDirectiveArrays = (...inputs) => {
+    const out = [];
+    for ( const input of inputs ) {
+        if ( Array.isArray(input) === false ) { continue; }
+        out.push(...input);
+    }
+    return out;
+};
+
 const loadRemoteDirectives = ( ) => {
     if ( remoteDirectivesPromise !== undefined ) { return remoteDirectivesPromise; }
     if ( storage?.get === undefined ) {
         remoteDirectivesPromise = Promise.resolve([]);
         return remoteDirectivesPromise;
     }
+    const keys = [
+        PUBLIC_REMOTE_DIRECTIVES_KEY,
+        PRIVATE_REMOTE_DIRECTIVES_KEY,
+        LEGACY_REMOTE_DIRECTIVES_KEY,
+    ];
     try {
-        const maybePromise = storage.get(REMOTE_DIRECTIVES_KEY);
+        const maybePromise = storage.get(keys);
         if ( maybePromise?.then ) {
-            remoteDirectivesPromise = maybePromise.then(bin => bin?.[REMOTE_DIRECTIVES_KEY] || [])
+            remoteDirectivesPromise = maybePromise.then(bin => mergeDirectiveArrays(
+                bin?.[PUBLIC_REMOTE_DIRECTIVES_KEY],
+                bin?.[PRIVATE_REMOTE_DIRECTIVES_KEY],
+                bin?.[LEGACY_REMOTE_DIRECTIVES_KEY],
+            ))
                 .catch(( ) => []);
             return remoteDirectivesPromise;
         }
@@ -37,7 +57,11 @@ const loadRemoteDirectives = ( ) => {
     }
     remoteDirectivesPromise = new Promise(resolve => {
         try {
-            storage.get(REMOTE_DIRECTIVES_KEY, bin => resolve(bin?.[REMOTE_DIRECTIVES_KEY] || []));
+            storage.get(keys, bin => resolve(mergeDirectiveArrays(
+                bin?.[PUBLIC_REMOTE_DIRECTIVES_KEY],
+                bin?.[PRIVATE_REMOTE_DIRECTIVES_KEY],
+                bin?.[LEGACY_REMOTE_DIRECTIVES_KEY],
+            )));
         } catch {
             resolve([]);
         }

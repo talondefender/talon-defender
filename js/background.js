@@ -765,9 +765,11 @@ import {
     syncCommunityRules,
 } from './community-sync.js';
 import {
+    COMMUNITY_SYNC_FAILURE_RETRY_MS,
     countCommunityCosmeticSelectors,
     countCommunityHeuristicLabelRegexes,
     countHostSpecificCommunityCosmeticSelectors,
+    normalizeCommunitySyncTtlHours,
 } from './community-sync-logic.js';
 
 import {
@@ -778,7 +780,10 @@ import {
     ubolLog,
 } from './debug.js';
 
-import { dnr } from './ext-compat.js';
+import {
+    ALLOW_ALL_RULES_DIAGNOSTICS_KEY,
+    dnr,
+} from './ext-compat.js';
 import {
     readInjectableSyncDiagnostics,
     registerInjectables,
@@ -3327,9 +3332,14 @@ function onMessage(request, sender, callback) {
                 localRead('communityBundleLastError'),
                 localRead('communityBundleCosmetics'),
                 localRead('communityBundleHeuristics'),
+                localRead('communityBundlePublicDirectives'),
+                localRead('communityBundlePublicScriptlets'),
+                localRead('communityBundlePrivateDirectives'),
+                localRead('communityBundlePrivateScriptlets'),
                 localRead('communityBundleDirectives'),
                 localRead('communityBundleScriptlets'),
                 localRead(REMOTE_COSMETICS_RUNTIME_STATS_KEY),
+                localRead(ALLOW_ALL_RULES_DIAGNOSTICS_KEY),
             ]).then(([
                 meta,
                 lastAttempt,
@@ -3337,13 +3347,26 @@ function onMessage(request, sender, callback) {
                 lastError,
                 cosmetics,
                 heuristics,
-                directives,
-                scriptlets,
+                publicDirectives,
+                publicScriptlets,
+                privateDirectives,
+                privateScriptlets,
+                legacyDirectives,
+                legacyScriptlets,
                 liveRuntimeStats,
+                allowAllRulesDiagnostics,
             ]) => {
                 const diagnosticsMeta = meta instanceof Object
                     ? { ...meta }
                     : {};
+                const countStoredEntries = (...lists) => {
+                    let total = 0;
+                    for ( const list of lists ) {
+                        if ( Array.isArray(list) === false ) { continue; }
+                        total += list.length;
+                    }
+                    return total;
+                };
                 const stats = liveRuntimeStats instanceof Object
                     ? liveRuntimeStats
                     : {};
@@ -3368,16 +3391,40 @@ function onMessage(request, sender, callback) {
                     countHostSpecificCommunityCosmeticSelectors(cosmetics);
                 diagnosticsMeta.heuristicRegexCount =
                     countCommunityHeuristicLabelRegexes(heuristics);
-                diagnosticsMeta.directivesCount = Array.isArray(directives)
-                    ? directives.length
-                    : 0;
-                diagnosticsMeta.scriptletsCount = Array.isArray(scriptlets)
-                    ? scriptlets.length
-                    : 0;
+                diagnosticsMeta.publicDirectivesCount = countStoredEntries(publicDirectives);
+                diagnosticsMeta.publicScriptletsCount = countStoredEntries(publicScriptlets);
+                diagnosticsMeta.proofDirectivesCount = countStoredEntries(
+                    privateDirectives,
+                    legacyDirectives
+                );
+                diagnosticsMeta.proofScriptletsCount = countStoredEntries(
+                    privateScriptlets,
+                    legacyScriptlets
+                );
+                diagnosticsMeta.directivesCount = diagnosticsMeta.publicDirectivesCount +
+                    diagnosticsMeta.proofDirectivesCount;
+                diagnosticsMeta.scriptletsCount = diagnosticsMeta.publicScriptletsCount +
+                    diagnosticsMeta.proofScriptletsCount;
                 diagnosticsMeta.liveRemoteCosmeticChunkCount = liveRemoteCosmeticChunkCount;
                 diagnosticsMeta.liveRemoteCosmeticDroppedAtApply =
                     liveRemoteCosmeticDroppedAtApply;
                 diagnosticsMeta.liveRemoteCosmeticHostCount = liveRemoteCosmeticHostCount;
+                const partialDnrRepairCount = Math.max(
+                    0,
+                    Math.floor(Number(allowAllRulesDiagnostics?.partialRepairCount) || 0)
+                );
+                if ( partialDnrRepairCount !== 0 ) {
+                    diagnosticsMeta.partialDnrRepairCount = partialDnrRepairCount;
+                    diagnosticsMeta.lastPartialDnrRepair =
+                        Number(allowAllRulesDiagnostics?.lastRepairAt) || 0;
+                }
+                if ( Object.keys(diagnosticsMeta).length !== 0 || partialDnrRepairCount !== 0 ) {
+                    diagnosticsMeta.ttlHours = normalizeCommunitySyncTtlHours(
+                        diagnosticsMeta.ttlHours
+                    );
+                    diagnosticsMeta.retryMinutes =
+                        COMMUNITY_SYNC_FAILURE_RETRY_MS / (60 * 1000);
+                }
                 callback({
                     meta: diagnosticsMeta,
                     lastAttempt: Number(lastAttempt) || 0,

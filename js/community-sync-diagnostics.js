@@ -61,13 +61,59 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
     const heuristicRegexCount = toNonNegativeInteger(meta?.heuristicRegexCount);
     const directivesCount = toNonNegativeInteger(meta?.directivesCount);
     const scriptletsCount = toNonNegativeInteger(meta?.scriptletsCount);
+    const publicDirectivesCount = toNonNegativeInteger(meta?.publicDirectivesCount);
+    const publicScriptletsCount = toNonNegativeInteger(meta?.publicScriptletsCount);
+    const proofDirectivesCount = toNonNegativeInteger(meta?.proofDirectivesCount);
+    const proofScriptletsCount = toNonNegativeInteger(meta?.proofScriptletsCount);
     const liveRemoteCosmeticChunkCount = toNonNegativeInteger(meta?.liveRemoteCosmeticChunkCount);
     const liveRemoteCosmeticDroppedAtApply =
         toNonNegativeInteger(meta?.liveRemoteCosmeticDroppedAtApply);
     const liveRemoteCosmeticHostCount = toNonNegativeInteger(meta?.liveRemoteCosmeticHostCount);
+    const ttlHours = Number.isFinite(Number(meta?.ttlHours))
+        ? Number(meta.ttlHours)
+        : 0;
+    const retryMinutes = Number.isFinite(Number(meta?.retryMinutes))
+        ? Number(meta.retryMinutes)
+        : 0;
+    const hotfixLane = typeof meta?.hotfixLane === 'string'
+        ? meta.hotfixLane.trim()
+        : '';
+    const partialDnrRepairCount = toNonNegativeInteger(meta?.partialDnrRepairCount);
+    const lastPartialDnrRepair = toIsoTimestamp(meta?.lastPartialDnrRepair);
+    const hasDroppedCounts = (
+        droppedCounts.unsupportedAction !== 0 ||
+        droppedCounts.unsafeScope !== 0 ||
+        droppedCounts.unsupportedRedirectPath !== 0 ||
+        droppedCounts.quota !== 0 ||
+        droppedCounts.regexUnsupported !== 0 ||
+        Object.values(droppedCounts.quotaByClass).some(value => value !== 0)
+    );
+    const hasActionCounts = Object.values(actionCounts).some(value => value !== 0);
+    const hasMeaningfulMeta = (
+        (typeof meta?.version === 'string' && meta.version.trim() !== '') ||
+        (typeof meta?.integrity === 'string' && meta.integrity.trim() !== '') ||
+        Number(meta?.generatedAt) > 0 ||
+        activeRules !== 0 ||
+        activeExceptions !== 0 ||
+        cosmeticsCount !== 0 ||
+        hostCosmeticsCount !== 0 ||
+        heuristicRegexCount !== 0 ||
+        directivesCount !== 0 ||
+        scriptletsCount !== 0 ||
+        publicDirectivesCount !== 0 ||
+        publicScriptletsCount !== 0 ||
+        proofDirectivesCount !== 0 ||
+        proofScriptletsCount !== 0 ||
+        liveRemoteCosmeticChunkCount !== 0 ||
+        liveRemoteCosmeticDroppedAtApply !== 0 ||
+        liveRemoteCosmeticHostCount !== 0 ||
+        partialDnrRepairCount !== 0 ||
+        hasActionCounts ||
+        hasDroppedCounts
+    );
 
-    const hasAnyData = meta instanceof Object && (
-        Object.keys(meta).length !== 0 ||
+    const hasAnyData = (
+        hasMeaningfulMeta ||
         Number(input?.lastAttempt) > 0 ||
         Number(input?.lastSuccess) > 0 ||
         lastError !== '' ||
@@ -101,6 +147,16 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
         heuristicRegexCount,
         directivesCount,
         scriptletsCount,
+        publicDirectivesCount,
+        publicScriptletsCount,
+        proofDirectivesCount,
+        proofScriptletsCount,
+        ttlHours,
+        retryMinutes,
+        hotfixLane: hotfixLane || 'unknown',
+        partialDnrRepairSeen: partialDnrRepairCount !== 0,
+        partialDnrRepairCount,
+        lastPartialDnrRepair,
         liveRemoteCosmeticChunkCount,
         liveRemoteCosmeticDroppedAtApply,
         liveRemoteCosmeticHostCount,

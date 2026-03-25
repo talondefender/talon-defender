@@ -21,6 +21,7 @@
 
 export const webext = self.browser || self.chrome;
 export const dnr = webext.declarativeNetRequest || {};
+export const ALLOW_ALL_RULES_DIAGNOSTICS_KEY = 'allowAllRulesDiagnosticsV1';
 
 /******************************************************************************/
 
@@ -30,6 +31,38 @@ const isSameRules = (a, b) => {
     a.sort(ruleCompare);
     b.sort(ruleCompare);
     return JSON.stringify(a) === JSON.stringify(b);
+};
+
+const readLocalDiagnostics = async key => {
+    if ( webext.storage?.local?.get === undefined ) { return null; }
+    try {
+        const bin = await webext.storage.local.get(key);
+        return bin?.[key] instanceof Object
+            ? bin[key]
+            : null;
+    } catch {
+    }
+    return null;
+};
+
+const writeLocalDiagnostics = async (key, value) => {
+    if ( webext.storage?.local?.set === undefined ) { return; }
+    try {
+        await webext.storage.local.set({ [key]: value });
+    } catch {
+    }
+};
+
+const recordAllowAllRulesPartialRepair = async () => {
+    const current = await readLocalDiagnostics(ALLOW_ALL_RULES_DIAGNOSTICS_KEY);
+    const partialRepairCount = Math.max(
+        0,
+        Number(current?.partialRepairCount) || 0
+    ) + 1;
+    await writeLocalDiagnostics(ALLOW_ALL_RULES_DIAGNOSTICS_KEY, {
+        partialRepairCount,
+        lastRepairAt: Date.now(),
+    });
 };
 
 /******************************************************************************/
@@ -85,19 +118,28 @@ dnr.setAllowAllRules = async function(id, allowed, notAllowed, reverse, priority
         }
         addSessionRules.push(rule1);
     }
-    if ( isSameRules(addDynamicRules, beforeDynamicRules) ) { return false; }
-    return Promise.all([
-        dnr.updateDynamicRules({
+    const dynamicMatches = isSameRules(addDynamicRules, beforeDynamicRules);
+    const sessionMatches = isSameRules(addSessionRules, beforeSessionRules);
+    if ( dynamicMatches && sessionMatches ) { return false; }
+    const updates = [];
+    if ( dynamicMatches === false ) {
+        updates.push(dnr.updateDynamicRules({
             addRules: addDynamicRules,
             removeRuleIds: beforeDynamicRules.map(r => r.id),
-        }),
-        dnr.updateSessionRules({
+        }));
+    }
+    if ( sessionMatches === false ) {
+        updates.push(dnr.updateSessionRules({
             addRules: addSessionRules,
             removeRuleIds: beforeSessionRules.map(r => r.id),
-        }),
-    ]).then(( ) =>
-        true
-    ).catch(( ) =>
+        }));
+    }
+    return Promise.all(updates).then(async ( ) => {
+        if ( dynamicMatches !== sessionMatches ) {
+            await recordAllowAllRulesPartialRepair();
+        }
+        return true;
+    }).catch(( ) =>
         false
     );
 };

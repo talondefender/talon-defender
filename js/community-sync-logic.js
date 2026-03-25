@@ -1,4 +1,6 @@
-export const COMMUNITY_SYNC_DEFAULT_TTL_HOURS = 24;
+export const COMMUNITY_SYNC_DEFAULT_TTL_HOURS = 6;
+export const COMMUNITY_SYNC_MIN_TTL_HOURS = 1;
+export const COMMUNITY_SYNC_MAX_TTL_HOURS = 24;
 export const COMMUNITY_SYNC_FAILURE_RETRY_MS = 15 * 60 * 1000;
 export const COMMUNITY_HEURISTIC_LABEL_REGEX_MAX = 64;
 export const COMMUNITY_HEURISTIC_LABEL_REGEX_MAX_LENGTH = 256;
@@ -15,7 +17,10 @@ export const normalizeCommunitySyncTtlHours = value => {
     if ( Number.isFinite(ttlHours) === false || ttlHours <= 0 ) {
         return COMMUNITY_SYNC_DEFAULT_TTL_HOURS;
     }
-    return ttlHours;
+    return Math.min(
+        COMMUNITY_SYNC_MAX_TTL_HOURS,
+        Math.max(COMMUNITY_SYNC_MIN_TTL_HOURS, ttlHours)
+    );
 };
 
 export const computeCommunitySyncState = ({

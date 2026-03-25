@@ -6,15 +6,25 @@ import { buildCommunitySyncDiagnosticsSummary } from '../js/community-sync-diagn
 test('community sync diagnostics summary reports schema version, action counts, and active exceptions', () => {
   const lastAttempt = Date.UTC(2026, 2, 25, 18, 15, 0, 0);
   const lastSuccess = Date.UTC(2026, 2, 25, 18, 0, 0, 0);
+  const lastPartialDnrRepair = Date.UTC(2026, 2, 25, 17, 55, 0, 0);
   const summary = buildCommunitySyncDiagnosticsSummary({
     meta: {
       version: '2026.03.25.1',
       schemaVersion: 2,
+      ttlHours: 24,
+      retryMinutes: 15,
+      hotfixLane: 'public',
       cosmeticsCount: 6,
       hostCosmeticsCount: 5,
       heuristicRegexCount: 2,
       directivesCount: 4,
       scriptletsCount: 3,
+      publicDirectivesCount: 3,
+      publicScriptletsCount: 2,
+      proofDirectivesCount: 1,
+      proofScriptletsCount: 1,
+      partialDnrRepairCount: 1,
+      lastPartialDnrRepair,
       liveRemoteCosmeticChunkCount: 5,
       liveRemoteCosmeticDroppedAtApply: 2,
       liveRemoteCosmeticHostCount: 2,
@@ -62,6 +72,16 @@ test('community sync diagnostics summary reports schema version, action counts, 
   assert.equal(summary.heuristicRegexCount, 2);
   assert.equal(summary.directivesCount, 4);
   assert.equal(summary.scriptletsCount, 3);
+  assert.equal(summary.publicDirectivesCount, 3);
+  assert.equal(summary.publicScriptletsCount, 2);
+  assert.equal(summary.proofDirectivesCount, 1);
+  assert.equal(summary.proofScriptletsCount, 1);
+  assert.equal(summary.ttlHours, 24);
+  assert.equal(summary.retryMinutes, 15);
+  assert.equal(summary.hotfixLane, 'public');
+  assert.equal(summary.partialDnrRepairSeen, true);
+  assert.equal(summary.partialDnrRepairCount, 1);
+  assert.equal(summary.lastPartialDnrRepair, new Date(lastPartialDnrRepair).toISOString());
   assert.equal(summary.liveRemoteCosmeticChunkCount, 5);
   assert.equal(summary.liveRemoteCosmeticDroppedAtApply, 2);
   assert.equal(summary.liveRemoteCosmeticHostCount, 2);
@@ -99,4 +119,23 @@ test('community sync diagnostics summary returns idle cleanup details without ac
   assert.equal(summary.status, 'idle');
   assert.equal(summary.cleanupReason, 'disabled');
   assert.equal(summary.lastError, 'none');
+});
+
+test('community sync diagnostics summary reports partial repair-only state', () => {
+  const lastPartialDnrRepair = Date.UTC(2026, 2, 25, 17, 30, 0, 0);
+  const summary = buildCommunitySyncDiagnosticsSummary({
+    meta: {
+      partialDnrRepairCount: 2,
+      lastPartialDnrRepair,
+      ttlHours: 6,
+      retryMinutes: 15,
+    },
+  });
+
+  assert.equal(summary.status, 'idle');
+  assert.equal(summary.partialDnrRepairSeen, true);
+  assert.equal(summary.partialDnrRepairCount, 2);
+  assert.equal(summary.lastPartialDnrRepair, new Date(lastPartialDnrRepair).toISOString());
+  assert.equal(summary.ttlHours, 6);
+  assert.equal(summary.retryMinutes, 15);
 });

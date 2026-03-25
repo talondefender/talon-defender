@@ -10,13 +10,61 @@ const fallbackRules = JSON.parse(
 const clone = value => structuredClone(value);
 
 const storageData = Object.create(null);
+const sessionData = Object.create(null);
 const alarmCreates = [];
 const alarmClears = [];
+const permissionsState = {
+  broadHostPermissions: true,
+};
+const rulesetResources = {
+  '/rulesets/ruleset-details.json': [
+    {
+      id: 'strict',
+      rules: {
+        strictblock: 3,
+        regex: 0,
+      },
+    },
+  ],
+  '/rulesets/strictblock/strict.json': [
+    {
+      action: {
+        type: 'redirect',
+        redirect: {},
+      },
+      condition: {
+        regexFilter: '^https:\\/\\/strict-1\\.example\\/',
+        resourceTypes: ['main_frame'],
+      },
+    },
+    {
+      action: {
+        type: 'redirect',
+        redirect: {},
+      },
+      condition: {
+        regexFilter: '^https:\\/\\/strict-2\\.example\\/',
+        resourceTypes: ['main_frame'],
+      },
+    },
+    {
+      action: {
+        type: 'redirect',
+        redirect: {},
+      },
+      condition: {
+        regexFilter: '^https:\\/\\/strict-3\\.example\\/',
+        resourceTypes: ['main_frame'],
+      },
+    },
+  ],
+};
 
 const dnrState = {
   dynamicRules: [],
   sessionRules: [],
   failCommunityUpdateCount: 0,
+  enabledRulesets: [],
 };
 
 const DEFAULT_MAX_NUMBER_OF_DYNAMIC_RULES = 5000;
@@ -102,7 +150,7 @@ const dnr = {
     return { isSupported: true };
   },
   async getEnabledRulesets() {
-    return [];
+    return clone(dnrState.enabledRulesets);
   },
   async updateEnabledRulesets() {
   },
@@ -119,6 +167,13 @@ const browserStub = {
   tabs: {
     TAB_ID_NONE: -1,
   },
+  permissions: {
+    async getAll() {
+      return {
+        origins: permissionsState.broadHostPermissions ? ['<all_urls>'] : [],
+      };
+    },
+  },
   alarms: {
     create(name, info) {
       alarmCreates.push({ name, info: clone(info) });
@@ -130,6 +185,7 @@ const browserStub = {
   },
   storage: {
     local: makeStorageArea(storageData),
+    session: makeStorageArea(sessionData),
   },
   runtime: {
     getManifest() {
@@ -182,6 +238,14 @@ globalThis.fetch = async input => {
       },
     };
   }
+  if (Object.hasOwn(rulesetResources, url)) {
+    return {
+      ok: true,
+      async json() {
+        return clone(rulesetResources[url]);
+      },
+    };
+  }
   throw new Error(`Unexpected fetch URL: ${url}`);
 };
 
@@ -189,7 +253,17 @@ const { rulesetConfig } = await import(new URL('../js/config.js', import.meta.ur
 const {
   COMMUNITY_SYNC_FAILURE_RETRY_MS,
 } = await import(new URL('../js/community-sync-logic.js', import.meta.url));
-const { syncCommunityRules } = await import(new URL('../js/community-sync.js', import.meta.url));
+const { textFromRules } = await import(new URL('../js/dnr-parser.js', import.meta.url));
+const {
+  scrubPrivateCommunityState,
+  syncCommunityRules,
+} = await import(new URL('../js/community-sync.js', import.meta.url));
+const {
+  updateCommunityRules,
+  updateSessionRules,
+  updateUserRules,
+} = await import(new URL('../js/ruleset-manager.js', import.meta.url));
+const { dnr: compatDnr } = await import(new URL('../js/ext-compat.js', import.meta.url));
 
 const signatureBytesB64 = Buffer.alloc(64).toString('base64');
 
@@ -205,9 +279,12 @@ const createSignedBundle = async ({
   rules,
   cosmetics,
   heuristics,
+  directives,
+  scriptlets,
   schemaVersion = 2,
   integrityScope = 'full',
   version = '2026.03.25.1',
+  ttlHours,
 } = {}) => {
   const bundle = {
     version,
@@ -226,8 +303,11 @@ const createSignedBundle = async ({
   if (integrityScope === 'full') {
     bundle.cosmetics = cosmetics ?? null;
     bundle.heuristics = heuristics ?? null;
-    bundle.directives = null;
-    bundle.scriptlets = null;
+    bundle.directives = directives ?? null;
+    bundle.scriptlets = scriptlets ?? null;
+  }
+  if (ttlHours !== undefined) {
+    bundle.ttlHours = ttlHours;
   }
   const payload = integrityScope === 'full'
     ? {
@@ -250,17 +330,23 @@ const resetEnvironment = () => {
   for (const key of Object.keys(storageData)) {
     delete storageData[key];
   }
+  for (const key of Object.keys(sessionData)) {
+    delete sessionData[key];
+  }
   alarmCreates.length = 0;
   alarmClears.length = 0;
   dnrState.dynamicRules.length = 0;
   dnrState.sessionRules.length = 0;
   dnrState.failCommunityUpdateCount = 0;
+  dnrState.enabledRulesets.length = 0;
   dnr.MAX_NUMBER_OF_DYNAMIC_RULES = DEFAULT_MAX_NUMBER_OF_DYNAMIC_RULES;
   dnr.MAX_NUMBER_OF_REGEX_RULES = DEFAULT_MAX_NUMBER_OF_REGEX_RULES;
   remoteBundle = null;
+  permissionsState.broadHostPermissions = true;
   rulesetConfig.communityRulesEnabled = true;
   rulesetConfig.communityRulesURL = '';
   rulesetConfig.developerMode = false;
+  rulesetConfig.strictBlockMode = true;
 };
 
 test('community sync falls back to stored rules when remote apply fails', { concurrency: false }, async () => {
@@ -477,6 +563,249 @@ test('community sync prioritizes exact-host exceptions and redirects under dynam
       },
     ]
   );
+});
+
+test('community sync stores signed public directives and scriptlets without developer mode', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  remoteBundle = await createSignedBundle({
+    rules: [
+      {
+        action: { type: 'block' },
+        condition: { urlFilter: '||remote.example^' },
+      },
+    ],
+    directives: [
+      {
+        id: 'public-hotfix-consent',
+        category: 'consent',
+        action: 'hide',
+        hosts: ['news.example'],
+        selectors: ['#onetrust-consent-sdk'],
+        fallbackAction: 'hide',
+        fallbackSelectors: ['#onetrust-consent-sdk'],
+      },
+      {
+        id: 'reject-broad-hosts',
+        action: 'hide',
+        selectors: ['.should-drop'],
+      },
+    ],
+    scriptlets: [
+      {
+        rulesetId: 'ublock-filters',
+        token: 'abort-on-property-read',
+        hosts: ['video.example'],
+        world: 'MAIN',
+      },
+      {
+        rulesetId: 'ublock-filters',
+        token: 'abort-on-property-read',
+        hosts: ['*'],
+        world: 'MAIN',
+      },
+    ],
+    ttlHours: 48,
+  });
+
+  const result = await syncCommunityRules({ force: true });
+
+  assert.equal(result.source, 'remote');
+  assert.equal(rulesetConfig.developerMode, false);
+  assert.equal(storageData.communityBundleMeta.ttlHours, 24);
+  assert.equal(storageData.communityBundleMeta.retryMinutes, 15);
+  assert.equal(storageData.communityBundleMeta.hotfixLane, 'public');
+  assert.equal(storageData.communityBundleMeta.publicDirectivesCount, 1);
+  assert.equal(storageData.communityBundleMeta.publicScriptletsCount, 1);
+  assert.equal(storageData.communityBundleMeta.proofDirectivesCount, 0);
+  assert.equal(storageData.communityBundleMeta.proofScriptletsCount, 0);
+  assert.deepEqual(storageData.communityBundlePublicDirectives, [
+    {
+      id: 'public-hotfix-consent',
+      category: 'consent',
+      hosts: ['news.example'],
+      action: 'hide',
+      selectors: ['#onetrust-consent-sdk'],
+      fallbackAction: 'hide',
+      fallbackSelectors: ['#onetrust-consent-sdk'],
+      postActions: [],
+      maxApplies: undefined,
+    },
+  ]);
+  assert.deepEqual(storageData.communityBundlePublicScriptlets, [
+    {
+      rulesetId: 'ublock-filters',
+      token: 'abort-on-property-read',
+      hosts: ['video.example'],
+      world: 'MAIN',
+    },
+  ]);
+  assert.equal(storageData.communityBundlePrivateDirectives, null);
+  assert.equal(storageData.communityBundlePrivateScriptlets, null);
+  assert.equal(Object.hasOwn(storageData, 'communityBundleDirectives'), false);
+  assert.equal(Object.hasOwn(storageData, 'communityBundleScriptlets'), false);
+});
+
+test('scrubPrivateCommunityState preserves public hotfix state while clearing proof-only extras', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  await browserStub.storage.local.set({
+    communityBundleCosmetics: {
+      all: ['.promo'],
+      hosts: {},
+    },
+    communityBundleHeuristics: {
+      labelRegexes: ['sponsored'],
+    },
+    communityBundlePublicDirectives: [{ id: 'public-dir' }],
+    communityBundlePublicScriptlets: [{ rulesetId: 'ublock-filters', token: 'abort-on-property-read' }],
+    communityBundlePrivateDirectives: [{ id: 'proof-dir' }],
+    communityBundlePrivateScriptlets: [{ rulesetId: 'ublock-filters', token: 'abort-on-property-read' }],
+    communityBundleDirectives: [{ id: 'legacy-proof-dir' }],
+    communityBundleScriptlets: [{ rulesetId: 'ublock-filters', token: 'abort-on-property-read' }],
+  });
+
+  const result = await scrubPrivateCommunityState('developer-mode-off');
+
+  assert.equal(result.cleanupReason, 'developer-mode-off');
+  assert.equal(result.requiresInjectableRefresh, true);
+  assert.deepEqual(storageData.communityBundlePublicDirectives, [{ id: 'public-dir' }]);
+  assert.deepEqual(storageData.communityBundlePublicScriptlets, [
+    { rulesetId: 'ublock-filters', token: 'abort-on-property-read' },
+  ]);
+  assert.equal(Object.hasOwn(storageData, 'communityBundlePrivateDirectives'), false);
+  assert.equal(Object.hasOwn(storageData, 'communityBundlePrivateScriptlets'), false);
+  assert.equal(Object.hasOwn(storageData, 'communityBundleDirectives'), false);
+  assert.equal(Object.hasOwn(storageData, 'communityBundleScriptlets'), false);
+});
+
+test('user regex rules rebalance shared regex budget for community and session rules', { concurrency: false }, async () => {
+  resetEnvironment();
+  dnr.MAX_NUMBER_OF_REGEX_RULES = 5;
+  dnrState.enabledRulesets.push('strict');
+  rulesetConfig.strictBlockMode = true;
+  permissionsState.broadHostPermissions = true;
+
+  const initialSession = await updateSessionRules();
+  assert.equal(initialSession?.error, undefined);
+  assert.equal(dnrState.sessionRules.length, 3);
+
+  rulesetConfig.developerMode = true;
+  await browserStub.storage.local.set({
+    userDnrRules: textFromRules([
+      {
+        action: { type: 'block' },
+        condition: {
+          regexFilter: '^https:\\/\\/user-1\\.example\\/',
+          resourceTypes: ['script'],
+        },
+      },
+      {
+        action: { type: 'block' },
+        condition: {
+          regexFilter: '^https:\\/\\/user-2\\.example\\/',
+          resourceTypes: ['script'],
+        },
+      },
+    ]),
+  });
+
+  const userResult = await updateUserRules();
+  assert.equal(userResult.errors.length, 0);
+  assert.equal(
+    dnrState.sessionRules.filter(rule => rule.priority === 29).length,
+    1
+  );
+
+  const communityResult = await updateCommunityRules([
+    {
+      action: { type: 'block' },
+      condition: {
+        regexFilter: '^https:\\/\\/community-1\\.example\\/',
+        resourceTypes: ['script'],
+      },
+    },
+    {
+      action: { type: 'block' },
+      condition: {
+        regexFilter: '^https:\\/\\/community-2\\.example\\/',
+        resourceTypes: ['script'],
+      },
+    },
+    {
+      action: { type: 'block' },
+      condition: {
+        regexFilter: '^https:\\/\\/community-3\\.example\\/',
+        resourceTypes: ['script'],
+        },
+    },
+  ], {
+    source: 'remote',
+    schemaVersion: 2,
+  });
+
+  assert.equal(communityResult.added, 2);
+  assert.equal(communityResult.droppedRegexQuota, 1);
+  assert.deepEqual(
+    dnrState.dynamicRules
+      .filter(rule => rule.id >= 6000000 && rule.id < 7000000)
+      .map(rule => rule.condition.regexFilter),
+    [
+      '^https:\\/\\/community-1\\.example\\/',
+      '^https:\\/\\/community-2\\.example\\/',
+    ]
+  );
+});
+
+test('setAllowAllRules repairs missing session companion rules and records the repair', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  dnrState.dynamicRules.push({
+    id: 8000000,
+    action: { type: 'allowAllRequests' },
+    condition: {
+      resourceTypes: ['main_frame'],
+      requestDomains: ['news.example'],
+    },
+    priority: 2000000,
+  });
+
+  const modified = await compatDnr.setAllowAllRules(
+    8000000,
+    ['news.example'],
+    [],
+    false,
+    2000000
+  );
+
+  assert.equal(modified, true);
+  assert.deepEqual(dnrState.dynamicRules, [
+    {
+      id: 8000000,
+      action: { type: 'allowAllRequests' },
+      condition: {
+        resourceTypes: ['main_frame'],
+        requestDomains: ['news.example'],
+      },
+      priority: 2000000,
+    },
+  ]);
+  assert.deepEqual(dnrState.sessionRules, [
+    {
+      id: 8000001,
+      action: { type: 'allow' },
+      condition: {
+        tabIds: [-1],
+        initiatorDomains: ['news.example'],
+      },
+      priority: 2000000,
+    },
+  ]);
+  assert.deepEqual(storageData.allowAllRulesDiagnosticsV1, {
+    partialRepairCount: 1,
+    lastRepairAt: storageData.allowAllRulesDiagnosticsV1.lastRepairAt,
+  });
+  assert.equal(typeof storageData.allowAllRulesDiagnosticsV1.lastRepairAt, 'number');
 });
 
 test('packaged community fallback bundle is valid and non-empty', { concurrency: false }, () => {

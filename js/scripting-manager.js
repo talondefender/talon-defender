@@ -41,7 +41,9 @@ import { createSingleFlightRunner } from './single-flight.js';
 /******************************************************************************/
 
 const resourceDetailPromises = new Map();
-const REMOTE_SCRIPTLETS_KEY = 'communityBundleScriptlets';
+const PUBLIC_REMOTE_SCRIPTLETS_KEY = 'communityBundlePublicScriptlets';
+const PRIVATE_REMOTE_SCRIPTLETS_KEY = 'communityBundlePrivateScriptlets';
+const LEGACY_REMOTE_SCRIPTLETS_KEY = 'communityBundleScriptlets';
 const AUTO_GENERIC_HIGH_KEY = 'autoGenericHighHosts';
 const AUTO_PROMOTION_STATE_KEY = 'autoPromotionStateV2';
 const AUTO_BACKOFF_SUBSYSTEMS_KEY = 'autoBackoffSubsystemsV1';
@@ -76,6 +78,24 @@ const readOptionalLocalValue = async (key, fallbackValue, context) => {
         ubolErr(`${context}/${reason}`);
     }
     return fallbackValue;
+};
+
+const readMergedLocalArrays = async (keys, context) => {
+    if ( browser.storage?.local?.get === undefined ) { return []; }
+    try {
+        const bin = await browser.storage.local.get(keys);
+        if ( bin instanceof Object === false ) { return []; }
+        const out = [];
+        for ( const key of keys ) {
+            const value = bin[key];
+            if ( Array.isArray(value) === false ) { continue; }
+            out.push(...value);
+        }
+        return out;
+    } catch(reason) {
+        ubolErr(`${context}/${reason}`);
+    }
+    return [];
 };
 
 function getScriptletDetails() {
@@ -1208,10 +1228,13 @@ const buildInjectablesRegistrationPlan = async () => {
         getEnabledRulesetsDetails(),
         getScriptletDetails(),
         getGenericDetails(),
-        readOptionalLocalValue(
-            REMOTE_SCRIPTLETS_KEY,
-            [],
-            `registerInjectables/${REMOTE_SCRIPTLETS_KEY}`
+        readMergedLocalArrays(
+            [
+                PUBLIC_REMOTE_SCRIPTLETS_KEY,
+                PRIVATE_REMOTE_SCRIPTLETS_KEY,
+                LEGACY_REMOTE_SCRIPTLETS_KEY,
+            ],
+            'registerInjectables/remote-scriptlets'
         ),
         readActiveAutoGenericHighHosts(),
         readActiveSubsystemSuppressionHostnames(),
