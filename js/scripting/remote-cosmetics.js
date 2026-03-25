@@ -13,10 +13,11 @@ if ( runtime?.sendMessage === undefined || storage?.get === undefined ) { return
 const hostname = (self.location?.hostname || '').toLowerCase();
 if ( hostname === '' ) { return; }
 
-const registrableDomain = hn => {
-    const parts = hn.split('.').filter(Boolean);
-    if ( parts.length <= 2 ) { return hn; }
-    return parts.slice(-2).join('.');
+const registrableDomain = hostname => {
+    const resolved = guard?.registrableDomain?.(hostname);
+    if ( typeof resolved === 'string' && resolved !== '' ) { return resolved; }
+    if ( typeof hostname !== 'string' ) { return ''; }
+    return hostname.trim().toLowerCase().replace(/^\.+|\.+$/g, '');
 };
 const pageDomain = registrableDomain(hostname);
 

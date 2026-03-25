@@ -87,6 +87,7 @@ import {
     YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY,
     sanitizeBreakageAuditOverrides,
 } from './breakage-policy.js';
+import { normalizeAutoPromotedHostname } from './site-key.js';
 
 const AUTO_BACKOFF_STORAGE_KEY = 'autoBackoffHostsV1';
 const AUTO_BACKOFF_EVIDENCE_STORAGE_KEY = 'autoBackoffEvidenceV1';
@@ -347,9 +348,14 @@ import {
 
 import {
     ALARM_NAME as COMMUNITY_ALARM_NAME,
-    scheduleCommunityAlarm,
+    scrubPrivateCommunityState,
     syncCommunityRules,
 } from './community-sync.js';
+import {
+    countCommunityCosmeticSelectors,
+    countCommunityHeuristicLabelRegexes,
+    countHostSpecificCommunityCosmeticSelectors,
+} from './community-sync-logic.js';
 
 import {
     getConsoleOutput,
@@ -517,6 +523,7 @@ const youtubeFollowupArchitecturePrewarmPool = new Map();
 
 let entitlementStatus = { status: 'trial' };
 let paywallActive = false;
+let lastCommunityCleanupReason = '';
 
 const AUTO_GENERIC_HIGH_KEY = 'autoGenericHighHosts';
 const AUTO_GENERIC_HIGH_MAX = 200;
@@ -1798,6 +1805,36 @@ function registerInjectablesIfEntitled() {
     return registerInjectables();
 }
 
+async function scrubPrivateProofState() {
+    const [ communityState ] = await Promise.all([
+        scrubPrivateCommunityState('developer-mode-off'),
+        localRemove(BREAKAGE_AUDIT_OVERRIDES_KEY).catch(() => {}),
+    ]);
+    return communityState || {
+        cleanupReason: '',
+        requiresInjectableRefresh: false,
+    };
+}
+
+async function handleCommunitySyncResult(result) {
+    if (result instanceof Object === false) { return result; }
+    if (typeof result.cleanupReason === 'string' && result.cleanupReason !== '') {
+        lastCommunityCleanupReason = result.cleanupReason;
+    } else if (result.source === 'remote') {
+        lastCommunityCleanupReason = '';
+    }
+    if (result.requiresInjectableRefresh) {
+        await registerInjectablesIfEntitled().catch(ubolErr);
+    }
+    return result;
+}
+
+function runCommunitySync(options) {
+    return syncCommunityRules(options)
+        .then(handleCommunitySyncResult)
+        .catch(ubolErr);
+}
+
 async function getRegisteredContentScriptsAuditSnapshot() {
     if (browser.scripting?.getRegisteredContentScripts === undefined) {
         return [];
@@ -2047,8 +2084,7 @@ async function enforceEntitlement({ verify = false, forceVerify = false } = {}) 
 }
 
 async function addAutoGenericHighHost(hostname) {
-    if (typeof hostname !== 'string') { return; }
-    const hn = hostname.trim().toLowerCase();
+    const hn = normalizeAutoPromotedHostname(hostname);
     if (hn === '') { return; }
 
     const stored = await localRead(AUTO_GENERIC_HIGH_KEY);
@@ -2076,7 +2112,12 @@ function getCurrentVersion() {
 /******************************************************************************/
 
 const ANNOYANCE_RULESET_IDS = [
+    'annoyances-cookies',
+    'annoyances-notifications',
+    'annoyances-others',
     'annoyances-overlays',
+    'annoyances-social',
+    'annoyances-widgets',
 ];
 
 const AUTO_ANNOYANCES_BASELINE_KEY = 'autoAnnoyancesBaselineRulesets';
@@ -2199,18 +2240,28 @@ onPermissionsChanged.pending = [];
 
 /******************************************************************************/
 
-function setDeveloperMode(state) {
+async function setDeveloperMode(state) {
     rulesetConfig.developerMode = isDeveloperModeAllowed && state === true;
+    let cleanupResult = {
+        cleanupReason: '',
+        requiresInjectableRefresh: false,
+    };
     if ( rulesetConfig.developerMode === false ) {
         rulesetConfig.communityRulesURL = '';
-        localRemove(BREAKAGE_AUDIT_OVERRIDES_KEY).catch(() => {});
+        cleanupResult = await scrubPrivateProofState();
+        if ( cleanupResult.cleanupReason ) {
+            lastCommunityCleanupReason = cleanupResult.cleanupReason;
+        }
     }
     toggleDeveloperMode(rulesetConfig.developerMode);
     broadcastMessage({ developerMode: rulesetConfig.developerMode });
-    return Promise.all([
+    await Promise.all([
         updateUserRules(),
         saveRulesetConfig(),
     ]);
+    if ( cleanupResult.requiresInjectableRefresh ) {
+        await registerInjectablesIfEntitled().catch(ubolErr);
+    }
 }
 
 /******************************************************************************/
@@ -2271,19 +2322,17 @@ function onMessage(request, sender, callback) {
         case 'promoteComplete': {
             if (AUTO_PROMOTE_ENABLED === false) { return false; }
             if (isEntitled() === false) { return false; }
-            if (typeof request.hostname === 'string') {
-                const hn = request.hostname.trim().toLowerCase();
-                if (hn !== '') {
-                    (async () => {
-                        const beforeLevel = await getFilteringMode(hn);
-                        // Respect user allowlisting/basic mode.
-                        if (beforeLevel !== MODE_OPTIMAL) { return; }
-                        const afterLevel = await setFilteringMode(hn, MODE_COMPLETE);
-                        if (afterLevel === MODE_COMPLETE) {
-                            registerInjectablesIfEntitled().catch(ubolErr);
-                        }
-                    })().catch(ubolErr);
-                }
+            const hn = normalizeAutoPromotedHostname(request.hostname);
+            if (hn !== '') {
+                (async () => {
+                    const beforeLevel = await getFilteringMode(hn);
+                    // Respect user allowlisting/basic mode.
+                    if (beforeLevel !== MODE_OPTIMAL) { return; }
+                    const afterLevel = await setFilteringMode(hn, MODE_COMPLETE);
+                    if (afterLevel === MODE_COMPLETE) {
+                        registerInjectablesIfEntitled().catch(ubolErr);
+                    }
+                })().catch(ubolErr);
             }
             return false;
         }
@@ -2699,6 +2748,60 @@ function onMessage(request, sender, callback) {
                         ? enabledRulesets.slice().sort()
                         : [],
                     registeredContentScripts,
+                });
+            });
+            return true;
+        }
+
+        case 'getCommunitySyncDiagnostics': {
+            Promise.all([
+                localRead('communityBundleMeta'),
+                localRead('communityBundleLastAttempt'),
+                localRead('communityBundleLastSuccess'),
+                localRead('communityBundleLastError'),
+                localRead('communityBundleCosmetics'),
+                localRead('communityBundleHeuristics'),
+                localRead('communityBundleDirectives'),
+                localRead('communityBundleScriptlets'),
+            ]).then(([
+                meta,
+                lastAttempt,
+                lastSuccess,
+                lastError,
+                cosmetics,
+                heuristics,
+                directives,
+                scriptlets,
+            ]) => {
+                const diagnosticsMeta = meta instanceof Object
+                    ? { ...meta }
+                    : {};
+                diagnosticsMeta.cosmeticsCount = countCommunityCosmeticSelectors(cosmetics);
+                diagnosticsMeta.hostCosmeticsCount =
+                    countHostSpecificCommunityCosmeticSelectors(cosmetics);
+                diagnosticsMeta.heuristicRegexCount =
+                    countCommunityHeuristicLabelRegexes(heuristics);
+                diagnosticsMeta.directivesCount = Array.isArray(directives)
+                    ? directives.length
+                    : 0;
+                diagnosticsMeta.scriptletsCount = Array.isArray(scriptlets)
+                    ? scriptlets.length
+                    : 0;
+                callback({
+                    meta: diagnosticsMeta,
+                    lastAttempt: Number(lastAttempt) || 0,
+                    lastSuccess: Number(lastSuccess) || 0,
+                    lastError: typeof lastError === 'string' ? lastError : '',
+                    cleanupReason: lastCommunityCleanupReason,
+                });
+            }).catch(reason => {
+                ubolErr(`getCommunitySyncDiagnostics/${reason}`);
+                callback({
+                    meta: {},
+                    lastAttempt: 0,
+                    lastSuccess: 0,
+                    lastError: '',
+                    cleanupReason: lastCommunityCleanupReason,
                 });
             });
             return true;
@@ -3296,10 +3399,7 @@ async function startSession() {
     // Community intelligence sync (runs after DNR state is settled)
     try {
         if (isEntitled()) {
-            const meta = await localRead('communityBundleMeta');
-            scheduleCommunityAlarm(meta?.ttlHours);
-            syncCommunityRules({ force: process.firstRun || isNewVersion })
-                .catch(ubolErr);
+            runCommunitySync({ force: process.firstRun || isNewVersion });
         }
     } catch (e) {
         ubolErr(`community-sync/${e}`);
@@ -3353,6 +3453,12 @@ async function start() {
             rulesetConfig.developerMode = false;
             rulesetConfig.communityRulesURL = '';
             await saveRulesetConfig();
+        }
+    }
+    if ( rulesetConfig.developerMode === false ) {
+        const scrubResult = await scrubPrivateProofState();
+        if ( scrubResult.cleanupReason ) {
+            lastCommunityCleanupReason = scrubResult.cleanupReason;
         }
     }
 
@@ -3705,5 +3811,5 @@ browser.alarms?.onAlarm.addListener(alarm => {
     }
     if (alarm?.name !== COMMUNITY_ALARM_NAME) { return; }
     if (isEntitled() === false) { return; }
-    syncCommunityRules().catch(ubolErr);
+    runCommunitySync();
 });

@@ -14,6 +14,12 @@
     const getURL = runtime?.getURL?.bind(runtime) || (p => p);
     const storage = self.browser?.storage?.local || self.chrome?.storage?.local;
     const guard = self.TalonBreakageGuard;
+    const registrableDomain = hostname => {
+        const resolved = guard?.registrableDomain?.(hostname);
+        if ( typeof resolved === 'string' && resolved !== '' ) { return resolved; }
+        if ( typeof hostname !== 'string' ) { return ''; }
+        return hostname.trim().toLowerCase().replace(/^\.+|\.+$/g, '');
+    };
 
     const defaultConfig = {
         disableHosts: [],
@@ -129,11 +135,6 @@
     const hostname = (self.location?.hostname || '').toLowerCase();
     if (hostname === '') { return; }
 
-    const registrableDomain = hn => {
-        const parts = hn.split('.').filter(Boolean);
-        if (parts.length <= 2) { return hn; }
-        return parts.slice(-2).join('.');
-    };
     const pageDomain = registrableDomain(hostname);
     let hostProtection = guard?.getProtection?.() || {
         category: '',

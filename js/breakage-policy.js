@@ -1,3 +1,7 @@
+import {
+    registrableDomain as resolveRegistrableDomain,
+} from './site-key.js';
+
 export const RISK_TIERS = Object.freeze({
     low: 1,
     medium: 2,
@@ -279,10 +283,7 @@ export function patternMatchesHostname(pattern, hostname) {
 }
 
 export function registrableDomain(hostname) {
-    if ( typeof hostname !== 'string' ) { return ''; }
-    const parts = hostname.toLowerCase().split('.').filter(Boolean);
-    if ( parts.length <= 2 ) { return parts.join('.'); }
-    return parts.slice(-2).join('.');
+    return resolveRegistrableDomain(hostname);
 }
 
 const hasSensitivePathHint = pathname => {

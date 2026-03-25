@@ -35,6 +35,7 @@ import { getEnabledRulesetsDetails } from './ruleset-manager.js';
 import { getFilteringModeDetails } from './mode-manager.js';
 import { registerCustomFilters } from './filter-manager.js';
 import { registerToolbarIconToggler } from './action.js';
+import { createSingleFlightRunner } from './single-flight.js';
 
 /******************************************************************************/
 
@@ -53,6 +54,18 @@ const SCRIPTLET_PATH_ALIASES = new Map([
         '/rulesets/scripting/scriptlet/ublock-experimental.trusted-json-edit-xhr-request.js',
     ],
 ]);
+
+const readOptionalLocalValue = async (key, fallbackValue, context) => {
+    if ( browser.storage?.local?.get === undefined ) { return fallbackValue; }
+    try {
+        const bin = await browser.storage.local.get(key);
+        if ( bin instanceof Object === false ) { return fallbackValue; }
+        return bin[key] ?? fallbackValue;
+    } catch(reason) {
+        ubolErr(`${context}/${reason}`);
+    }
+    return fallbackValue;
+};
 
 function getScriptletDetails() {
     let promise = resourceDetailPromises.get('scriptlet');
@@ -746,7 +759,11 @@ function registerRemoteScriptlets(context, scriptletDetails) {
 function registerNativeHeuristics(context) {
     const { before, filteringModeDetails } = context;
 
-    const js = [ '/js/scripting/breakage-guard.js', '/js/scripting/native-heuristics.js' ];
+    const js = [
+        '/shared/site-key-resolver.js',
+        '/js/scripting/breakage-guard.js',
+        '/js/scripting/native-heuristics.js',
+    ];
 
     const { none, basic, optimal, complete } = filteringModeDetails;
     const matches = [
@@ -901,7 +918,11 @@ function registerAdShellStyles(context) {
 function registerRemoteCosmetics(context) {
     const { before, filteringModeDetails } = context;
 
-    const js = [ '/js/scripting/breakage-guard.js', '/js/scripting/remote-cosmetics.js' ];
+    const js = [
+        '/shared/site-key-resolver.js',
+        '/js/scripting/breakage-guard.js',
+        '/js/scripting/remote-cosmetics.js',
+    ];
 
     const { none, basic, optimal, complete } = filteringModeDetails;
     const matches = [
@@ -1007,11 +1028,8 @@ function registerPostHideCleanup(context) {
 // Issue: Safari appears to completely ignore excludeMatches
 // https://github.com/radiolondra/ExcludeMatches-Test
 
-async function registerInjectables() {
+const registerInjectablesImpl = async () => {
     if ( browser.scripting === undefined ) { return false; }
-
-    if ( registerInjectables.barrier ) { return true; }
-    registerInjectables.barrier = true;
 
     const [
         filteringModeDetails,
@@ -1027,9 +1045,21 @@ async function registerInjectables() {
         getEnabledRulesetsDetails(),
         getScriptletDetails(),
         getGenericDetails(),
-        localRead(REMOTE_SCRIPTLETS_KEY),
-        localRead(AUTO_GENERIC_HIGH_KEY),
-        localRead(YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY),
+        readOptionalLocalValue(
+            REMOTE_SCRIPTLETS_KEY,
+            [],
+            `registerInjectables/${REMOTE_SCRIPTLETS_KEY}`
+        ),
+        readOptionalLocalValue(
+            AUTO_GENERIC_HIGH_KEY,
+            [],
+            `registerInjectables/${AUTO_GENERIC_HIGH_KEY}`
+        ),
+        readOptionalLocalValue(
+            YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY,
+            YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT,
+            `registerInjectables/${YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY}`
+        ),
         browser.scripting.getRegisteredContentScripts(),
     ]);
     const before = new Map(
@@ -1088,9 +1118,14 @@ async function registerInjectables() {
         }
     }
 
-    registerInjectables.barrier = false;
-
     return true;
+};
+
+const registerInjectablesRunner = createSingleFlightRunner(registerInjectablesImpl);
+
+async function registerInjectables() {
+    if ( browser.scripting === undefined ) { return false; }
+    return registerInjectablesRunner();
 }
 
 /******************************************************************************/

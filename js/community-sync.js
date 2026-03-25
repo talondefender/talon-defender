@@ -16,6 +16,21 @@ import {
     isSafeMutationSelector,
     patternCouldMatchProtectedDomain,
 } from './breakage-policy.js';
+import {
+    countCommunityCosmeticSelectors,
+    countCommunityHeuristicLabelRegexes,
+    countHostSpecificCommunityCosmeticSelectors,
+    hasCommunityInjectableStateChanged,
+    COMMUNITY_HEURISTIC_SELECTOR_MAX,
+    normalizeCommunityHeuristicLabelRegexes,
+    COMMUNITY_SYNC_FAILURE_RETRY_MS,
+    computeCommunitySyncState,
+    normalizeCommunitySyncTtlHours,
+} from './community-sync-logic.js';
+import {
+    COMMUNITY_RULE_SCHEMA_VERSION_LEGACY,
+    normalizeCommunityRuleSchemaVersion,
+} from './community-rule-sanitizer.js';
 
 /******************************************************************************/
 
@@ -47,13 +62,19 @@ const STORAGE_KEYS = {
     heuristics: 'communityBundleHeuristics',
     directives: 'communityBundleDirectives',
     scriptlets: 'communityBundleScriptlets',
+    lastAttempt: 'communityBundleLastAttempt',
+    lastSuccess: 'communityBundleLastSuccess',
     lastFetch: 'communityBundleLastFetch',
     lastError: 'communityBundleLastError',
 };
 
 const ALARM_NAME = 'community-sync';
-const DEFAULT_TTL_HOURS = 24;
 const COMMUNITY_FETCH_TIMEOUT_MS = 10000;
+const COMMUNITY_PRIVATE_ONLY_KEYS = [
+    STORAGE_KEYS.directives,
+    STORAGE_KEYS.scriptlets,
+];
+const COMMUNITY_STATE_KEYS = Object.values(STORAGE_KEYS);
 
 const COMMUNITY_ALLOWED_HOSTS = (() => {
     const out = new Set();
@@ -167,15 +188,58 @@ const verifyEd25519 = async (publicKeyBytes, messageBytes, signatureBytes) => {
     return false;
 };
 
-const scheduleCommunityAlarm = ttlHours => {
+const buildCommunityPayloadText = ({ bundle, rules, integrityScope }) => {
+    const schemaVersion = bundle?.schemaVersion;
+    if ( integrityScope === 'full' ) {
+        const payloadObj = {
+            rules,
+            cosmetics: bundle.cosmetics ?? null,
+            heuristics: bundle.heuristics ?? null,
+            directives: bundle.directives ?? null,
+            scriptlets: bundle.scriptlets ?? null,
+        };
+        if ( schemaVersion !== undefined ) {
+            payloadObj.schemaVersion = schemaVersion;
+        }
+        return JSON.stringify(payloadObj);
+    }
+    if ( schemaVersion !== undefined ) {
+        return JSON.stringify({
+            schemaVersion,
+            rules,
+        });
+    }
+    return JSON.stringify(rules);
+};
+
+const clearCommunityAlarm = () => {
+    if ( browser.alarms?.clear === undefined ) { return; }
+    return browser.alarms.clear(ALARM_NAME);
+};
+
+const scheduleCommunityAlarm = ({ delayMs, periodMs } = {}) => {
     if ( browser.alarms?.create === undefined ) { return; }
-    const hours = Number.isFinite(ttlHours) && ttlHours > 0
-        ? ttlHours
-        : DEFAULT_TTL_HOURS;
-    const minutes = Math.max(60, Math.round(hours * 60));
-    browser.alarms.create(ALARM_NAME, {
-        delayInMinutes: minutes,
-        periodInMinutes: minutes,
+    const alarm = {
+        when: Date.now() + (
+            Number.isFinite(delayMs) && delayMs > 0
+                ? delayMs
+                : COMMUNITY_SYNC_FAILURE_RETRY_MS
+        ),
+    };
+    if ( Number.isFinite(periodMs) && periodMs > 0 ) {
+        alarm.periodInMinutes = Math.max(1, Math.ceil(periodMs / (60 * 1000)));
+    }
+    browser.alarms.create(ALARM_NAME, alarm);
+};
+
+const scheduleCommunityRetryAlarm = (delayMs = COMMUNITY_SYNC_FAILURE_RETRY_MS) =>
+    scheduleCommunityAlarm({ delayMs });
+
+const scheduleCommunitySuccessAlarm = ({ ttlHours, delayMs } = {}) => {
+    const ttlMs = normalizeCommunitySyncTtlHours(ttlHours) * 60 * 60 * 1000;
+    scheduleCommunityAlarm({
+        delayMs: Number.isFinite(delayMs) && delayMs > 0 ? delayMs : ttlMs,
+        periodMs: ttlMs,
     });
 };
 
@@ -193,65 +257,221 @@ const loadFallbackRules = async ( ) => {
     return [];
 };
 
-async function applyFallback(reason) {
+const removeStoredCommunityKeys = keys =>
+    Promise.all(keys.map(key => localRemove(key)));
+
+const getCommunityApplyError = applied => {
+    const rawError = typeof applied?.error === 'string'
+        ? applied.error.trim()
+        : applied?.error instanceof Error
+            ? applied.error.message
+            : '';
+    return rawError.replace(/^Error:\s*/i, '').trim();
+};
+
+const readStoredCommunityInjectableState = async () => {
+    const [
+        cosmetics,
+        heuristics,
+        directives,
+        scriptlets,
+    ] = await Promise.all([
+        localRead(STORAGE_KEYS.cosmetics),
+        localRead(STORAGE_KEYS.heuristics),
+        localRead(STORAGE_KEYS.directives),
+        localRead(STORAGE_KEYS.scriptlets),
+    ]);
+    return {
+        cosmetics: cosmetics ?? null,
+        heuristics: heuristics ?? null,
+        directives: directives ?? null,
+        scriptlets: scriptlets ?? null,
+    };
+};
+
+const buildPrivateStateAfterScrub = beforeState => ({
+    cosmetics: beforeState?.cosmetics ?? null,
+    heuristics: beforeState?.heuristics ?? null,
+    directives: null,
+    scriptlets: null,
+});
+
+export async function scrubPrivateCommunityState(
+    cleanupReason = 'developer-mode-off'
+) {
+    const beforeState = await readStoredCommunityInjectableState();
+    const afterState = buildPrivateStateAfterScrub(beforeState);
+    await removeStoredCommunityKeys(COMMUNITY_PRIVATE_ONLY_KEYS);
+    const requiresInjectableRefresh = hasCommunityInjectableStateChanged(
+        beforeState,
+        afterState
+    );
+    return {
+        cleanupReason: requiresInjectableRefresh ? cleanupReason : '',
+        requiresInjectableRefresh,
+    };
+}
+
+const clearCommunityState = async cleanupReason => {
+    const beforeState = await readStoredCommunityInjectableState();
+    clearCommunityAlarm();
+    const applied = await updateCommunityRules([], {
+        source: 'cleanup',
+        schemaVersion: COMMUNITY_RULE_SCHEMA_VERSION_LEGACY,
+    });
+    await removeStoredCommunityKeys(COMMUNITY_STATE_KEYS);
+    return {
+        source: 'cleanup',
+        cleanupReason,
+        applied,
+        requiresInjectableRefresh: hasCommunityInjectableStateChanged(
+            beforeState,
+            null
+        ),
+    };
+};
+
+async function applyFallback(reason, baseResult = {}) {
     const message = reason instanceof Error ? reason.message : String(reason);
     ubolErr(`community-sync: ${message}`);
-    await localWrite(STORAGE_KEYS.lastError, message);
-    await localWrite(STORAGE_KEYS.lastFetch, Date.now());
+    const now = Date.now();
+    const privateCleanup = await scrubPrivateCommunityState(
+        'fallback-private-state'
+    );
+    const requiresInjectableRefresh = Boolean(
+        baseResult.requiresInjectableRefresh ||
+        privateCleanup.requiresInjectableRefresh
+    );
+    const cleanupReason = privateCleanup.cleanupReason ||
+        baseResult.cleanupReason ||
+        '';
+    try {
+        await Promise.all([
+            localWrite(STORAGE_KEYS.lastError, message),
+            localWrite(STORAGE_KEYS.lastAttempt, now),
+            localWrite(STORAGE_KEYS.lastFetch, now),
+        ]);
+    } catch (error) {
+        ubolErr(error);
+    }
+    scheduleCommunityRetryAlarm();
 
-    const storedRules = await localRead(STORAGE_KEYS.rules);
+    const [ storedRules, storedMeta ] = await Promise.all([
+        localRead(STORAGE_KEYS.rules),
+        localRead(STORAGE_KEYS.meta),
+    ]);
+    let storedRestoreError = '';
     if ( Array.isArray(storedRules) && storedRules.length !== 0 ) {
         const applied = await updateCommunityRules(storedRules, {
             source: 'stored',
+            version: storedMeta?.version,
+            schemaVersion: storedMeta?.schemaVersion,
         });
-        return { source: 'stored', applied, error: message };
+        storedRestoreError = getCommunityApplyError(applied);
+        if ( storedRestoreError === '' ) {
+            return {
+                source: 'stored',
+                applied,
+                error: message,
+                requiresInjectableRefresh,
+                cleanupReason,
+            };
+        }
     }
 
     const fallbackRules = await loadFallbackRules();
     const applied = await updateCommunityRules(fallbackRules, {
         source: 'fallback',
     });
-    return { source: 'fallback', applied, error: message };
+    return {
+        source: 'fallback',
+        applied,
+        error: [
+            message,
+            storedRestoreError !== ''
+                ? `stored restore failed: ${storedRestoreError}`
+                : '',
+            getCommunityApplyError(applied) !== ''
+                ? `packaged fallback failed: ${applied.error}`
+                : '',
+        ].filter(part => part !== '').join('; '),
+        requiresInjectableRefresh,
+        cleanupReason,
+    };
 }
 
 /******************************************************************************/
 
-async function isDue(force) {
-    if ( force ) { return true; }
-    const [ lastFetch, meta ] = await Promise.all([
-        localRead(STORAGE_KEYS.lastFetch),
+async function getCommunitySyncState(force = false) {
+    const [
+        meta,
+        lastAttempt,
+        lastSuccess,
+        lastFetch,
+        lastError,
+    ] = await Promise.all([
         localRead(STORAGE_KEYS.meta),
+        localRead(STORAGE_KEYS.lastAttempt),
+        localRead(STORAGE_KEYS.lastSuccess),
+        localRead(STORAGE_KEYS.lastFetch),
+        localRead(STORAGE_KEYS.lastError),
     ]);
-    const ttlHours = Number(meta?.ttlHours) || DEFAULT_TTL_HOURS;
-    const ttlMs = ttlHours * 3600 * 1000;
-    if ( typeof lastFetch !== 'number' ) { return true; }
-    return (Date.now() - lastFetch) >= ttlMs;
+
+    const legacyLastFetch = Number(lastFetch) || 0;
+    const effectiveLastAttempt = Number(lastAttempt) || legacyLastFetch;
+    const effectiveLastSuccess = Number(lastSuccess) || (
+        (typeof lastError !== 'string' || lastError === '') ? legacyLastFetch : 0
+    );
+
+    return computeCommunitySyncState({
+        force,
+        ttlHours: meta?.ttlHours,
+        lastAttempt: effectiveLastAttempt,
+        lastSuccess: effectiveLastSuccess,
+        lastError,
+    });
 }
 
 export async function syncCommunityRules({ force = false } = {}) {
     if ( rulesetConfig.communityRulesEnabled === false ) {
-        return { skipped: 'disabled' };
+        return clearCommunityState('disabled');
     }
 
+    let privateStateResult = {
+        cleanupReason: '',
+        requiresInjectableRefresh: false,
+    };
     if ( isDeveloperModeAllowed === false || rulesetConfig.developerMode !== true ) {
-        await Promise.all([
-            localWrite(STORAGE_KEYS.directives, null),
-            localWrite(STORAGE_KEYS.scriptlets, null),
-        ]);
+        privateStateResult = await scrubPrivateCommunityState(
+            'developer-mode-off'
+        );
     }
 
     const configuredURL = rulesetConfig.communityRulesURL || COMMUNITY_URL_DEFAULT;
     const url = normalizeCommunityURL(configuredURL);
     if ( url === '' ) {
-        return { skipped: 'no-url' };
+        return clearCommunityState('invalid-url');
     }
 
-    if ( await isDue(force) === false ) {
-        return { skipped: 'ttl' };
+    const syncState = await getCommunitySyncState(force);
+    if ( syncState.due === false ) {
+        if ( syncState.reason === 'retry-backoff' ) {
+            scheduleCommunityRetryAlarm(syncState.nextDelayMs);
+        } else {
+            scheduleCommunitySuccessAlarm({
+                ttlHours: syncState.ttlMs / (60 * 60 * 1000),
+                delayMs: syncState.nextDelayMs,
+            });
+        }
+        return {
+            skipped: syncState.reason,
+            cleanupReason: privateStateResult.cleanupReason,
+            requiresInjectableRefresh: privateStateResult.requiresInjectableRefresh,
+        };
     }
 
     if ( COMMUNITY_PUBLIC_KEY_B64 === '' ) {
-        return applyFallback(new Error('no public key configured'));
+        return applyFallback(new Error('no public key configured'), privateStateResult);
     }
 
     let bundle;
@@ -262,52 +482,44 @@ export async function syncCommunityRules({ force = false } = {}) {
         }
         bundle = await res.json();
     } catch (e) {
-        return applyFallback(e);
+        return applyFallback(e, privateStateResult);
     }
 
     const rules = Array.isArray(bundle?.rules) ? bundle.rules : null;
     if ( rules === null ) {
-        return applyFallback(new Error('invalid bundle format'));
+        return applyFallback(new Error('invalid bundle format'), privateStateResult);
     }
 
     const integrity = bundle.integrity || {};
     if ( integrity.algorithm !== 'sha256' || typeof integrity.value !== 'string' ) {
-        return applyFallback(new Error('missing integrity'));
+        return applyFallback(new Error('missing integrity'), privateStateResult);
     }
 
     const integrityScope = integrity.scope === 'full' ? 'full' : 'rules';
-    let payloadText;
-    if ( integrityScope === 'full' ) {
-        const payloadObj = {
-            rules,
-            cosmetics: bundle.cosmetics ?? null,
-            heuristics: bundle.heuristics ?? null,
-            directives: bundle.directives ?? null,
-            scriptlets: bundle.scriptlets ?? null,
-        };
-        payloadText = JSON.stringify(payloadObj);
-    } else {
-        payloadText = JSON.stringify(rules);
-    }
+    const payloadText = buildCommunityPayloadText({
+        bundle,
+        rules,
+        integrityScope,
+    });
     let digest;
     try {
         digest = await sha256Hex(payloadText);
     } catch (e) {
-        return applyFallback(e);
+        return applyFallback(e, privateStateResult);
     }
     if ( digest !== integrity.value.toLowerCase() ) {
-        return applyFallback(new Error('integrity mismatch'));
+        return applyFallback(new Error('integrity mismatch'), privateStateResult);
     }
 
     const signature = bundle.signature || {};
     if ( signature.algorithm !== 'ed25519' || typeof signature.value !== 'string' ) {
-        return applyFallback(new Error('missing signature'));
+        return applyFallback(new Error('missing signature'), privateStateResult);
     }
 
     const publicKeyBytes = base64ToBytes(COMMUNITY_PUBLIC_KEY_B64);
     const signatureBytes = base64ToBytes(signature.value);
     if ( publicKeyBytes.length !== 32 || signatureBytes.length !== 64 ) {
-        return applyFallback(new Error('bad signature encoding'));
+        return applyFallback(new Error('bad signature encoding'), privateStateResult);
     }
 
     const ok = await verifyEd25519(
@@ -316,13 +528,31 @@ export async function syncCommunityRules({ force = false } = {}) {
         signatureBytes
     );
     if ( ok !== true ) {
-        return applyFallback(new Error('signature invalid'));
+        return applyFallback(new Error('signature invalid'), privateStateResult);
     }
 
-    const applied = await updateCommunityRules(rules, bundle);
+    const schemaVersion = normalizeCommunityRuleSchemaVersion(bundle.schemaVersion);
+    if ( bundle.schemaVersion !== undefined && schemaVersion === 0 ) {
+        return applyFallback(new Error('unsupported schema version'), privateStateResult);
+    }
+
+    const normalizedSchemaVersion = schemaVersion || COMMUNITY_RULE_SCHEMA_VERSION_LEGACY;
+    const applied = await updateCommunityRules(rules, {
+        source: 'remote',
+        version: bundle.version,
+        schemaVersion: normalizedSchemaVersion,
+    });
+    const applyError = getCommunityApplyError(applied);
+    if ( applyError !== '' ) {
+        return applyFallback(
+            new Error(`apply failed: ${applyError}`),
+            privateStateResult
+        );
+    }
 
     // Extras are only trusted if covered by the signature.
     const extrasSigned = integrityScope === 'full';
+    const beforeInjectableState = await readStoredCommunityInjectableState();
 
     const sanitizeStringArray = (input, limit, maxLen = 256) => {
         if ( Array.isArray(input) === false ) { return []; }
@@ -340,6 +570,11 @@ export async function syncCommunityRules({ force = false } = {}) {
     const sanitizeCosmetics = input => {
         if ( input instanceof Object === false ) { return null; }
         const out = { all: [], hosts: {} };
+        const globalSelectors = sanitizeStringArray(input.all, 250)
+            .filter(selector => isSafeMutationSelector(selector));
+        if ( globalSelectors.length !== 0 ) {
+            out.all.push(...globalSelectors);
+        }
         const hosts = input.hosts;
         if ( hosts instanceof Object ) {
             let hostCount = 0;
@@ -355,6 +590,9 @@ export async function syncCommunityRules({ force = false } = {}) {
                 if ( hostCount >= 500 ) { break; }
             }
         }
+        if ( out.all.length === 0 && Object.keys(out.hosts).length === 0 ) {
+            return null;
+        }
         return out;
     };
 
@@ -363,6 +601,26 @@ export async function syncCommunityRules({ force = false } = {}) {
         const out = {};
         if ( input.disableHosts ) {
             out.disableHosts = sanitizeStringArray(input.disableHosts, 200);
+        }
+        const labelRegexes = normalizeCommunityHeuristicLabelRegexes(
+            input.labelRegexes
+        );
+        if ( labelRegexes.length !== 0 ) {
+            out.labelRegexes = labelRegexes;
+        }
+        const labelSelectors = sanitizeStringArray(
+            input.labelSelectors,
+            COMMUNITY_HEURISTIC_SELECTOR_MAX
+        ).filter(selector => isSafeMutationSelector(selector));
+        if ( labelSelectors.length !== 0 ) {
+            out.labelSelectors = labelSelectors;
+        }
+        const widgetSelectors = sanitizeStringArray(
+            input.widgetSelectors,
+            COMMUNITY_HEURISTIC_SELECTOR_MAX
+        ).filter(selector => isSafeMutationSelector(selector));
+        if ( widgetSelectors.length !== 0 ) {
+            out.widgetSelectors = widgetSelectors;
         }
         if ( input.containerStopSelectors ) {
             out.containerStopSelectors = sanitizeStringArray(input.containerStopSelectors, 80)
@@ -390,7 +648,7 @@ export async function syncCommunityRules({ force = false } = {}) {
         if ( input.minScoreLowConfidence !== undefined ) {
             out.minScoreLowConfidence = Math.max(5, toNum(input.minScoreLowConfidence, 1, 12, 5));
         }
-        return out;
+        return Object.keys(out).length === 0 ? null : out;
     };
 
     const sanitizeDirectives = input => {
@@ -473,21 +731,27 @@ export async function syncCommunityRules({ force = false } = {}) {
 
     const metaToStore = {
         version: bundle.version,
+        schemaVersion: normalizedSchemaVersion,
         generatedAt: bundle.generatedAt,
-        ttlHours: Number(bundle.ttlHours) || DEFAULT_TTL_HOURS,
+        ttlHours: normalizeCommunitySyncTtlHours(bundle.ttlHours),
         integrity: integrity.value,
         applied,
         extrasSigned,
         remoteDirectiveFeaturesEnabled: allowRemoteDirectiveFeatures,
-        cosmeticsCount: cosmeticsToStore?.all?.length || 0,
+        cosmeticsCount: countCommunityCosmeticSelectors(cosmeticsToStore),
+        hostCosmeticsCount: countHostSpecificCommunityCosmeticSelectors(cosmeticsToStore),
+        heuristicRegexCount: countCommunityHeuristicLabelRegexes(heuristicsToStore),
         directivesCount: directivesToStore?.length || 0,
         scriptletsCount: scriptletsToStore?.length || 0,
     };
 
+    const now = Date.now();
     const writes = [
         localWrite(STORAGE_KEYS.rules, rules),
         localWrite(STORAGE_KEYS.meta, metaToStore),
-        localWrite(STORAGE_KEYS.lastFetch, Date.now()),
+        localWrite(STORAGE_KEYS.lastAttempt, now),
+        localWrite(STORAGE_KEYS.lastSuccess, now),
+        localWrite(STORAGE_KEYS.lastFetch, now),
         localRemove(STORAGE_KEYS.lastError),
     ];
     if ( extrasSigned ) {
@@ -508,10 +772,27 @@ export async function syncCommunityRules({ force = false } = {}) {
 
     await Promise.all(writes);
 
-    scheduleCommunityAlarm(metaToStore.ttlHours);
+    const afterInjectableState = {
+        cosmetics: cosmeticsToStore,
+        heuristics: heuristicsToStore,
+        directives: directivesToStore,
+        scriptlets: scriptletsToStore,
+    };
+    const requiresInjectableRefresh = Boolean(
+        privateStateResult.requiresInjectableRefresh ||
+        hasCommunityInjectableStateChanged(beforeInjectableState, afterInjectableState)
+    );
+
+    scheduleCommunitySuccessAlarm({ ttlHours: metaToStore.ttlHours });
     ubolLog(`community-sync: applied ${applied.added || 0} rules from remote`);
 
-    return { source: 'remote', applied, meta: metaToStore };
+    return {
+        source: 'remote',
+        applied,
+        meta: metaToStore,
+        requiresInjectableRefresh,
+        cleanupReason: '',
+    };
 }
 
-export { scheduleCommunityAlarm, ALARM_NAME };
+export { ALARM_NAME };

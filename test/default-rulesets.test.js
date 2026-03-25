@@ -13,6 +13,11 @@ const readJson = async relativePath => {
   return JSON.parse(await fs.readFile(absUrl, 'utf8'));
 };
 
+const readText = async relativePath => {
+  const absUrl = new URL(relativePath, import.meta.url);
+  return fs.readFile(absUrl, 'utf8');
+};
+
 test('canonical default rulesets are derived from manifest rule resources', async () => {
   const manifest = await readJson('../manifest.json');
   const ids = getDefaultRulesetIdsFromRuleResources(
@@ -131,4 +136,23 @@ test('source ruleset metadata matches manifest defaults for bundled rulesets', a
       `ruleset-details.json default flag mismatch for ${entry.id}`
     );
   }
+});
+
+test('complete mode annoyance pack includes the full bundled annoyance family set', async () => {
+  const backgroundSource = await readText('../js/background.js');
+  const match = /const ANNOYANCE_RULESET_IDS = \[([\s\S]*?)\];/.exec(backgroundSource);
+
+  assert.ok(match, 'ANNOYANCE_RULESET_IDS declaration should exist');
+
+  const ids = Array.from(match[1].matchAll(/'([^']+)'/g), entry => entry[1]);
+  assert.deepEqual(ids, [
+    'annoyances-cookies',
+    'annoyances-notifications',
+    'annoyances-others',
+    'annoyances-overlays',
+    'annoyances-social',
+    'annoyances-widgets',
+  ]);
+  assert.match(backgroundSource, /ANNOYANCE_RULESET_IDS\.every/);
+  assert.match(backgroundSource, /enabledBefore\.concat\(ANNOYANCE_RULESET_IDS\)/);
 });

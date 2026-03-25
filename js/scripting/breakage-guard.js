@@ -7,6 +7,7 @@ if ( self.TalonBreakageGuard ) { return; }
 
 const runtime = self.browser?.runtime || self.chrome?.runtime;
 const storage = self.browser?.storage?.local || self.chrome?.storage?.local;
+const siteKeyResolver = self.TalonSiteKeyResolver;
 
 const RISK_TIERS = Object.freeze({
     low: 1,
@@ -86,6 +87,12 @@ const patternMatchesHostname = (pattern, hostname) => {
 
 const hostname = (self.location?.hostname || '').toLowerCase();
 const pathname = (self.location?.pathname || '').toLowerCase();
+const registrableDomain = hostname => {
+    const resolved = siteKeyResolver?.getRegistrableDomain?.(hostname);
+    if ( typeof resolved === 'string' && resolved !== '' ) { return resolved; }
+    if ( typeof hostname !== 'string' ) { return ''; }
+    return hostname.trim().toLowerCase().replace(/^\.+|\.+$/g, '');
+};
 
 const classifyProtection = () => {
     for ( const rule of PROTECTED_HOST_RULES ) {
@@ -516,6 +523,8 @@ if ( document.readyState === 'loading' ) {
 self.TalonBreakageGuard = {
     RISK_TIERS,
     protection,
+    registrableDomain,
+    getSiteKey: registrableDomain,
     whenReady,
     shouldRunSubsystem(subsystemId) {
         const override = resolveAuditOverride(subsystemId);

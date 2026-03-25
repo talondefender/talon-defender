@@ -43,6 +43,12 @@ import { fetchJSON } from './fetch.js';
 import { getAdminRulesets } from './admin.js';
 import { hasBroadHostPermissions } from './utils.js';
 import { rulesFromText } from './dnr-parser.js';
+import {
+    COMMUNITY_RULE_SCHEMA_VERSION_LEGACY,
+    createEmptyCommunityRuleActionCounts,
+    normalizeCommunityRuleSchemaVersion,
+    sanitizeCommunityRules,
+} from './community-rule-sanitizer.js';
 
 /******************************************************************************/
 
@@ -732,59 +738,14 @@ async function updateCommunityRules(rulesIn = [], bundleMeta = {}) {
         }
     }
 
-    const normalizeDomainType = (domainType) => {
-        if ( domainType === 'thirdParty' ) { return 'thirdParty'; }
-        if ( Array.isArray(domainType) ) {
-            return domainType.includes('thirdParty') ? 'thirdParty' : '';
-        }
-        return '';
-    };
-
-    const sanitizeCommunityRule = (rule) => {
-        if ( rule instanceof Object === false ) { return null; }
-        if ( rule.action?.type !== 'block' ) { return null; }
-        if ( rule.condition instanceof Object === false ) { return null; }
-
-        const condition = Object.assign({}, rule.condition);
-        const action = Object.assign({}, rule.action);
-
-        const resourceTypes = Array.isArray(condition.resourceTypes)
-            ? condition.resourceTypes.filter(rt => rt !== 'main_frame')
-            : null;
-        if ( resourceTypes ) {
-            if ( resourceTypes.length === 0 ) { return null; }
-            condition.resourceTypes = resourceTypes;
-        } else {
-            const excluded = Array.isArray(condition.excludedResourceTypes)
-                ? condition.excludedResourceTypes.slice()
-                : [];
-            if ( excluded.includes('main_frame') === false ) {
-                excluded.push('main_frame');
-            }
-            condition.excludedResourceTypes = excluded;
-        }
-
-        const normalizedDomainType = normalizeDomainType(condition.domainType);
-        if ( condition.domainType !== undefined && normalizedDomainType === '' ) {
-            return null;
-        }
-        condition.domainType = normalizedDomainType || 'thirdParty';
-
-        return Object.assign({}, rule, { condition, action });
-    };
-
-    const safeRules = [];
-    let droppedUnsafe = 0;
-    if ( Array.isArray(rulesIn) ) {
-        for ( const rule of rulesIn ) {
-            const safe = sanitizeCommunityRule(rule);
-            if ( safe ) {
-                safeRules.push(safe);
-            } else {
-                droppedUnsafe += 1;
-            }
-        }
-    }
+    const schemaVersion = normalizeCommunityRuleSchemaVersion(bundleMeta?.schemaVersion) ||
+        COMMUNITY_RULE_SCHEMA_VERSION_LEGACY;
+    const sanitized = sanitizeCommunityRules(rulesIn, { schemaVersion });
+    const safeRules = sanitized.rules.slice();
+    const dropped = Object.assign(
+        sanitized.dropped,
+        { regexUnsupported: sanitized.dropped.regexUnsupported || 0 }
+    );
 
     const regexRules = [];
     for ( const rule of safeRules ) {
@@ -814,16 +775,32 @@ async function updateCommunityRules(rulesIn = [], bundleMeta = {}) {
     let availableRegex = maxRegexDynamic - baseDynamicRegexCount;
     if ( availableRegex < 0 ) { availableRegex = 0; }
     if ( validRegexRules.length > availableRegex ) {
+        dropped.quota += validRegexRules.length - availableRegex;
         validRegexRules.length = availableRegex;
     }
 
     const validRegexSet = new Set(validRegexRules);
+    const rejectedRegexCounts = new Map();
+    for ( const entry of rejectedRegexes ) {
+        const regex = typeof entry?.regex === 'string' ? entry.regex : '';
+        if ( regex === '' ) { continue; }
+        rejectedRegexCounts.set(regex, (rejectedRegexCounts.get(regex) || 0) + 1);
+    }
     const filtered = [];
     for ( const rule of safeRules ) {
         if ( rule instanceof Object === false ) { continue; }
         if ( rule.condition?.regexFilter !== undefined ) {
             if ( validRegexSet.has(rule) ) {
                 filtered.push(rule);
+            } else {
+                const regexFilter = typeof rule.condition.regexFilter === 'string'
+                    ? rule.condition.regexFilter
+                    : '';
+                const rejectedCount = rejectedRegexCounts.get(regexFilter) || 0;
+                if ( rejectedCount !== 0 ) {
+                    dropped.regexUnsupported += 1;
+                    rejectedRegexCounts.set(regexFilter, rejectedCount - 1);
+                }
             }
             continue;
         }
@@ -836,18 +813,21 @@ async function updateCommunityRules(rulesIn = [], bundleMeta = {}) {
     if ( available < 0 ) { available = 0; }
 
     const maxToAdd = Math.min(available, COMMUNITY_RULES_MAX);
-    let droppedQuota = 0;
     if ( filtered.length > maxToAdd ) {
-        droppedQuota = filtered.length - maxToAdd;
+        dropped.quota += filtered.length - maxToAdd;
         filtered.length = maxToAdd;
     }
 
     const addRules = [];
     let nextId = COMMUNITY_RULES_BASE_RULE_ID;
     let addedRegexCount = 0;
+    const appliedByAction = createEmptyCommunityRuleActionCounts();
     for ( const rule of filtered ) {
         const copy = Object.assign({}, rule);
         copy.id = nextId++;
+        if ( typeof copy.action?.type === 'string' && copy.action.type in appliedByAction ) {
+            appliedByAction[copy.action.type] += 1;
+        }
         if ( copy.condition?.regexFilter !== undefined ) {
             addedRegexCount += 1;
         }
@@ -857,6 +837,12 @@ async function updateCommunityRules(rulesIn = [], bundleMeta = {}) {
     const droppedRegexUnsupported = rejectedRegexes.length;
     const droppedRegex = Math.max(0, regexRules.length - addedRegexCount);
     const droppedRegexQuota = Math.max(0, droppedRegex - droppedRegexUnsupported);
+    const droppedUnsafe = (
+        dropped.unsafeScope +
+        dropped.unsupportedRedirectPath +
+        dropped.unsupportedAction
+    );
+    const droppedQuota = dropped.quota;
 
     const response = {
         added: addRules.length,
@@ -868,6 +854,9 @@ async function updateCommunityRules(rulesIn = [], bundleMeta = {}) {
         droppedUnsafe,
         version: bundleMeta.version,
         source: bundleMeta.source,
+        schemaVersion,
+        byAction: appliedByAction,
+        dropped,
     };
 
     if ( removeRuleIds.length === 0 && addRules.length === 0 ) {
@@ -898,8 +887,14 @@ async function updateCommunityRules(rulesIn = [], bundleMeta = {}) {
         if ( droppedQuota !== 0 ) {
             ubolLog(`community rules: dropped ${droppedQuota} rules for quota`);
         }
-        if ( droppedUnsafe !== 0 ) {
-            ubolLog(`community rules: dropped ${droppedUnsafe} unsafe rules`);
+        if ( dropped.unsupportedAction !== 0 ) {
+            ubolLog(`community rules: dropped ${dropped.unsupportedAction} unsupported action rules`);
+        }
+        if ( dropped.unsafeScope !== 0 ) {
+            ubolLog(`community rules: dropped ${dropped.unsafeScope} unsafe scope rules`);
+        }
+        if ( dropped.unsupportedRedirectPath !== 0 ) {
+            ubolLog(`community rules: dropped ${dropped.unsupportedRedirectPath} unsupported redirect path rules`);
         }
     } catch(reason) {
         ubolErr(`updateCommunityRules/${reason}`);

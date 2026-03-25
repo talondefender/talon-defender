@@ -1,0 +1,422 @@
+import {
+    isKnownPublicSuffix,
+    normalizeSiteKeyHostname,
+} from './site-key.js';
+
+export const COMMUNITY_RULE_SCHEMA_VERSION_LEGACY = 1;
+export const COMMUNITY_RULE_SCHEMA_VERSION_CURRENT = 2;
+
+export const COMMUNITY_RULE_PRIORITY_BLOCK = 1000;
+export const COMMUNITY_RULE_PRIORITY_REDIRECT = 1100;
+export const COMMUNITY_RULE_PRIORITY_ALLOW = 1200;
+export const COMMUNITY_RULE_PRIORITY_ALLOW_ALL_REQUESTS = 1300;
+
+export const COMMUNITY_EXCEPTION_RULES_MAX = 250;
+export const COMMUNITY_ALLOW_ALL_REQUESTS_MAX = 50;
+
+export const COMMUNITY_ALLOWED_REDIRECT_EXTENSION_PATHS = Object.freeze([
+    '/web_accessible_resources/empty',
+    '/web_accessible_resources/noop.css',
+    '/web_accessible_resources/noop.html',
+    '/web_accessible_resources/noop.js',
+    '/web_accessible_resources/noop.json',
+    '/web_accessible_resources/noop.txt',
+    '/web_accessible_resources/1x1.gif',
+    '/web_accessible_resources/2x2.png',
+    '/web_accessible_resources/32x32.png',
+]);
+
+const VALID_RESOURCE_TYPES = new Set([
+    'main_frame',
+    'sub_frame',
+    'stylesheet',
+    'script',
+    'image',
+    'font',
+    'object',
+    'xmlhttprequest',
+    'ping',
+    'csp_report',
+    'media',
+    'websocket',
+    'webtransport',
+    'webbundle',
+    'other',
+]);
+
+const EXCEPTION_ACTIONS = new Set([
+    'redirect',
+    'allow',
+    'allowAllRequests',
+]);
+
+const hasOwn = (object, key) =>
+    Object.prototype.hasOwnProperty.call(object, key);
+
+export const createEmptyCommunityRuleActionCounts = () => ({
+    block: 0,
+    redirect: 0,
+    allow: 0,
+    allowAllRequests: 0,
+});
+
+export const createEmptyCommunityRuleDroppedCounts = () => ({
+    unsupportedAction: 0,
+    unsafeScope: 0,
+    unsupportedRedirectPath: 0,
+    quota: 0,
+    regexUnsupported: 0,
+});
+
+export const normalizeCommunityRuleSchemaVersion = value => {
+    if ( value === undefined || value === null || value === '' ) {
+        return COMMUNITY_RULE_SCHEMA_VERSION_LEGACY;
+    }
+    const schemaVersion = Number(value);
+    if ( Number.isInteger(schemaVersion) === false ) { return 0; }
+    if (
+        schemaVersion !== COMMUNITY_RULE_SCHEMA_VERSION_LEGACY &&
+        schemaVersion !== COMMUNITY_RULE_SCHEMA_VERSION_CURRENT
+    ) {
+        return 0;
+    }
+    return schemaVersion;
+};
+
+const normalizeDomainType = domainType => {
+    if ( domainType === 'thirdParty' ) { return 'thirdParty'; }
+    if ( Array.isArray(domainType) ) {
+        return domainType.includes('thirdParty') ? 'thirdParty' : '';
+    }
+    return '';
+};
+
+const normalizeResourceTypes = value => {
+    if ( Array.isArray(value) === false || value.length === 0 ) { return null; }
+    const out = [];
+    const seen = new Set();
+    for ( const entry of value ) {
+        if ( typeof entry !== 'string' ) { return null; }
+        if ( VALID_RESOURCE_TYPES.has(entry) === false ) { return null; }
+        if ( seen.has(entry) ) { continue; }
+        seen.add(entry);
+        out.push(entry);
+    }
+    return out.length === 0 ? null : out;
+};
+
+const sanitizeExactHostnameList = (value, { required = false } = {}) => {
+    if ( value === undefined ) {
+        return required ? null : undefined;
+    }
+    if ( Array.isArray(value) === false || value.length === 0 ) { return null; }
+    const out = [];
+    const seen = new Set();
+    for ( const entry of value ) {
+        if ( typeof entry !== 'string' ) { return null; }
+        const normalized = normalizeSiteKeyHostname(entry);
+        if ( normalized === '' ) { return null; }
+        if ( normalized.includes('*') || normalized === 'all-urls' ) { return null; }
+        if ( isKnownPublicSuffix(normalized) ) { return null; }
+        if ( seen.has(normalized) ) { continue; }
+        seen.add(normalized);
+        out.push(normalized);
+    }
+    return out.length === 0 ? null : out;
+};
+
+const hasOnlyAllowedConditionKeys = (condition, allowedKeys) => {
+    for ( const key of Object.keys(condition) ) {
+        if ( allowedKeys.has(key) ) { continue; }
+        return false;
+    }
+    return true;
+};
+
+const withNonMainFrameCondition = condition => {
+    const out = {};
+    if ( Array.isArray(condition.resourceTypes) ) {
+        const resourceTypes = normalizeResourceTypes(condition.resourceTypes);
+        if ( resourceTypes === null ) { return null; }
+        const filtered = resourceTypes.filter(type => type !== 'main_frame');
+        if ( filtered.length === 0 ) { return null; }
+        out.resourceTypes = filtered;
+    } else {
+        const excludedResourceTypes = Array.isArray(condition.excludedResourceTypes)
+            ? normalizeResourceTypes(condition.excludedResourceTypes)
+            : [];
+        if ( excludedResourceTypes === null ) { return null; }
+        const excluded = excludedResourceTypes.slice();
+        if ( excluded.includes('main_frame') === false ) {
+            excluded.push('main_frame');
+        }
+        out.excludedResourceTypes = excluded;
+    }
+    return out;
+};
+
+const normalizeRedirectExtensionPath = value => {
+    if ( typeof value !== 'string' ) { return ''; }
+    const trimmed = value.trim();
+    if ( trimmed === '' ) { return ''; }
+    return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+};
+
+const sanitizeBlockRule = rule => {
+    if ( rule.condition instanceof Object === false ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    const condition = Object.assign({}, rule.condition);
+    const nonMainFrameCondition = withNonMainFrameCondition(condition);
+    if ( nonMainFrameCondition === null ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    const normalizedDomainType = normalizeDomainType(condition.domainType);
+    if ( condition.domainType !== undefined && normalizedDomainType === '' ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    Object.assign(condition, nonMainFrameCondition);
+    condition.domainType = normalizedDomainType || 'thirdParty';
+    return {
+        ok: true,
+        actionType: 'block',
+        isException: false,
+        rule: {
+            action: { type: 'block' },
+            condition,
+            priority: COMMUNITY_RULE_PRIORITY_BLOCK,
+        },
+    };
+};
+
+const sanitizeAllowRule = rule => {
+    if ( rule.condition instanceof Object === false ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    const condition = rule.condition;
+    const allowedKeys = new Set([
+        'initiatorDomains',
+        'requestDomains',
+        'resourceTypes',
+    ]);
+    if ( hasOnlyAllowedConditionKeys(condition, allowedKeys) === false ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    const initiatorDomains = sanitizeExactHostnameList(condition.initiatorDomains, {
+        required: true,
+    });
+    const requestDomains = sanitizeExactHostnameList(condition.requestDomains);
+    const resourceTypes = normalizeResourceTypes(condition.resourceTypes);
+    if ( initiatorDomains === null || resourceTypes === null ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    const outCondition = {
+        initiatorDomains,
+        resourceTypes,
+    };
+    if ( requestDomains !== undefined ) {
+        outCondition.requestDomains = requestDomains;
+    }
+    return {
+        ok: true,
+        actionType: 'allow',
+        isException: true,
+        rule: {
+            action: { type: 'allow' },
+            condition: outCondition,
+            priority: COMMUNITY_RULE_PRIORITY_ALLOW,
+        },
+    };
+};
+
+const sanitizeAllowAllRequestsRule = rule => {
+    if ( rule.condition instanceof Object === false ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    const condition = rule.condition;
+    const allowedKeys = new Set([
+        'requestDomains',
+        'resourceTypes',
+    ]);
+    if ( hasOnlyAllowedConditionKeys(condition, allowedKeys) === false ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    const requestDomains = sanitizeExactHostnameList(condition.requestDomains, {
+        required: true,
+    });
+    const resourceTypes = normalizeResourceTypes(condition.resourceTypes);
+    if ( requestDomains === null || resourceTypes === null ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    if ( resourceTypes.length !== 1 || resourceTypes[0] !== 'main_frame' ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    return {
+        ok: true,
+        actionType: 'allowAllRequests',
+        isException: true,
+        rule: {
+            action: { type: 'allowAllRequests' },
+            condition: {
+                requestDomains,
+                resourceTypes,
+            },
+            priority: COMMUNITY_RULE_PRIORITY_ALLOW_ALL_REQUESTS,
+        },
+    };
+};
+
+const sanitizeRedirectRule = rule => {
+    if ( rule.condition instanceof Object === false ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    if ( rule.action?.redirect instanceof Object === false ) {
+        return { ok: false, reason: 'unsupportedRedirectPath' };
+    }
+    if (
+        hasOwn(rule.action.redirect, 'url') ||
+        hasOwn(rule.action.redirect, 'regexSubstitution')
+    ) {
+        return { ok: false, reason: 'unsupportedRedirectPath' };
+    }
+    if ( hasOwn(rule.action.redirect, 'transform') ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    const extensionPath = normalizeRedirectExtensionPath(
+        rule.action.redirect.extensionPath
+    );
+    if ( COMMUNITY_ALLOWED_REDIRECT_EXTENSION_PATHS.includes(extensionPath) === false ) {
+        return { ok: false, reason: 'unsupportedRedirectPath' };
+    }
+    const condition = rule.condition;
+    const allowedKeys = new Set([
+        'initiatorDomains',
+        'requestDomains',
+        'resourceTypes',
+        'domainType',
+    ]);
+    if ( hasOnlyAllowedConditionKeys(condition, allowedKeys) === false ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    const initiatorDomains = sanitizeExactHostnameList(condition.initiatorDomains, {
+        required: true,
+    });
+    const requestDomains = sanitizeExactHostnameList(condition.requestDomains, {
+        required: true,
+    });
+    if ( initiatorDomains === null || requestDomains === null ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    const normalizedDomainType = normalizeDomainType(condition.domainType);
+    if ( condition.domainType !== undefined && normalizedDomainType === '' ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    const outCondition = {
+        initiatorDomains,
+        requestDomains,
+        domainType: normalizedDomainType || 'thirdParty',
+    };
+    const nonMainFrameCondition = withNonMainFrameCondition(condition);
+    if ( nonMainFrameCondition === null ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    Object.assign(outCondition, nonMainFrameCondition);
+    return {
+        ok: true,
+        actionType: 'redirect',
+        isException: true,
+        rule: {
+            action: {
+                type: 'redirect',
+                redirect: { extensionPath },
+            },
+            condition: outCondition,
+            priority: COMMUNITY_RULE_PRIORITY_REDIRECT,
+        },
+    };
+};
+
+export const sanitizeCommunityRule = (
+    rule,
+    { schemaVersion = COMMUNITY_RULE_SCHEMA_VERSION_LEGACY } = {}
+) => {
+    if ( rule instanceof Object === false ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    const actionType = typeof rule.action?.type === 'string'
+        ? rule.action.type
+        : '';
+    if ( actionType === 'block' ) {
+        return sanitizeBlockRule(rule);
+    }
+    if ( schemaVersion < COMMUNITY_RULE_SCHEMA_VERSION_CURRENT ) {
+        return { ok: false, reason: 'unsupportedAction' };
+    }
+    if ( actionType === 'allow' ) {
+        return sanitizeAllowRule(rule);
+    }
+    if ( actionType === 'allowAllRequests' ) {
+        return sanitizeAllowAllRequestsRule(rule);
+    }
+    if ( actionType === 'redirect' ) {
+        return sanitizeRedirectRule(rule);
+    }
+    return { ok: false, reason: 'unsupportedAction' };
+};
+
+export const sanitizeCommunityRules = (
+    rulesIn = [],
+    { schemaVersion = COMMUNITY_RULE_SCHEMA_VERSION_LEGACY } = {}
+) => {
+    const rules = [];
+    const byAction = createEmptyCommunityRuleActionCounts();
+    const dropped = createEmptyCommunityRuleDroppedCounts();
+    let exceptionCount = 0;
+    let allowAllRequestsCount = 0;
+
+    if ( Array.isArray(rulesIn) === false ) {
+        return {
+            rules,
+            byAction,
+            dropped,
+            exceptionCount,
+            allowAllRequestsCount,
+        };
+    }
+
+    for ( const rule of rulesIn ) {
+        const result = sanitizeCommunityRule(rule, { schemaVersion });
+        if ( result.ok !== true ) {
+            dropped[result.reason] = (dropped[result.reason] || 0) + 1;
+            continue;
+        }
+        const { actionType } = result;
+        if ( EXCEPTION_ACTIONS.has(actionType) ) {
+            if ( exceptionCount >= COMMUNITY_EXCEPTION_RULES_MAX ) {
+                dropped.quota += 1;
+                continue;
+            }
+            if (
+                actionType === 'allowAllRequests' &&
+                allowAllRequestsCount >= COMMUNITY_ALLOW_ALL_REQUESTS_MAX
+            ) {
+                dropped.quota += 1;
+                continue;
+            }
+            exceptionCount += 1;
+        }
+        if ( actionType === 'allowAllRequests' ) {
+            allowAllRequestsCount += 1;
+        }
+        byAction[actionType] += 1;
+        rules.push(result.rule);
+    }
+
+    return {
+        rules,
+        byAction,
+        dropped,
+        exceptionCount,
+        allowAllRequestsCount,
+    };
+};

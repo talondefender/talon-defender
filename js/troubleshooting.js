@@ -20,6 +20,7 @@
 */
 
 import { runtime, sendMessage } from './ext.js';
+import { buildCommunitySyncDiagnosticsSummary } from './community-sync-diagnostics.js';
 
 /******************************************************************************/
 
@@ -59,6 +60,7 @@ export async function getTroubleshootingInfo(siteMode) {
         userRules,
         consoleOutput,
         hasOmnipotence,
+        communitySyncDiagnostics,
     ] = await Promise.all([
         runtime.getPlatformInfo(),
         sendMessage({ what: 'getDefaultConfig' }),
@@ -67,6 +69,7 @@ export async function getTroubleshootingInfo(siteMode) {
         sendMessage({ what: 'getEffectiveUserRules' }),
         sendMessage({ what: 'getConsoleOutput' }),
         sendMessage({ what: 'hasBroadHostPermissions' }),
+        sendMessage({ what: 'getCommunitySyncDiagnostics' }),
     ]);
     const browser = (( ) => {
         const extURL = runtime.getURL('');
@@ -121,6 +124,10 @@ export async function getTroubleshootingInfo(siteMode) {
         enabledRulesets.push(`-${id}`);
     }
     config.rulesets = enabledRulesets.sort();
+    const communitySync = buildCommunitySyncDiagnosticsSummary(communitySyncDiagnostics);
+    if ( communitySync instanceof Object ) {
+        config['community sync'] = communitySync;
+    }
     if ( consoleOutput.length !== 0 ) {
         config.console = siteMode
             ? consoleOutput.slice(-8)

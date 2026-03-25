@@ -333,6 +333,9 @@ js/background.js
 js/backup-restore.js
 js/breakage-policy.js
 js/click2load.js
+js/community-rule-sanitizer.js
+js/community-sync-diagnostics.js
+js/community-sync-logic.js
 js/community-sync.js
 js/config.js
 js/dashboard.js
@@ -386,6 +389,8 @@ js/scripting/youtube-watch-bridge.js
 js/scripting/youtube-watch-sanitizer.js
 js/scripting/unpicker.js
 js/scripting-manager.js
+js/single-flight.js
+js/site-key.js
 js/settings.js
 js/static-filtering-parser.js
 js/strictblock.js
@@ -1278,6 +1283,7 @@ scripts/sync-latest-artifacts.ps1
 scripts/validate-mv3-package.mjs
 shared/i18n.js
 shared/links.js
+shared/site-key-resolver.js
 shared/source-code.js
 strictblock.html
 options/youtube-followup-relay.html
@@ -1285,9 +1291,15 @@ js/youtube-followup-relay.js
 test/auto-backoff.test.js
 test/automation-directives.test.js
 test/breakage-policy.test.js
+test/community-rule-sanitizer.test.js
+test/community-sync-application.test.js
+test/community-sync-diagnostics.test.js
+test/community-sync-logic.test.js
 test/default-rulesets.test.js
 test/entitlement-regression.test.js
 test/public-safe-audit.test.js
+test/single-flight.test.js
+test/site-key.test.js
 THIRD_PARTY_NOTICES.md
 unpicker-ui.html
 web_accessible_resources/1x1.gif

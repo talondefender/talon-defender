@@ -8,9 +8,15 @@ const allowedTestFiles = new Set([
   "test/auto-backoff.test.js",
   "test/automation-directives.test.js",
   "test/breakage-policy.test.js",
+  "test/community-rule-sanitizer.test.js",
+  "test/community-sync-application.test.js",
+  "test/community-sync-diagnostics.test.js",
+  "test/community-sync-logic.test.js",
   "test/default-rulesets.test.js",
   "test/entitlement-regression.test.js",
   "test/public-safe-audit.test.js",
+  "test/single-flight.test.js",
+  "test/site-key.test.js",
 ]);
 
 const allowedTestUrlHostnames = new Set([

@@ -311,8 +311,14 @@ test('youtube watch bridge forwards follow-up cookie-clear requests to backgroun
   assert.equal(source.includes("const NEXT_RELEASE_EVENT = 'td-yw-followup-next-release';"), true);
   assert.equal(source.includes("const targetUrl = typeof detail?.targetUrl === 'string' ? detail.targetUrl : '';"), true);
   assert.equal(source.includes("runtime.sendMessage({ what: 'clearYouTubeFollowupCookies', targetUrl }"), true);
-  assert.equal(source.includes("runtime.sendMessage(\n                { what: 'prefetchYouTubeFollowupPlayerResponseSections', targetUrl },"), true);
-  assert.equal(source.includes('const bootstrapEnvelope =\n            detail?.bootstrapEnvelope && typeof detail.bootstrapEnvelope === \'object\''), true);
+  assert.match(
+    source,
+    /runtime\.sendMessage\(\s*\{\s*what: 'prefetchYouTubeFollowupPlayerResponseSections', targetUrl\s*\},/
+  );
+  assert.match(
+    source,
+    /const bootstrapEnvelope =\s*detail\?\.bootstrapEnvelope && typeof detail\.bootstrapEnvelope === 'object'/
+  );
   assert.equal(source.includes("what: 'completeYouTubeFollowupPrefetchDonor',"), true);
   assert.equal(source.includes('bootstrapEnvelope,'), true);
   assert.equal(source.includes('health,'), true);
@@ -387,7 +393,10 @@ test('youtube follow-up prep unregisters page service workers and arms tab-scope
   assert.equal(sanitizerSource.includes('const isPrefetchedFollowupBootstrapEnvelopeReady = envelope => ('), true);
   assert.equal(sanitizerSource.includes('followupDonorCaptureState.bootstrapEnvelopeProbeDeadlineAt = Date.now() + 2000;'), true);
   assert.equal(sanitizerSource.includes('self.__talonYouTubeWatchFollowupDonorBootstrapEnvelopeProbeTimedOut = true;'), true);
-  assert.equal(sanitizerSource.includes("followupDonorCaptureState.firstPayloadSubstantive =\n                        size > FOLLOWUP_DONOR_MIN_FIRST_PAYLOAD_BYTES;"), true);
+  assert.match(
+    sanitizerSource,
+    /followupDonorCaptureState\.firstPayloadSubstantive\s*=\s*size > FOLLOWUP_DONOR_MIN_FIRST_PAYLOAD_BYTES;/
+  );
   assert.equal(sanitizerSource.includes('const buildPrefetchedFollowupBootstrapEnvelopeSeed = entry => {'), true);
   assert.equal(sanitizerSource.includes('const installManagedPrefetchedFollowupBootstrapEnvelopeFromSeed = ('), true);
   assert.equal(sanitizerSource.includes('const buildPrefetchedFollowupPlayerResponseSeed = entry => {'), true);
@@ -406,7 +415,10 @@ test('youtube follow-up prep unregisters page service workers and arms tab-scope
   assert.equal(sanitizerSource.includes("location.replace('about:blank#td-yw-followup-hop');"), true);
   assert.equal(sanitizerSource.includes('prepareFollowupNavigation(normalizedTargetUrl).then(result => {'), true);
   assert.equal(sanitizerSource.includes('requestBackgroundFollowupPlayerResponseSections(normalizedTargetUrl)'), true);
-  assert.equal(sanitizerSource.includes('ok => ok === true\n                ? true\n                : prefetchFollowupPlayerResponseSections(normalizedTargetUrl).catch(() => false)'), true);
+  assert.match(
+    sanitizerSource,
+    /ok => ok === true\s*\? true\s*: prefetchFollowupPlayerResponseSections\(normalizedTargetUrl\)\.catch\(\(\) => false\)/
+  );
   assert.equal(sanitizerSource.includes('shouldAttemptNeutralHop ? normalizedTargetUrl : \'\''), true);
 
   assert.equal(backgroundSource.includes("const YOUTUBE_FOLLOWUP_HEADER_STRIP_RULE_PRIORITY = 3000001;"), true);
@@ -651,7 +663,10 @@ test('youtube watch sanitizer targets prettyPrint bootstrap endpoints and strips
   assert.equal(source.includes('ustreamerRn1ExactPatchPlan'), true);
   assert.equal(source.includes('ustreamerRn1ExactPatchAppliedPaths'), true);
   assert.equal(source.includes('const sanitizeBootstrapPayloadValue = (value, source = \'\', url = location.href) => {'), true);
-  assert.equal(source.includes("persistRewriteReport(\n            'player-bootstrap',"), true);
+  assert.match(
+    source,
+    /persistRewriteReport\(\s*'player-bootstrap',/
+  );
   assert.equal(source.includes('self.__talonYouTubeWatchPlayerResponseRewriteLastReport = report;'), true);
   assert.equal(source.includes('self.__talonYouTubeWatchBootstrapRewriteLastReport = report;'), true);
   assert.equal(source.includes('self.__talonYouTubeWatchPlayerBootstrapDefinedAt = Date.now();'), true);

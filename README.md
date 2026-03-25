@@ -25,7 +25,7 @@ Current product summary:
 - it ships six default DNR rulesets enabled by default
 - it verifies paid licenses against the API
 - it falls into paywall mode when entitlement expires
-- while entitled, it can fetch a signed community rules bundle from the API
+- while entitled, it can fetch a signed community bundle from the API with a 15-minute failure retry path, stored-rule or packaged-fallback recovery when remote apply fails, authoritative cleanup when the lane is disabled or invalid, immediate injectable refresh for signed global cosmetics and heuristic tuning, and a narrow MV3-safe exception lane for `allow`, `allowAllRequests`, and packaged redirects
 
 Key commands:
 - `npm test`
