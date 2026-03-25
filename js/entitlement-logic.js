@@ -33,6 +33,15 @@ export const shouldEnablePaywallForStatus = status => {
     return status?.status === 'expired';
 };
 
+export const shouldForceCommunitySyncAfterEntitlementRefresh = ({
+    status,
+    wasPaywalled = false,
+    wasStatusExpired = false,
+} = {}) => {
+    if ( shouldEnablePaywallForStatus(status) ) { return false; }
+    return wasPaywalled === true || wasStatusExpired === true;
+};
+
 export const isTrialReminderOnCooldown = ({
     now = Date.now(),
     lastShownMs = 0,
@@ -130,4 +139,3 @@ export const computeEntitlementState = (
         lastErrorAction,
     };
 };
-

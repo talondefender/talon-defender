@@ -21,7 +21,42 @@
       "proof": "https://easylist.to/pages/licence.html",
       "attributionRequired": true
     },
+    "annoyances-cookies": {
+      "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/easylist/easylist#fanboy-lists",
+      "proof": "https://easylist.to/pages/licence.html",
+      "attributionRequired": true
+    },
+    "annoyances-notifications": {
+      "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/easylist/easylist#fanboy-lists",
+      "proof": "https://easylist.to/pages/licence.html",
+      "attributionRequired": true
+    },
+    "annoyances-others": {
+      "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/easylist/easylist#fanboy-lists",
+      "proof": "https://easylist.to/pages/licence.html",
+      "attributionRequired": true
+    },
     "annoyances-overlays": {
+      "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/easylist/easylist#fanboy-lists",
+      "proof": "https://easylist.to/pages/licence.html",
+      "attributionRequired": true
+    },
+    "annoyances-social": {
+      "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/easylist/easylist#fanboy-lists",
+      "proof": "https://easylist.to/pages/licence.html",
+      "attributionRequired": true
+    },
+    "annoyances-widgets": {
       "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
       "commercialUse": "allowed",
       "sourceUrl": "https://github.com/easylist/easylist#fanboy-lists",

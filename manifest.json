@@ -60,9 +60,34 @@
         "path": "/rulesets/main/easyprivacy.json"
       },
       {
+        "id": "annoyances-cookies",
+        "enabled": false,
+        "path": "/rulesets/main/annoyances-cookies.json"
+      },
+      {
+        "id": "annoyances-notifications",
+        "enabled": false,
+        "path": "/rulesets/main/annoyances-notifications.json"
+      },
+      {
+        "id": "annoyances-others",
+        "enabled": false,
+        "path": "/rulesets/main/annoyances-others.json"
+      },
+      {
         "id": "annoyances-overlays",
         "enabled": true,
         "path": "/rulesets/main/annoyances-overlays.json"
+      },
+      {
+        "id": "annoyances-social",
+        "enabled": false,
+        "path": "/rulesets/main/annoyances-social.json"
+      },
+      {
+        "id": "annoyances-widgets",
+        "enabled": false,
+        "path": "/rulesets/main/annoyances-widgets.json"
       },
       {
         "id": "ublock-badware",

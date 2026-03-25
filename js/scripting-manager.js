@@ -21,7 +21,7 @@
 
 import * as ut from './utils.js';
 
-import { browser, localRead, localRemove } from './ext.js';
+import { browser, localRead, localRemove, localWrite } from './ext.js';
 import { ubolErr, ubolLog } from './debug.js';
 
 import {
@@ -34,6 +34,7 @@ import { fetchJSON } from './fetch.js';
 import { getEnabledRulesetsDetails } from './ruleset-manager.js';
 import { getFilteringModeDetails } from './mode-manager.js';
 import { registerCustomFilters } from './filter-manager.js';
+import { runInjectableRegistrationFlow } from './injectable-registration.js';
 import { registerToolbarIconToggler } from './action.js';
 import { createSingleFlightRunner } from './single-flight.js';
 
@@ -45,6 +46,7 @@ const AUTO_GENERIC_HIGH_KEY = 'autoGenericHighHosts';
 const AUTO_PROMOTION_STATE_KEY = 'autoPromotionStateV2';
 const AUTO_BACKOFF_SUBSYSTEMS_KEY = 'autoBackoffSubsystemsV1';
 const AUTO_PROMOTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const INJECTABLE_SYNC_DIAGNOSTICS_KEY = 'injectableSyncDiagnosticsV1';
 const INTERNAL_UNFILTERED_DOMAINS = [
     'talondefender.com',
 ];
@@ -1134,9 +1136,63 @@ function registerPostHideCleanup(context) {
 // Issue: Safari appears to completely ignore excludeMatches
 // https://github.com/radiolondra/ExcludeMatches-Test
 
-const registerInjectablesImpl = async () => {
-    if ( browser.scripting === undefined ) { return false; }
+const writeInjectableSyncDiagnostics = async result => {
+    if ( result instanceof Object === false ) { return; }
+    const payload = {
+        ok: result.ok === true,
+        updatedAt: Number(result.updatedAt) || Date.now(),
+        attemptedRecovery: result.attemptedRecovery === true,
+        recovered: result.recovered === true,
+        initialError: typeof result.initialError === 'string'
+            ? result.initialError
+            : '',
+        lastError: typeof result.lastError === 'string'
+            ? result.lastError
+            : '',
+        recoveryResetError: typeof result.recoveryResetError === 'string'
+            ? result.recoveryResetError
+            : '',
+        recoveryResetCount: Math.max(0, Number(result.recoveryResetCount) || 0),
+        toAddCount: Math.max(0, Number(result.toAddCount) || 0),
+        toRemoveCount: Math.max(0, Number(result.toRemoveCount) || 0),
+    };
+    await localWrite(INJECTABLE_SYNC_DIAGNOSTICS_KEY, payload);
+};
 
+const logInjectableSyncResult = result => {
+    if ( result instanceof Object === false ) { return; }
+    if ( result.ok === true ) {
+        if ( result.attemptedRecovery === true ) {
+            ubolLog('injectable sync: recovered after clean retry');
+        }
+        return;
+    }
+    const parts = [
+        typeof result.initialError === 'string' && result.initialError !== ''
+            ? `initial ${result.initialError}`
+            : '',
+        typeof result.lastError === 'string' && result.lastError !== ''
+            ? `final ${result.lastError}`
+            : '',
+        typeof result.recoveryResetError === 'string' && result.recoveryResetError !== ''
+            ? `reset ${result.recoveryResetError}`
+            : '',
+    ].filter(part => part !== '');
+    ubolErr(`injectable sync: ${parts.join('; ') || 'failed'}`);
+};
+
+async function readInjectableSyncDiagnostics() {
+    return readOptionalLocalValue(
+        INJECTABLE_SYNC_DIAGNOSTICS_KEY,
+        null,
+        `registerInjectables/${INJECTABLE_SYNC_DIAGNOSTICS_KEY}`
+    );
+}
+
+const buildInjectablesRegistrationPlan = async () => {
+    if ( browser.scripting === undefined ) {
+        return { toAdd: [], toRemove: [] };
+    }
     const [
         filteringModeDetails,
         rulesetsDetails,
@@ -1205,39 +1261,76 @@ const registerInjectablesImpl = async () => {
     ]);
 
     toRemove.push(...Array.from(before.keys()));
+    return { toAdd, toRemove };
+};
 
-    if ( toRemove.length !== 0 ) {
-        ubolLog(`Unregistered ${toRemove} content (css/js)`);
-        try {
-            await browser.scripting.unregisterContentScripts({ ids: toRemove });
-            localRemove('$scripting.unregisterContentScripts');
-        } catch(reason) {
-            ubolErr(`unregisterContentScripts/${reason}`);
-        }
+const registerInjectablesImpl = async () => {
+    if ( browser.scripting === undefined ) {
+        const unsupported = {
+            ok: false,
+            updatedAt: Date.now(),
+            attemptedRecovery: false,
+            recovered: false,
+            initialError: '',
+            lastError: 'browser.scripting unavailable',
+            recoveryResetError: '',
+            recoveryResetCount: 0,
+            toAddCount: 0,
+            toRemoveCount: 0,
+        };
+        await writeInjectableSyncDiagnostics(unsupported);
+        return unsupported;
     }
 
-    if ( toAdd.length !== 0 ) {
-        ubolLog(`Registered ${toAdd.map(v => v.id)} content (css/js)`);
-        try {
-            await browser.scripting.registerContentScripts(toAdd);
-            localRemove('$scripting.registerContentScripts');
-        } catch(reason) {
-            ubolErr(`registerContentScripts/${reason}`);
-        }
+    const result = await runInjectableRegistrationFlow({
+        buildPlan: buildInjectablesRegistrationPlan,
+        listRegistered: () => browser.scripting.getRegisteredContentScripts(),
+        unregisterContentScripts: async ids => {
+            if ( ids.length === 0 ) { return; }
+            ubolLog(`Unregistered ${ids} content (css/js)`);
+            await browser.scripting.unregisterContentScripts({ ids });
+        },
+        registerContentScripts: async entries => {
+            if ( entries.length === 0 ) { return; }
+            ubolLog(`Registered ${entries.map(entry => entry.id)} content (css/js)`);
+            await browser.scripting.registerContentScripts(entries);
+        },
+    });
+    if ( result.ok === true ) {
+        await Promise.all([
+            localRemove('$scripting.unregisterContentScripts').catch(() => {}),
+            localRemove('$scripting.registerContentScripts').catch(() => {}),
+        ]);
     }
-
-    return true;
+    await writeInjectableSyncDiagnostics(result);
+    logInjectableSyncResult(result);
+    return result;
 };
 
 const registerInjectablesRunner = createSingleFlightRunner(registerInjectablesImpl);
 
 async function registerInjectables() {
-    if ( browser.scripting === undefined ) { return false; }
+    if ( browser.scripting === undefined ) {
+        return {
+            ok: false,
+            updatedAt: Date.now(),
+            attemptedRecovery: false,
+            recovered: false,
+            initialError: '',
+            lastError: 'browser.scripting unavailable',
+            recoveryResetError: '',
+            recoveryResetCount: 0,
+            toAddCount: 0,
+            toRemoveCount: 0,
+        };
+    }
     return registerInjectablesRunner();
 }
 
 /******************************************************************************/
 
 export {
+    INJECTABLE_SYNC_DIAGNOSTICS_KEY,
+    readInjectableSyncDiagnostics,
     registerInjectables
 };

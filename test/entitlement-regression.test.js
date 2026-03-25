@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 
 import {
   DEFAULT_TRIAL_PERIOD_MS,
@@ -9,9 +10,15 @@ import {
   getTrialReminderWhen,
   isHardDenyErrorCode,
   normalizeAndValidateLicenseKey,
+  shouldForceCommunitySyncAfterEntitlementRefresh,
   shouldEnablePaywallForStatus,
   shouldRecordTrialReminderShown,
 } from '../js/entitlement-logic.js';
+
+const readText = async relativePath => {
+  const absUrl = new URL(relativePath, import.meta.url);
+  return fs.readFile(absUrl, 'utf8');
+};
 
 test('trial transitions to expired when trial window elapses', () => {
   const now = Date.UTC(2026, 2, 4, 16, 0, 0, 0);
@@ -136,6 +143,29 @@ test('paywall toggles only for expired status', () => {
   assert.equal(shouldEnablePaywallForStatus(null), false);
 });
 
+test('forced community sync only triggers on expired-to-entitled transitions', () => {
+  assert.equal(shouldForceCommunitySyncAfterEntitlementRefresh({
+    status: { status: 'paid' },
+    wasPaywalled: true,
+    wasStatusExpired: true,
+  }), true);
+  assert.equal(shouldForceCommunitySyncAfterEntitlementRefresh({
+    status: { status: 'trial' },
+    wasPaywalled: false,
+    wasStatusExpired: true,
+  }), true);
+  assert.equal(shouldForceCommunitySyncAfterEntitlementRefresh({
+    status: { status: 'paid' },
+    wasPaywalled: false,
+    wasStatusExpired: false,
+  }), false);
+  assert.equal(shouldForceCommunitySyncAfterEntitlementRefresh({
+    status: { status: 'expired' },
+    wasPaywalled: true,
+    wasStatusExpired: true,
+  }), false);
+});
+
 test('grace period keeps paid status active even after entitledUntilMs', () => {
   const now = Date.UTC(2026, 2, 4, 16, 0, 0, 0);
   const state = computeEntitlementState({
@@ -152,4 +182,16 @@ test('fresh install without trial start or license is expired by default', () =>
   const state = computeEntitlementState({}, { now });
   assert.equal(state.status, 'expired');
   assert.equal(state.licenseKeyPresent, false);
+});
+
+test('background entitlement handlers keep runtime-only refresh and replace-device activation wired correctly', async () => {
+  const source = await readText('../js/background.js');
+
+  assert.match(source, /if \( runtimeOnly !== true \)/);
+  assert.match(source, /shouldForceCommunitySyncAfterEntitlementRefresh/);
+  assert.match(
+    source,
+    /case 'replaceDevice':[\s\S]*?enforceEntitlement\(\{ verify: false \}\)/
+  );
+  assert.match(source, /case 'getInjectableSyncDiagnostics'/);
 });

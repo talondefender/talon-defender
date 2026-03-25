@@ -354,6 +354,7 @@ js/fetch.js
 js/filter-lists.js
 js/filter-manager.js
 js/filter-manager-ui.js
+js/injectable-registration.js
 js/i18n.js
 js/jsonpath.js
 js/matched-rules.js
@@ -1297,6 +1298,7 @@ test/community-sync-diagnostics.test.js
 test/community-sync-logic.test.js
 test/default-rulesets.test.js
 test/entitlement-regression.test.js
+test/injectable-registration.test.js
 test/public-safe-audit.test.js
 test/single-flight.test.js
 test/site-key.test.js

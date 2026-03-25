@@ -14,6 +14,7 @@ const allowedTestFiles = new Set([
   "test/community-sync-logic.test.js",
   "test/default-rulesets.test.js",
   "test/entitlement-regression.test.js",
+  "test/injectable-registration.test.js",
   "test/public-safe-audit.test.js",
   "test/single-flight.test.js",
   "test/site-key.test.js",

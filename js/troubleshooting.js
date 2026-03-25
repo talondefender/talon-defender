@@ -50,6 +50,57 @@ function renderData(data, depth = 0) {
 
 /******************************************************************************/
 
+function buildInjectableSyncSummary(diagnostics) {
+    if ( diagnostics instanceof Object === false ) { return null; }
+    const out = {};
+    if ( typeof diagnostics.ok === 'boolean' ) {
+        out.status = diagnostics.ok ? 'ok' : 'error';
+    }
+    if ( typeof diagnostics.attemptedRecovery === 'boolean' ) {
+        out.attemptedRecovery = diagnostics.attemptedRecovery;
+    }
+    if ( typeof diagnostics.recovered === 'boolean' ) {
+        out.recovered = diagnostics.recovered;
+    }
+    const updatedAt = Number(diagnostics.updatedAt) || 0;
+    if ( updatedAt > 0 ) {
+        out.updatedAt = new Date(updatedAt).toISOString();
+    }
+    const initialError = typeof diagnostics.initialError === 'string'
+        ? diagnostics.initialError
+        : '';
+    if ( initialError !== '' ) {
+        out.initialError = initialError;
+    }
+    const lastError = typeof diagnostics.lastError === 'string'
+        ? diagnostics.lastError
+        : '';
+    if ( lastError !== '' ) {
+        out.lastError = lastError;
+    }
+    const recoveryResetError = typeof diagnostics.recoveryResetError === 'string'
+        ? diagnostics.recoveryResetError
+        : '';
+    if ( recoveryResetError !== '' ) {
+        out.recoveryResetError = recoveryResetError;
+    }
+    const recoveryResetCount = Number(diagnostics.recoveryResetCount) || 0;
+    if ( recoveryResetCount > 0 ) {
+        out.recoveryResetCount = recoveryResetCount;
+    }
+    const toAddCount = Number(diagnostics.toAddCount) || 0;
+    if ( toAddCount > 0 ) {
+        out.toAddCount = toAddCount;
+    }
+    const toRemoveCount = Number(diagnostics.toRemoveCount) || 0;
+    if ( toRemoveCount > 0 ) {
+        out.toRemoveCount = toRemoveCount;
+    }
+    return Object.keys(out).length === 0 ? null : out;
+}
+
+/******************************************************************************/
+
 export async function getTroubleshootingInfo(siteMode) {
     const manifest = runtime.getManifest();
     const [
@@ -61,6 +112,7 @@ export async function getTroubleshootingInfo(siteMode) {
         consoleOutput,
         hasOmnipotence,
         communitySyncDiagnostics,
+        injectableSyncDiagnostics,
     ] = await Promise.all([
         runtime.getPlatformInfo(),
         sendMessage({ what: 'getDefaultConfig' }),
@@ -70,6 +122,7 @@ export async function getTroubleshootingInfo(siteMode) {
         sendMessage({ what: 'getConsoleOutput' }),
         sendMessage({ what: 'hasBroadHostPermissions' }),
         sendMessage({ what: 'getCommunitySyncDiagnostics' }),
+        sendMessage({ what: 'getInjectableSyncDiagnostics' }),
     ]);
     const browser = (( ) => {
         const extURL = runtime.getURL('');
@@ -127,6 +180,10 @@ export async function getTroubleshootingInfo(siteMode) {
     const communitySync = buildCommunitySyncDiagnosticsSummary(communitySyncDiagnostics);
     if ( communitySync instanceof Object ) {
         config['community sync'] = communitySync;
+    }
+    const injectableSync = buildInjectableSyncSummary(injectableSyncDiagnostics);
+    if ( injectableSync instanceof Object ) {
+        config['injectable sync'] = injectableSync;
     }
     if ( consoleOutput.length !== 0 ) {
         config.console = siteMode

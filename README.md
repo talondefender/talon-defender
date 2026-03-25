@@ -23,9 +23,10 @@ It does not own:
 Current product summary:
 - the extension starts a 7-day trial on first use
 - it ships six default DNR rulesets enabled by default
+- it also bundles five additional annoyance rulesets disabled by default and auto-enables that full annoyance family in complete mode
 - it verifies paid licenses against the API
 - it falls into paywall mode when entitlement expires
-- while entitled, it can fetch a signed community bundle from the API with a 15-minute failure retry path, stored-rule or packaged-fallback recovery when remote apply fails, authoritative cleanup when the lane is disabled or invalid, immediate injectable refresh for signed global cosmetics and heuristic tuning, and a narrow MV3-safe exception lane for `allow`, `allowAllRequests`, and packaged redirects
+- while entitled, it can fetch a signed community bundle from the API with a 15-minute failure retry path, stored-rule or packaged-fallback recovery when remote apply fails, authoritative cleanup when the lane is disabled or invalid, immediate injectable refresh for signed global cosmetics and heuristic tuning, an async forced refresh when entitlement is restored, recoverable content-script registration with persisted diagnostics, and a narrow MV3-safe exception lane for `allow`, `allowAllRequests`, and packaged redirects
 
 Key commands:
 - `npm test`

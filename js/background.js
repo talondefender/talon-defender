@@ -63,6 +63,7 @@ import {
 import {
     getTrialReminderWhen,
     normalizeAndValidateLicenseKey,
+    shouldForceCommunitySyncAfterEntitlementRefresh,
     shouldEnablePaywallForStatus,
     shouldRecordTrialReminderShown,
 } from './entitlement-logic.js';
@@ -779,6 +780,7 @@ import {
 
 import { dnr } from './ext-compat.js';
 import {
+    readInjectableSyncDiagnostics,
     registerInjectables,
 } from './scripting-manager.js';
 import { setToolbarIcon, toggleToolbarIcon } from './action.js';
@@ -936,6 +938,8 @@ const youtubeFollowupArchitecturePrewarmPool = new Map();
 let entitlementStatus = { status: 'trial' };
 let paywallActive = false;
 let lastCommunityCleanupReason = '';
+let communitySyncInFlight;
+let communitySyncForceQueued = false;
 
 const AUTO_GENERIC_HIGH_KEY = 'autoGenericHighHosts';
 const AUTO_GENERIC_HIGH_MAX = 200;
@@ -2293,7 +2297,7 @@ async function refreshRuntimeStateForOpenTabs() {
 
 async function syncInjectablesAndRefreshTabs({ runtimeOnly = false } = {}) {
     if ( isEntitled() === false ) { return false; }
-    if ( runtimeOnly || runtimeOnly === false ) {
+    if ( runtimeOnly !== true ) {
         await registerInjectablesIfEntitled().catch(ubolErr);
     }
     await refreshRuntimeStateForOpenTabs().catch(ubolErr);
@@ -2331,9 +2335,30 @@ async function handleCommunitySyncResult(result) {
 }
 
 function runCommunitySync(options) {
-    return syncCommunityRules(options)
-        .then(handleCommunitySyncResult)
-        .catch(ubolErr);
+    const normalized = options instanceof Object
+        ? { ...options }
+        : {};
+    if ( communitySyncInFlight !== undefined ) {
+        if ( normalized.force === true ) {
+            communitySyncForceQueued = true;
+        }
+        return communitySyncInFlight;
+    }
+    communitySyncInFlight = (async () => {
+        try {
+            const result = await syncCommunityRules(normalized);
+            return await handleCommunitySyncResult(result);
+        } catch (reason) {
+            ubolErr(`community-sync/run/${reason}`);
+        } finally {
+            communitySyncInFlight = undefined;
+            if ( communitySyncForceQueued ) {
+                communitySyncForceQueued = false;
+                runCommunitySync({ force: true });
+            }
+        }
+    })();
+    return communitySyncInFlight;
 }
 
 async function getRegisteredContentScriptsAuditSnapshot() {
@@ -2571,16 +2596,47 @@ async function refreshEntitlement({ verify = false, forceVerify = false } = {}) 
     return entitlementStatus;
 }
 
-async function enforceEntitlement({ verify = false, forceVerify = false } = {}) {
-    const status = await refreshEntitlement({ verify, forceVerify });
-    if (status.status === 'expired') {
-        await enablePaywall();
-        return status;
+async function applyEntitlementStatusEffects(
+    status,
+    {
+        broadcast = true,
+        paywallWasActive = paywallActive,
+        previousStatus = entitlementStatus,
+        registerInjectablesOnEntitled = true,
+    } = {}
+) {
+    if ( shouldEnablePaywallForStatus(status) ) {
+        await enablePaywall({ broadcast });
+        return { forcedCommunitySync: false };
     }
 
-    // Ensure paywall override is removed before re-registering injectables.
-    await disablePaywall();
-    registerInjectablesIfEntitled().catch(ubolErr);
+    if ( paywallWasActive ) {
+        await disablePaywall({ broadcast });
+    }
+    if ( registerInjectablesOnEntitled ) {
+        await registerInjectablesIfEntitled().catch(ubolErr);
+    }
+
+    const forcedCommunitySync = shouldForceCommunitySyncAfterEntitlementRefresh({
+        status,
+        wasPaywalled: paywallWasActive,
+        wasStatusExpired: shouldEnablePaywallForStatus(previousStatus),
+    });
+    if ( forcedCommunitySync ) {
+        runCommunitySync({ force: true });
+    }
+    return { forcedCommunitySync };
+}
+
+async function enforceEntitlement({ verify = false, forceVerify = false } = {}) {
+    const previousStatus = entitlementStatus;
+    const paywallWasActive = paywallActive;
+    const status = await refreshEntitlement({ verify, forceVerify });
+    await applyEntitlementStatusEffects(status, {
+        paywallWasActive,
+        previousStatus,
+        registerInjectablesOnEntitled: true,
+    });
     return status;
 }
 
@@ -3342,6 +3398,15 @@ function onMessage(request, sender, callback) {
             return true;
         }
 
+        case 'getInjectableSyncDiagnostics':
+            readInjectableSyncDiagnostics().then(result => {
+                callback(result instanceof Object ? result : {});
+            }).catch(reason => {
+                ubolErr(`getInjectableSyncDiagnostics/${reason}`);
+                callback({});
+            });
+            return true;
+
         case 'toggleToolbarIcon': {
             if (paywallActive) { return false; }
             if (tabId) {
@@ -3655,16 +3720,17 @@ function onMessage(request, sender, callback) {
         }
 
         case 'getEntitlementStatus': {
+            const previousStatus = entitlementStatus;
+            const paywallWasActive = paywallActive;
             refreshEntitlement({ verify: false }).then(async status => {
-                if (status?.status === 'expired') {
-                    if (paywallActive === false) {
-                        await enablePaywall({ broadcast: false }).catch(ubolErr);
-                    }
-                } else {
-                    if (paywallActive) {
-                        await disablePaywall({ broadcast: false }).catch(ubolErr);
-                    }
-                }
+                await applyEntitlementStatusEffects(status, {
+                    broadcast: false,
+                    paywallWasActive,
+                    previousStatus,
+                    registerInjectablesOnEntitled:
+                        paywallWasActive ||
+                        shouldEnablePaywallForStatus(previousStatus),
+                }).catch(ubolErr);
                 const stored = await readEntitlement();
                 callback(Object.assign({}, status, {
                     lastError: typeof stored.lastError === 'string' ? stored.lastError : '',
@@ -3700,7 +3766,7 @@ function onMessage(request, sender, callback) {
 
         case 'replaceDevice': {
             verifyLicense({ force: true, replaceDevice: true }).then(() =>
-                refreshEntitlement({ verify: false })
+                enforceEntitlement({ verify: false })
             ).then(status => {
                 callback(status);
             }).catch(reason => {

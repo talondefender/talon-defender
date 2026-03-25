@@ -1,7 +1,7 @@
 [
  {
   "id": "ublock-filters",
-  "name": "uBlock filters – Ads, trackers, and more",
+  "name": "uBlock filters - Ads, trackers, and more",
   "group": "default",
   "enabled": true,
   "homeURL": "https://github.com/uBlockOrigin/uAssets",
@@ -81,8 +81,89 @@
   "scriptlets": 9
  },
  {
+  "id": "annoyances-cookies",
+  "name": "EasyList/uBO - Cookie Notices",
+  "group": "annoyances",
+  "enabled": false,
+  "homeURL": "https://github.com/easylist/easylist#fanboy-lists",
+  "filters": {
+   "total": 1761,
+   "accepted": 1761,
+   "rejected": 0
+  },
+  "rules": {
+   "total": 1761,
+   "plain": 1759,
+   "regex": 1,
+   "strictblock": 1,
+   "urlskip": 0,
+   "rejected": 0
+  },
+  "css": {
+   "generic": 1,
+   "generichigh": 1,
+   "specific": 1,
+   "procedural": 1
+  },
+  "scriptlets": 21
+ },
+ {
+  "id": "annoyances-notifications",
+  "name": "EasyList/uBO - Notification Prompts",
+  "group": "annoyances",
+  "enabled": false,
+  "homeURL": "https://github.com/easylist/easylist#fanboy-lists",
+  "filters": {
+   "total": 278,
+   "accepted": 278,
+   "rejected": 0
+  },
+  "rules": {
+   "total": 278,
+   "plain": 277,
+   "regex": 0,
+   "strictblock": 1,
+   "urlskip": 0,
+   "rejected": 0
+  },
+  "css": {
+   "generic": 1,
+   "generichigh": 1,
+   "specific": 1,
+   "procedural": 1
+  },
+  "scriptlets": 9
+ },
+ {
+  "id": "annoyances-others",
+  "name": "EasyList/uBO - Annoyance Fixes",
+  "group": "annoyances",
+  "enabled": false,
+  "homeURL": "https://github.com/easylist/easylist#fanboy-lists",
+  "filters": {
+   "total": 420,
+   "accepted": 420,
+   "rejected": 0
+  },
+  "rules": {
+   "total": 420,
+   "plain": 419,
+   "regex": 0,
+   "strictblock": 1,
+   "urlskip": 0,
+   "rejected": 0
+  },
+  "css": {
+   "generic": 1,
+   "generichigh": 1,
+   "specific": 1,
+   "procedural": 1
+  },
+  "scriptlets": 12
+ },
+ {
   "id": "ublock-badware",
-  "name": "uBlock filters – Badware risks",
+  "name": "uBlock filters - Badware risks",
   "group": "malware",
   "enabled": true,
   "homeURL": "https://github.com/uBlockOrigin/uAssets",
@@ -136,7 +217,7 @@
  },
  {
   "id": "annoyances-overlays",
-  "name": "EasyList/uBO – Overlay Notices",
+  "name": "EasyList/uBO - Overlay Notices",
   "group": "annoyances",
   "enabled": true,
   "homeURL": "https://github.com/easylist/easylist#fanboy-lists",
@@ -160,5 +241,59 @@
    "procedural": 1218
   },
   "scriptlets": 31
+ },
+ {
+  "id": "annoyances-social",
+  "name": "EasyList/uBO - Social Widgets",
+  "group": "annoyances",
+  "enabled": false,
+  "homeURL": "https://github.com/easylist/easylist#fanboy-lists",
+  "filters": {
+   "total": 598,
+   "accepted": 598,
+   "rejected": 0
+  },
+  "rules": {
+   "total": 598,
+   "plain": 598,
+   "regex": 0,
+   "strictblock": 0,
+   "urlskip": 0,
+   "rejected": 0
+  },
+  "css": {
+   "generic": 1,
+   "generichigh": 1,
+   "specific": 1,
+   "procedural": 1
+  },
+  "scriptlets": 1
+ },
+ {
+  "id": "annoyances-widgets",
+  "name": "EasyList/uBO - Embedded Widgets",
+  "group": "annoyances",
+  "enabled": false,
+  "homeURL": "https://github.com/easylist/easylist#fanboy-lists",
+  "filters": {
+   "total": 60,
+   "accepted": 60,
+   "rejected": 0
+  },
+  "rules": {
+   "total": 60,
+   "plain": 59,
+   "regex": 0,
+   "strictblock": 1,
+   "urlskip": 0,
+   "rejected": 0
+  },
+  "css": {
+   "generic": 1,
+   "generichigh": 1,
+   "specific": 1,
+   "procedural": 0
+  },
+  "scriptlets": 0
  }
 ]
