@@ -538,7 +538,7 @@ function getToggleActivityState(entry) {
     count + (enabledRulesets.has(id) ? 1 : 0), 0);
   return {
     enabledCount,
-    active: enabledCount === entry.rulesets.length,
+    active: enabledCount !== 0,
     partial: enabledCount !== 0 && enabledCount !== entry.rulesets.length
   };
 }
@@ -546,16 +546,12 @@ function getToggleActivityState(entry) {
 function renderCoreFilterStatus() {
   FILTER_TOGGLES.forEach((entry) => {
     if (!entry.checkbox) return;
-    const { active, partial } = getToggleActivityState(entry);
+    const { active } = getToggleActivityState(entry);
     entry.checkbox.checked = active;
-    entry.checkbox.indeterminate = partial;
+    entry.checkbox.indeterminate = false;
     if (entry.statusEl) {
-      entry.statusEl.textContent = active
-        ? t("uiActive")
-        : partial
-          ? t("uiPartial")
-          : t("uiDisabled");
-      entry.statusEl.className = `toggle-status ${active ? "ok" : partial ? "warn" : "muted"}`;
+      entry.statusEl.textContent = active ? t("uiActive") : t("uiDisabled");
+      entry.statusEl.className = `toggle-status ${active ? "ok" : "muted"}`;
     }
   });
 }
