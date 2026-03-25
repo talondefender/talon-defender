@@ -632,5 +632,14 @@
   },
   "licenseUseThisDeviceButton": {
     "message": "Deze computer gebruiken"
+  },
+  "optionsFilterExtraProtectionLabel": {
+    "message": "Extra bescherming"
+  },
+  "optionsFilterExtraProtectionNote": {
+    "message": "Blokkeert meer cookiemeldingen, aanmeldvensters, meldingsverzoeken, sociale widgets en andere ergernissen."
+  },
+  "uiPartial": {
+    "message": "Gedeeltelijk actief"
   }
 }

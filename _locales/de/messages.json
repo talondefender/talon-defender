@@ -632,5 +632,14 @@
   },
   "licenseUseThisDeviceButton": {
     "message": "Diesen Computer verwenden"
+  },
+  "optionsFilterExtraProtectionLabel": {
+    "message": "Zus?tzlicher Schutz"
+  },
+  "optionsFilterExtraProtectionNote": {
+    "message": "Blockiert mehr Cookie-Hinweise, Newsletter-Fenster, Benachrichtigungsanfragen, Social-Media-Widgets und andere St?rungen."
+  },
+  "uiPartial": {
+    "message": "Teilweise aktiv"
   }
 }

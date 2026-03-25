@@ -632,5 +632,14 @@
   },
   "licenseUseThisDeviceButton": {
     "message": "Use this computer"
+  },
+  "optionsFilterExtraProtectionLabel": {
+    "message": "Ekstra beskyttelse"
+  },
+  "optionsFilterExtraProtectionNote": {
+    "message": "Blokkerer flere informasjonskapselvarsler, nyhetsbrevpopuper, varslingsforesp?rsler, sosiale widgeter og andre forstyrrelser."
+  },
+  "uiPartial": {
+    "message": "Delvis aktiv"
   }
 }

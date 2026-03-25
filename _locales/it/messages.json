@@ -632,5 +632,14 @@
   },
   "licenseUseThisDeviceButton": {
     "message": "Usa questo computer"
+  },
+  "optionsFilterExtraProtectionLabel": {
+    "message": "Protezione extra"
+  },
+  "optionsFilterExtraProtectionNote": {
+    "message": "Blocca pi? avvisi sui cookie, pop-up di iscrizione, richieste di notifiche, widget social e altri fastidi."
+  },
+  "uiPartial": {
+    "message": "Parzialmente attivo"
   }
 }

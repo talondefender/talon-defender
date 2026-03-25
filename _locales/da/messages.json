@@ -632,5 +632,14 @@
   },
   "licenseUseThisDeviceButton": {
     "message": "Brug denne computer"
+  },
+  "optionsFilterExtraProtectionLabel": {
+    "message": "Ekstra beskyttelse"
+  },
+  "optionsFilterExtraProtectionNote": {
+    "message": "Blokerer flere cookie-beskeder, nyhedsbrevsvinduer, notifikationsanmodninger, sociale widgets og andre forstyrrelser."
+  },
+  "uiPartial": {
+    "message": "Delvist aktiv"
   }
 }

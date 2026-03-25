@@ -31,6 +31,7 @@ Expired behavior now:
 Bundled filtering surface now:
 - default rulesets enabled in the manifest are `ublock-filters`, `easylist`, `easyprivacy`, `annoyances-overlays`, `ublock-badware`, and `urlhaus-full`
 - entering complete mode now auto-enables the full bundled annoyance family: `annoyances-cookies`, `annoyances-notifications`, `annoyances-others`, `annoyances-overlays`, `annoyances-social`, and `annoyances-widgets`
+- the public Settings page now exposes an `Extra protection` toggle for the five non-default annoyance packs, so users no longer need to understand the hidden complete-mode concept
 - release packaging prunes unbundled ruleset artifacts so the shipped package only contains manifest-backed resources
 
 Community bundle behavior now:

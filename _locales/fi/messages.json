@@ -632,5 +632,14 @@
   },
   "licenseUseThisDeviceButton": {
     "message": "Käytä tätä tietokonetta"
+  },
+  "optionsFilterExtraProtectionLabel": {
+    "message": "Lis?suojaus"
+  },
+  "optionsFilterExtraProtectionNote": {
+    "message": "Est?? tehokkaammin ev?steilmoituksia, uutiskirjeponnahduksia, ilmoituspyynt?j?, some-widgettej? ja muita h?iri?it?."
+  },
+  "uiPartial": {
+    "message": "Osittain k?yt?ss?"
   }
 }

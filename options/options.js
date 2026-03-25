@@ -46,7 +46,15 @@ const ATTRIBUTIONS_URL =
     ? chrome.runtime.getURL("options/attributions.html")
     : "options/attributions.html";
 
-const CORE_RULESETS = [
+const EXTRA_PROTECTION_RULESETS = [
+  "annoyances-cookies",
+  "annoyances-notifications",
+  "annoyances-others",
+  "annoyances-social",
+  "annoyances-widgets"
+];
+
+const FILTER_TOGGLES = [
   {
     checkbox: document.getElementById("filterEasyList"),
     statusEl: document.getElementById("filterEasyListStatus"),
@@ -64,6 +72,12 @@ const CORE_RULESETS = [
     statusEl: document.getElementById("filterFanboyAnnoyanceStatus"),
     rulesets: ["annoyances-overlays"],
     label: "Pop-ups"
+  },
+  {
+    checkbox: document.getElementById("filterExtraProtection"),
+    statusEl: document.getElementById("filterExtraProtectionStatus"),
+    rulesets: EXTRA_PROTECTION_RULESETS,
+    label: "Extra protection"
   },
   {
     checkbox: document.getElementById("filterSecurity"),
@@ -475,7 +489,7 @@ async function activateLicense() {
 }
 
 function wireCoreFilters() {
-  CORE_RULESETS.forEach((entry) => {
+  FILTER_TOGGLES.forEach((entry) => {
     if (!entry.checkbox) return;
     entry.checkbox.addEventListener("change", async (event) => {
       const enabled = Boolean(event.target.checked);
@@ -519,14 +533,29 @@ async function refreshRulesets() {
   renderCoreFilterStatus();
 }
 
+function getToggleActivityState(entry) {
+  const enabledCount = entry.rulesets.reduce((count, id) =>
+    count + (enabledRulesets.has(id) ? 1 : 0), 0);
+  return {
+    enabledCount,
+    active: enabledCount === entry.rulesets.length,
+    partial: enabledCount !== 0 && enabledCount !== entry.rulesets.length
+  };
+}
+
 function renderCoreFilterStatus() {
-  CORE_RULESETS.forEach((entry) => {
+  FILTER_TOGGLES.forEach((entry) => {
     if (!entry.checkbox) return;
-    const active = entry.rulesets.every((id) => enabledRulesets.has(id));
+    const { active, partial } = getToggleActivityState(entry);
     entry.checkbox.checked = active;
+    entry.checkbox.indeterminate = partial;
     if (entry.statusEl) {
-      entry.statusEl.textContent = active ? t("uiActive") : t("uiDisabled");
-      entry.statusEl.className = `toggle-status ${active ? "ok" : "muted"}`;
+      entry.statusEl.textContent = active
+        ? t("uiActive")
+        : partial
+          ? t("uiPartial")
+          : t("uiDisabled");
+      entry.statusEl.className = `toggle-status ${active ? "ok" : partial ? "warn" : "muted"}`;
     }
   });
 }

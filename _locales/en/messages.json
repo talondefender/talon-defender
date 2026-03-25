@@ -632,5 +632,14 @@
   },
   "licenseUseThisDeviceButton": {
     "message": "Use this computer"
+  },
+  "optionsFilterExtraProtectionLabel": {
+    "message": "Extra protection"
+  },
+  "optionsFilterExtraProtectionNote": {
+    "message": "Blocks more cookie notices, signup pop-ups, notification prompts, social widgets, and other annoyances."
+  },
+  "uiPartial": {
+    "message": "Partially active"
   }
 }

@@ -632,5 +632,14 @@
   },
   "licenseUseThisDeviceButton": {
     "message": "Utiliser cet ordinateur"
+  },
+  "optionsFilterExtraProtectionLabel": {
+    "message": "Protection renforc?e"
+  },
+  "optionsFilterExtraProtectionNote": {
+    "message": "Bloque davantage de bandeaux cookies, fen?tres d'inscription, demandes de notifications, widgets sociaux et autres nuisances."
+  },
+  "uiPartial": {
+    "message": "Partiellement actif"
   }
 }

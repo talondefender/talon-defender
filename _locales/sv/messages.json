@@ -632,5 +632,14 @@
   },
   "licenseUseThisDeviceButton": {
     "message": "Använd den här datorn"
+  },
+  "optionsFilterExtraProtectionLabel": {
+    "message": "Extra skydd"
+  },
+  "optionsFilterExtraProtectionNote": {
+    "message": "Blockerar fler cookie-meddelanden, registreringsrutor, notisf?rfr?gningar, sociala widgetar och andra st?rningar."
+  },
+  "uiPartial": {
+    "message": "Delvis aktiv"
   }
 }

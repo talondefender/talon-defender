@@ -36,6 +36,13 @@ const EXPECTED_BUNDLED_IDS = [
   'ublock-badware',
   'urlhaus-full',
 ];
+const EXPECTED_EXTRA_PROTECTION_IDS = [
+  'annoyances-cookies',
+  'annoyances-notifications',
+  'annoyances-others',
+  'annoyances-social',
+  'annoyances-widgets',
+];
 
 const readJson = async relativePath => {
   const absUrl = new URL(relativePath, import.meta.url);
@@ -242,4 +249,41 @@ test('complete mode annoyance pack includes the full bundled annoyance family se
   assert.equal(ids.every(id => bundledIds.has(id)), true);
   assert.match(backgroundSource, /ANNOYANCE_RULESET_IDS\.every/);
   assert.match(backgroundSource, /enabledBefore\.concat\(ANNOYANCE_RULESET_IDS\)/);
+});
+
+test('options extra protection toggle targets the bundled non-default annoyance packs', async () => {
+  const optionsSource = await readText('../options/options.js');
+  const optionsHtml = await readText('../options/options.html');
+  const match = /const EXTRA_PROTECTION_RULESETS = \[([\s\S]*?)\];/.exec(optionsSource);
+
+  assert.ok(match, 'EXTRA_PROTECTION_RULESETS declaration should exist');
+  const ids = Array.from(match[1].matchAll(/'([^']+)'|"([^"]+)"/g), entry => entry[1] || entry[2]);
+  assert.deepEqual(ids, EXPECTED_EXTRA_PROTECTION_IDS);
+  assert.equal(ids.every(id => EXPECTED_BUNDLED_IDS.includes(id)), true);
+  assert.match(optionsHtml, /id="filterExtraProtection"/);
+});
+
+test('all bundled locales define extra protection toggle strings', async () => {
+  const localesDir = path.join(repoRoot, '_locales');
+  const localeEntries = await fs.readdir(localesDir, { withFileTypes: true });
+  const locales = localeEntries
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+    .sort();
+
+  for (const locale of locales) {
+    const messages = await readJson(`../_locales/${locale}/messages.json`);
+    for (const key of [
+      'optionsFilterExtraProtectionLabel',
+      'optionsFilterExtraProtectionNote',
+      'uiPartial',
+    ]) {
+      assert.equal(
+        typeof messages?.[key]?.message,
+        'string',
+        `${locale} should define ${key}`
+      );
+      assert.notEqual(messages[key].message.trim(), '', `${locale} should not leave ${key} empty`);
+    }
+  }
 });
