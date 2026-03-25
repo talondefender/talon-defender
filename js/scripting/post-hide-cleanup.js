@@ -7,6 +7,11 @@ const runtime = self.browser?.runtime || self.chrome?.runtime;
 const guard = self.TalonBreakageGuard;
 if ( runtime === undefined ) { return; }
 
+if ( self.TalonPostHideCleanupController ) {
+    self.TalonPostHideCleanupController.refresh().catch(( ) => {});
+    return;
+}
+
 const hostname = (self.location?.hostname || '').toLowerCase();
 if ( hostname === '' ) { return; }
 
@@ -280,8 +285,8 @@ const CANDIDATE_SELECTORS = [
 ];
 const selectorText = CANDIDATE_SELECTORS.join(',');
 
-const pending = [];
-const seen = new WeakSet();
+let pending = [];
+let seen = new WeakSet();
 let pendingIndex = 0;
 
 const enqueue = el => {
@@ -403,14 +408,51 @@ const observer = new MutationObserver(mutations => {
     scheduleProcess();
 });
 
-(async ( ) => {
+let observerConnected = false;
+
+const resetState = ( ) => {
+    pending = [];
+    seen = new WeakSet();
+    pendingIndex = 0;
+};
+
+const stop = async ( ) => {
+    if ( observerConnected ) {
+        observer.disconnect();
+        observerConnected = false;
+    }
+    if ( processTimer !== undefined ) {
+        try { self.cancelAnimationFrame(processTimer); } catch { }
+        processTimer = undefined;
+    }
+    if ( shadowScanTimer !== undefined ) {
+        try { clearTimeout(shadowScanTimer); } catch { }
+        shadowScanTimer = undefined;
+    }
+    resetState();
+};
+
+const refresh = async ( ) => {
     await guard?.whenReady?.();
-    if ( guard?.shouldRunSubsystem?.('postHideCleanup') === false ) { return; }
+    if ( guard?.shouldRunSubsystem?.('postHideCleanup') === false ) {
+        await stop();
+        return { applied: false };
+    }
+    await stop();
     collect(document);
     scheduleShadowScan(0);
     scheduleProcess();
     observer.observe(document, { childList: true, subtree: true });
-})();
+    observerConnected = true;
+    return { applied: true };
+};
+
+self.TalonPostHideCleanupController = {
+    refresh,
+    stop,
+};
+
+self.TalonPostHideCleanupController.refresh().catch(( ) => {});
 
 })();
 

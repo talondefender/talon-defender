@@ -4,11 +4,18 @@
 (function uBOL_remoteCosmetics() {
 
 const STORAGE_KEY = 'communityBundleCosmetics';
+const MAX_CHUNK_CSS_LENGTH = 110000;
+const CSS_RULE_SUFFIX = '{display:none!important;visibility:hidden!important;}';
 
 const runtime = self.browser?.runtime || self.chrome?.runtime;
 const storage = self.browser?.storage?.local || self.chrome?.storage?.local;
 const guard = self.TalonBreakageGuard;
 if ( runtime?.sendMessage === undefined || storage?.get === undefined ) { return; }
+
+if ( self.TalonRemoteCosmeticsController ) {
+    self.TalonRemoteCosmeticsController.refresh().catch(( ) => {});
+    return;
+}
 
 const hostname = (self.location?.hostname || '').toLowerCase();
 if ( hostname === '' ) { return; }
@@ -36,12 +43,16 @@ const patternMatchesHostname = (pattern, hn) => {
     return hn === p || hn.endsWith(`.${p}`);
 };
 
-const insertCSS = css => {
+const sendMessage = message => {
     try {
-        runtime.sendMessage({ what: 'insertCSS', css }).catch(( ) => {});
+        return runtime.sendMessage(message).catch(( ) => {});
     } catch {
     }
+    return Promise.resolve();
 };
+
+const insertCSS = css => sendMessage({ what: 'insertCSS', css });
+const removeCSS = css => sendMessage({ what: 'removeCSS', css });
 
 const getCosmetics = ( ) => {
     try {
@@ -70,16 +81,93 @@ const normalizeSelectors = selectors => {
         if ( seen.has(s) ) { continue; }
         seen.add(s);
         out.push(s);
-        if ( out.length >= 400 ) { break; }
     }
     return out;
 };
 
-(async ( ) => {
+const buildCssChunks = selectors => {
+    const chunks = [];
+    let droppedAtApply = 0;
+    let currentSelectors = [];
+    let currentLength = CSS_RULE_SUFFIX.length;
+
+    const flush = ( ) => {
+        if ( currentSelectors.length === 0 ) { return; }
+        chunks.push(`${currentSelectors.join(',')}${CSS_RULE_SUFFIX}`);
+        currentSelectors = [];
+        currentLength = CSS_RULE_SUFFIX.length;
+    };
+
+    for ( const selector of selectors ) {
+        if ( typeof selector !== 'string' || selector === '' ) { continue; }
+        const selectorLength = selector.length + (currentSelectors.length === 0 ? 0 : 1);
+        if ( currentSelectors.length !== 0 &&
+            (currentLength + selectorLength) > MAX_CHUNK_CSS_LENGTH ) {
+            flush();
+        }
+        if ( (CSS_RULE_SUFFIX.length + selector.length) > MAX_CHUNK_CSS_LENGTH ) {
+            droppedAtApply += 1;
+            continue;
+        }
+        currentSelectors.push(selector);
+        currentLength += selectorLength;
+    }
+
+    flush();
+
+    return { chunks, droppedAtApply };
+};
+
+let currentCssChunks = [];
+
+const clearAppliedCss = async ( ) => {
+    if ( currentCssChunks.length === 0 ) { return; }
+    const removeChunks = currentCssChunks.slice();
+    currentCssChunks = [];
+    await Promise.all(removeChunks.map(css => removeCSS(css)));
+};
+
+const applyCurrentCosmetics = async ( ) => {
     await guard?.whenReady?.();
-    if ( guard?.shouldRunSubsystem?.('remoteCosmetics') === false ) { return; }
+    if ( guard?.shouldRunSubsystem?.('remoteCosmetics') === false ) {
+        await clearAppliedCss();
+        await sendMessage({
+            what: 'recordRemoteCosmeticsRuntimeStats',
+            hostname,
+            chunkCount: 0,
+            selectorCount: 0,
+            hostSpecificSelectorCount: 0,
+            droppedAtApply: 0,
+        });
+        return {
+            applied: false,
+            chunkCount: 0,
+            selectorCount: 0,
+            hostSpecificSelectorCount: 0,
+            droppedAtApply: 0,
+        };
+    }
+
     const cosmetics = await getCosmetics();
-    if ( cosmetics instanceof Object === false ) { return; }
+    if ( cosmetics instanceof Object === false ) {
+        await clearAppliedCss();
+        await sendMessage({
+            what: 'recordRemoteCosmeticsRuntimeStats',
+            hostname,
+            chunkCount: 0,
+            selectorCount: 0,
+            hostSpecificSelectorCount: 0,
+            droppedAtApply: 0,
+        });
+        return {
+            applied: false,
+            chunkCount: 0,
+            selectorCount: 0,
+            hostSpecificSelectorCount: 0,
+            droppedAtApply: 0,
+        };
+    }
+
     const selectors = [];
     const hostSpecific = new Set();
 
@@ -90,8 +178,10 @@ const normalizeSelectors = selectors => {
     const hosts = cosmetics.hosts;
     if ( hosts instanceof Object ) {
         for ( const [ hostPattern, hostSelectors ] of Object.entries(hosts) ) {
-            if ( patternMatchesHostname(hostPattern, hostname) === false &&
-                 patternMatchesHostname(hostPattern, pageDomain) === false ) {
+            if (
+                patternMatchesHostname(hostPattern, hostname) === false &&
+                patternMatchesHostname(hostPattern, pageDomain) === false
+            ) {
                 continue;
             }
             if ( Array.isArray(hostSelectors) ) {
@@ -109,22 +199,55 @@ const normalizeSelectors = selectors => {
             hostSpecific: hostSpecific.has(selector),
         }) !== false
     );
-    if ( normalized.length === 0 ) { return; }
+    const { chunks, droppedAtApply } = buildCssChunks(normalized);
 
-    insertCSS(`${normalized.join(',')}{display:none!important;visibility:hidden!important;}`);
-    guard?.auditAfterMutation?.('remote-cosmetics');
+    if ( JSON.stringify(currentCssChunks) !== JSON.stringify(chunks) ) {
+        await clearAppliedCss();
+        if ( chunks.length !== 0 ) {
+            await Promise.all(chunks.map(css => insertCSS(css)));
+        }
+        currentCssChunks = chunks.slice();
+    }
 
     const hostSpecificNormalized = normalized.filter(selector => hostSpecific.has(selector));
+    await sendMessage({
+        what: 'recordRemoteCosmeticsRuntimeStats',
+        hostname,
+        chunkCount: chunks.length,
+        selectorCount: normalized.length,
+        hostSpecificSelectorCount: hostSpecificNormalized.length,
+        droppedAtApply,
+    });
+
     if ( hostSpecificNormalized.length >= 3 && guard?.isProtectedSurface?.() !== true ) {
-        try {
-            runtime.sendMessage({
-                what: 'promoteGenericHigh',
-                hostname: pageDomain || hostname,
-            }).catch(( ) => {});
-        } catch {
-        }
+        await sendMessage({
+            what: 'promoteGenericHigh',
+            hostname: pageDomain || hostname,
+        });
     }
-})();
+
+    return {
+        applied: chunks.length !== 0,
+        chunkCount: chunks.length,
+        selectorCount: normalized.length,
+        hostSpecificSelectorCount: hostSpecificNormalized.length,
+        droppedAtApply,
+    };
+};
+
+self.TalonRemoteCosmeticsController = {
+    refresh() {
+        return applyCurrentCosmetics();
+    },
+    clear() {
+        return clearAppliedCss();
+    },
+    stop() {
+        return clearAppliedCss();
+    },
+};
+
+self.TalonRemoteCosmeticsController.refresh().catch(( ) => {});
 
 })();
 

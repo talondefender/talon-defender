@@ -60,12 +60,21 @@ export const createEmptyCommunityRuleActionCounts = () => ({
     allowAllRequests: 0,
 });
 
+export const createEmptyCommunityRuleQuotaClassCounts = () => ({
+    exactExceptions: 0,
+    exactRedirects: 0,
+    exactBlocks: 0,
+    broadBlocks: 0,
+    regexBlocks: 0,
+});
+
 export const createEmptyCommunityRuleDroppedCounts = () => ({
     unsupportedAction: 0,
     unsafeScope: 0,
     unsupportedRedirectPath: 0,
     quota: 0,
     regexUnsupported: 0,
+    quotaByClass: createEmptyCommunityRuleQuotaClassCounts(),
 });
 
 export const normalizeCommunityRuleSchemaVersion = value => {
@@ -160,6 +169,30 @@ const normalizeRedirectExtensionPath = value => {
     const trimmed = value.trim();
     if ( trimmed === '' ) { return ''; }
     return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+};
+
+export const classifyCommunityRuleQuotaClass = rule => {
+    if ( rule instanceof Object === false ) { return 'broadBlocks'; }
+    if ( rule.condition?.regexFilter !== undefined ) { return 'regexBlocks'; }
+    const actionType = typeof rule.action?.type === 'string'
+        ? rule.action.type
+        : '';
+    if ( actionType === 'allow' || actionType === 'allowAllRequests' ) {
+        return 'exactExceptions';
+    }
+    if ( actionType === 'redirect' ) {
+        return 'exactRedirects';
+    }
+    const requestDomains = Array.isArray(rule.condition?.requestDomains)
+        ? rule.condition.requestDomains
+        : [];
+    const initiatorDomains = Array.isArray(rule.condition?.initiatorDomains)
+        ? rule.condition.initiatorDomains
+        : [];
+    if ( requestDomains.length !== 0 || initiatorDomains.length !== 0 ) {
+        return 'exactBlocks';
+    }
+    return 'broadBlocks';
 };
 
 const sanitizeBlockRule = rule => {
@@ -392,8 +425,10 @@ export const sanitizeCommunityRules = (
         }
         const { actionType } = result;
         if ( EXCEPTION_ACTIONS.has(actionType) ) {
+            const quotaClass = classifyCommunityRuleQuotaClass(result.rule);
             if ( exceptionCount >= COMMUNITY_EXCEPTION_RULES_MAX ) {
                 dropped.quota += 1;
+                dropped.quotaByClass[quotaClass] += 1;
                 continue;
             }
             if (
@@ -401,6 +436,7 @@ export const sanitizeCommunityRules = (
                 allowAllRequestsCount >= COMMUNITY_ALLOW_ALL_REQUESTS_MAX
             ) {
                 dropped.quota += 1;
+                dropped.quotaByClass[quotaClass] += 1;
                 continue;
             }
             exceptionCount += 1;

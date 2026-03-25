@@ -3,11 +3,15 @@
 // Isolate from global scope
 (function uBOL_breakageGuard() {
 
-if ( self.TalonBreakageGuard ) { return; }
+if ( self.TalonBreakageGuard ) {
+    self.TalonBreakageGuard.refresh?.();
+    return;
+}
 
 const runtime = self.browser?.runtime || self.chrome?.runtime;
 const storage = self.browser?.storage?.local || self.chrome?.storage?.local;
 const siteKeyResolver = self.TalonSiteKeyResolver;
+const SUBSYSTEM_BACKOFFS_KEY = 'autoBackoffSubsystemsV1';
 
 const RISK_TIERS = Object.freeze({
     low: 1,
@@ -139,6 +143,7 @@ const classifyProtection = () => {
 
 let protection = classifyProtection();
 let auditOverrides = { global: {}, hosts: {} };
+let subsystemBackoffs = {};
 let readyPromise;
 
 const readLocalValue = key => {
@@ -164,9 +169,25 @@ const loadOverrides = async () => {
     auditOverrides = stored instanceof Object ? stored : { global: {}, hosts: {} };
 };
 
+const loadSubsystemBackoffs = async () => {
+    const stored = await readLocalValue(SUBSYSTEM_BACKOFFS_KEY);
+    subsystemBackoffs = stored instanceof Object ? stored : {};
+};
+
 const whenReady = () => {
     if ( readyPromise !== undefined ) { return readyPromise; }
-    readyPromise = loadOverrides().catch(() => { });
+    readyPromise = Promise.all([
+        loadOverrides(),
+        loadSubsystemBackoffs(),
+    ]).catch(() => { });
+    return readyPromise;
+};
+
+const refresh = () => {
+    readyPromise = Promise.all([
+        loadOverrides(),
+        loadSubsystemBackoffs(),
+    ]).catch(() => { });
     return readyPromise;
 };
 
@@ -184,6 +205,16 @@ const resolveAuditOverride = subsystemId => {
         return auditOverrides.global[subsystemId];
     }
     return undefined;
+};
+
+const isSubsystemSuppressed = subsystemId => {
+    if ( typeof subsystemId !== 'string' || subsystemId === '' ) { return false; }
+    const byHost = subsystemBackoffs instanceof Object
+        ? subsystemBackoffs[hostname]
+        : undefined;
+    const entry = byHost instanceof Object ? byHost[subsystemId] : undefined;
+    const expiresAt = Number(entry?.expiresAt) || 0;
+    return expiresAt > Date.now();
 };
 
 const isVisible = el => {
@@ -283,6 +314,21 @@ const isLikelyPrimaryContent = el => {
 
 const reportBreakageSignal = (signal, details = {}) => {
     if ( runtime?.sendMessage === undefined ) { return; }
+    const normalizedDetails = details instanceof Object ? { ...details } : {};
+    if ( typeof normalizedDetails.subsystem !== 'string' || normalizedDetails.subsystem === '' ) {
+        const source = typeof normalizedDetails.source === 'string'
+            ? normalizedDetails.source
+            : '';
+        if ( source.startsWith('native-heuristics') ) {
+            normalizedDetails.subsystem = 'nativeHeuristics';
+        } else if ( source.startsWith('automation') ) {
+            normalizedDetails.subsystem = 'automation';
+        } else if ( source.startsWith('remote-cosmetics') ) {
+            normalizedDetails.subsystem = 'remoteCosmetics';
+        } else if ( source.startsWith('post-hide-cleanup') ) {
+            normalizedDetails.subsystem = 'postHideCleanup';
+        }
+    }
     const signalKey = `${signal}:${details.reason || ''}:${details.selector || ''}`;
     if ( reportBreakageSignal.seen.has(signalKey) ) { return; }
     reportBreakageSignal.seen.add(signalKey);
@@ -291,7 +337,8 @@ const reportBreakageSignal = (signal, details = {}) => {
             what: 'reportBreakageSignal',
             hostname,
             signal,
-            details,
+            subsystem: normalizedDetails.subsystem || '',
+            details: normalizedDetails,
         }).catch(() => {});
     } catch {
     }
@@ -526,9 +573,11 @@ self.TalonBreakageGuard = {
     registrableDomain,
     getSiteKey: registrableDomain,
     whenReady,
+    refresh,
     shouldRunSubsystem(subsystemId) {
         const override = resolveAuditOverride(subsystemId);
-        return override !== false;
+        if ( override === false ) { return false; }
+        return isSubsystemSuppressed(subsystemId) === false;
     },
     isProtectedSurface() {
         return protection.allowedRiskTier < RISK_TIERS.high;
@@ -544,6 +593,7 @@ self.TalonBreakageGuard = {
     filterSelectors,
     shouldAllowDirective,
     shouldAllowRemoteCosmeticSelector,
+    isSubsystemSuppressed,
     auditAfterMutation,
     reportBreakageSignal,
 };

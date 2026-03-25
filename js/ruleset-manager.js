@@ -44,6 +44,7 @@ import { getAdminRulesets } from './admin.js';
 import { hasBroadHostPermissions } from './utils.js';
 import { rulesFromText } from './dnr-parser.js';
 import {
+    classifyCommunityRuleQuotaClass,
     COMMUNITY_RULE_SCHEMA_VERSION_LEGACY,
     createEmptyCommunityRuleActionCounts,
     normalizeCommunityRuleSchemaVersion,
@@ -69,6 +70,36 @@ const COMMUNITY_RESERVED_HEADROOM = 250;
 
 let dynamicRegexCount = 0;
 let sessionRegexCount = 0;
+
+const COMMUNITY_RULE_QUOTA_CLASS_PRIORITY = Object.freeze({
+    exactExceptions: 0,
+    exactRedirects: 1,
+    exactBlocks: 2,
+    broadBlocks: 3,
+    regexBlocks: 4,
+});
+
+/******************************************************************************/
+
+const prioritizeCommunityRulesForQuota = rules => rules
+    .slice()
+    .sort((a, b) => {
+        const left = COMMUNITY_RULE_QUOTA_CLASS_PRIORITY[
+            classifyCommunityRuleQuotaClass(a)
+        ] ?? COMMUNITY_RULE_QUOTA_CLASS_PRIORITY.broadBlocks;
+        const right = COMMUNITY_RULE_QUOTA_CLASS_PRIORITY[
+            classifyCommunityRuleQuotaClass(b)
+        ] ?? COMMUNITY_RULE_QUOTA_CLASS_PRIORITY.broadBlocks;
+        return left - right;
+    });
+
+const recordCommunityQuotaDrop = (dropped, rule) => {
+    dropped.quota += 1;
+    const quotaClass = classifyCommunityRuleQuotaClass(rule);
+    if ( dropped?.quotaByClass?.[quotaClass] !== undefined ) {
+        dropped.quotaByClass[quotaClass] += 1;
+    }
+};
 
 /******************************************************************************/
 
@@ -741,7 +772,7 @@ async function updateCommunityRules(rulesIn = [], bundleMeta = {}) {
     const schemaVersion = normalizeCommunityRuleSchemaVersion(bundleMeta?.schemaVersion) ||
         COMMUNITY_RULE_SCHEMA_VERSION_LEGACY;
     const sanitized = sanitizeCommunityRules(rulesIn, { schemaVersion });
-    const safeRules = sanitized.rules.slice();
+    const safeRules = prioritizeCommunityRulesForQuota(sanitized.rules);
     const dropped = Object.assign(
         sanitized.dropped,
         { regexUnsupported: sanitized.dropped.regexUnsupported || 0 }
@@ -775,7 +806,9 @@ async function updateCommunityRules(rulesIn = [], bundleMeta = {}) {
     let availableRegex = maxRegexDynamic - baseDynamicRegexCount;
     if ( availableRegex < 0 ) { availableRegex = 0; }
     if ( validRegexRules.length > availableRegex ) {
-        dropped.quota += validRegexRules.length - availableRegex;
+        for ( const droppedRule of validRegexRules.slice(availableRegex) ) {
+            recordCommunityQuotaDrop(dropped, droppedRule);
+        }
         validRegexRules.length = availableRegex;
     }
 
@@ -786,7 +819,7 @@ async function updateCommunityRules(rulesIn = [], bundleMeta = {}) {
         if ( regex === '' ) { continue; }
         rejectedRegexCounts.set(regex, (rejectedRegexCounts.get(regex) || 0) + 1);
     }
-    const filtered = [];
+    let filtered = [];
     for ( const rule of safeRules ) {
         if ( rule instanceof Object === false ) { continue; }
         if ( rule.condition?.regexFilter !== undefined ) {
@@ -814,7 +847,9 @@ async function updateCommunityRules(rulesIn = [], bundleMeta = {}) {
 
     const maxToAdd = Math.min(available, COMMUNITY_RULES_MAX);
     if ( filtered.length > maxToAdd ) {
-        dropped.quota += filtered.length - maxToAdd;
+        for ( const droppedRule of filtered.slice(maxToAdd) ) {
+            recordCommunityQuotaDrop(dropped, droppedRule);
+        }
         filtered.length = maxToAdd;
     }
 

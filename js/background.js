@@ -68,8 +68,10 @@ import {
 } from './entitlement-logic.js';
 import {
     AUTO_BACKOFF_SIGNAL_WINDOW_MS,
+    BREAKAGE_SUBSYSTEM_IDS,
     getDowngradedFilteringMode,
     mergeBreakageEvidenceEntry,
+    normalizeBreakageSubsystem,
     normalizeHttpHostname,
     sanitizeBreakageDetails,
     shouldTriggerSignalBackoff,
@@ -87,20 +89,43 @@ import {
     YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY,
     sanitizeBreakageAuditOverrides,
 } from './breakage-policy.js';
-import { normalizeAutoPromotedHostname } from './site-key.js';
+import {
+    normalizeAutoPromotedHostname,
+    normalizeSiteKeyHostname,
+} from './site-key.js';
 
 const AUTO_BACKOFF_STORAGE_KEY = 'autoBackoffHostsV1';
 const AUTO_BACKOFF_EVIDENCE_STORAGE_KEY = 'autoBackoffEvidenceV1';
+const AUTO_BACKOFF_SUBSYSTEMS_STORAGE_KEY = 'autoBackoffSubsystemsV1';
 const AUTO_BACKOFF_ALARM = 'auto-backoff-restore';
 const AUTO_BACKOFF_TTL_MS = 60 * 60 * 1000;
 const AUTO_BACKOFF_WINDOW_MS = 2 * 60 * 1000;
 const AUTO_BACKOFF_MIN_ERRORS = 2;
 const AUTO_BACKOFF_ERROR_RE = /ERR_BLOCKED_BY_CLIENT/i;
+const AUTO_PROMOTION_STATE_KEY = 'autoPromotionStateV2';
+const AUTO_PROMOTION_ALARM = 'auto-promotion-expire';
+const AUTO_PROMOTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const REMOTE_COSMETICS_RUNTIME_STATS_KEY = 'remoteCosmeticsRuntimeStatsV1';
+const REMOTE_COSMETICS_RUNTIME_STATS_TTL_MS = 24 * 60 * 60 * 1000;
+const LIVE_RUNTIME_REFRESH_FILES = Object.freeze([
+    '/shared/site-key-resolver.js',
+    '/js/scripting/breakage-guard.js',
+    '/js/scripting/remote-cosmetics.js',
+    '/js/scripting/native-heuristics.js',
+    '/js/scripting/automation.js',
+    '/js/scripting/post-hide-cleanup.js',
+]);
 
 const autoBackoffCounts = new Map();
 const autoBackoffSignalCounts = new Map();
 let autoBackoffState = new Map();
 let autoBackoffEvidence = new Map();
+let autoBackoffSubsystemState = new Map();
+let autoPromotionState = {
+    genericHigh: new Map(),
+    complete: new Map(),
+};
+let remoteCosmeticsRuntimeStats = {};
 
 const serializeAutoBackoffState = () => {
     const out = {};
@@ -118,6 +143,44 @@ const serializeAutoBackoffEvidence = () => {
     return out;
 };
 
+const serializeAutoBackoffSubsystemState = ({ activeOnly = false } = {}) => {
+    const now = Date.now();
+    const out = {};
+    for ( const [hostname, subsystems] of autoBackoffSubsystemState ) {
+        if ( subsystems instanceof Map === false || subsystems.size === 0 ) { continue; }
+        const serialized = {};
+        for ( const [subsystemId, entry] of subsystems ) {
+            const expiresAt = Number(entry?.expiresAt) || 0;
+            if ( activeOnly && expiresAt <= now ) { continue; }
+            serialized[subsystemId] = { expiresAt };
+        }
+        if ( Object.keys(serialized).length === 0 ) { continue; }
+        out[hostname] = serialized;
+    }
+    return out;
+};
+
+const serializeAutoPromotionState = () => {
+    const serializePromotionMap = map => {
+        const out = {};
+        for ( const [hostname, entry] of map ) {
+            const lastHitAt = Number(entry?.lastHitAt) || 0;
+            if ( lastHitAt <= 0 ) { continue; }
+            out[hostname] = { lastHitAt };
+        }
+        return out;
+    };
+    return {
+        genericHigh: serializePromotionMap(autoPromotionState.genericHigh),
+        complete: serializePromotionMap(autoPromotionState.complete),
+    };
+};
+
+const createEmptyAutoPromotionState = () => ({
+    genericHigh: new Map(),
+    complete: new Map(),
+});
+
 const scheduleAutoBackoffAlarm = () => {
     if (browser?.alarms?.create === undefined) { return; }
     let nextExpiry = Infinity;
@@ -127,12 +190,45 @@ const scheduleAutoBackoffAlarm = () => {
             nextExpiry = expiresAt;
         }
     }
+    for ( const subsystems of autoBackoffSubsystemState.values() ) {
+        if ( subsystems instanceof Map === false ) { continue; }
+        for ( const entry of subsystems.values() ) {
+            const expiresAt = Number(entry?.expiresAt) || 0;
+            if ( expiresAt > 0 && expiresAt < nextExpiry ) {
+                nextExpiry = expiresAt;
+            }
+        }
+    }
     if (Number.isFinite(nextExpiry) === false) {
         browser.alarms?.clear?.(AUTO_BACKOFF_ALARM);
         return;
     }
     const when = Math.max(Date.now() + 1000, nextExpiry);
     browser.alarms.create(AUTO_BACKOFF_ALARM, { when });
+};
+
+const scheduleAutoPromotionAlarm = () => {
+    if ( browser?.alarms?.create === undefined ) { return; }
+    let nextExpiry = Infinity;
+    for ( const promotionMap of [
+        autoPromotionState.genericHigh,
+        autoPromotionState.complete,
+    ] ) {
+        for ( const entry of promotionMap.values() ) {
+            const lastHitAt = Number(entry?.lastHitAt) || 0;
+            if ( lastHitAt <= 0 ) { continue; }
+            const expiresAt = lastHitAt + AUTO_PROMOTION_TTL_MS;
+            if ( expiresAt < nextExpiry ) {
+                nextExpiry = expiresAt;
+            }
+        }
+    }
+    if ( Number.isFinite(nextExpiry) === false ) {
+        browser.alarms?.clear?.(AUTO_PROMOTION_ALARM);
+        return;
+    }
+    const when = Math.max(Date.now() + 1000, nextExpiry);
+    browser.alarms.create(AUTO_PROMOTION_ALARM, { when });
 };
 
 const persistAutoBackoffState = async () => {
@@ -149,6 +245,42 @@ const persistAutoBackoffEvidence = async () => {
         return;
     }
     await localWrite(AUTO_BACKOFF_EVIDENCE_STORAGE_KEY, serializeAutoBackoffEvidence());
+};
+
+const persistAutoBackoffSubsystemState = async () => {
+    const serialized = serializeAutoBackoffSubsystemState();
+    if ( Object.keys(serialized).length === 0 ) {
+        autoBackoffSubsystemState = new Map();
+        await localRemove(AUTO_BACKOFF_SUBSYSTEMS_STORAGE_KEY);
+        return;
+    }
+    await localWrite(AUTO_BACKOFF_SUBSYSTEMS_STORAGE_KEY, serialized);
+};
+
+const persistAutoPromotionState = async () => {
+    const serialized = serializeAutoPromotionState();
+    const hasGenericHigh = Object.keys(serialized.genericHigh).length !== 0;
+    const hasComplete = Object.keys(serialized.complete).length !== 0;
+    if ( hasGenericHigh === false && hasComplete === false ) {
+        await Promise.all([
+            localRemove(AUTO_PROMOTION_STATE_KEY),
+            localRemove(AUTO_GENERIC_HIGH_KEY),
+        ]);
+        return;
+    }
+    await Promise.all([
+        localWrite(AUTO_PROMOTION_STATE_KEY, serialized),
+        localWrite(AUTO_GENERIC_HIGH_KEY, Object.keys(serialized.genericHigh)),
+    ]);
+};
+
+const persistRemoteCosmeticsRuntimeStats = async () => {
+    const entries = Object.entries(remoteCosmeticsRuntimeStats || {});
+    if ( entries.length === 0 ) {
+        await localRemove(REMOTE_COSMETICS_RUNTIME_STATS_KEY);
+        return;
+    }
+    await localWrite(REMOTE_COSMETICS_RUNTIME_STATS_KEY, remoteCosmeticsRuntimeStats);
 };
 
 const loadAutoBackoffState = async () => {
@@ -191,27 +323,113 @@ const loadAutoBackoffEvidence = async () => {
     }
 };
 
-const restoreExpiredAutoBackoffs = async () => {
-    if (autoBackoffState.size === 0) { return; }
-    const now = Date.now();
+const loadAutoBackoffSubsystemState = async () => {
+    const stored = await localRead(AUTO_BACKOFF_SUBSYSTEMS_STORAGE_KEY);
+    autoBackoffSubsystemState = new Map();
+    if ( stored instanceof Object === false ) { return; }
+    for ( const [hostname, subsystems] of Object.entries(stored) ) {
+        if ( typeof hostname !== 'string' || hostname.trim() === '' ) { continue; }
+        if ( subsystems instanceof Object === false ) { continue; }
+        const normalizedHostname = hostname.trim().toLowerCase();
+        const hostMap = new Map();
+        for ( const subsystemId of BREAKAGE_SUBSYSTEM_IDS ) {
+            const expiresAt = Number(subsystems?.[subsystemId]?.expiresAt) || 0;
+            if ( Number.isFinite(expiresAt) === false || expiresAt <= 0 ) { continue; }
+            hostMap.set(subsystemId, { expiresAt });
+        }
+        if ( hostMap.size === 0 ) { continue; }
+        autoBackoffSubsystemState.set(normalizedHostname, hostMap);
+    }
+};
+
+const loadAutoPromotionState = async () => {
+    const [
+        storedState,
+        legacyGenericHighHosts,
+    ] = await Promise.all([
+        localRead(AUTO_PROMOTION_STATE_KEY),
+        localRead(AUTO_GENERIC_HIGH_KEY),
+    ]);
+    autoPromotionState = createEmptyAutoPromotionState();
+    const loadPromotionMap = (input, targetMap) => {
+        if ( input instanceof Object === false ) { return; }
+        for ( const [hostname, entry] of Object.entries(input) ) {
+            const normalizedHostname = normalizeAutoPromotedHostname(hostname);
+            if ( normalizedHostname === '' ) { continue; }
+            const lastHitAt = Number(entry?.lastHitAt ?? entry?.ts ?? entry);
+            if ( Number.isFinite(lastHitAt) === false || lastHitAt <= 0 ) { continue; }
+            targetMap.set(normalizedHostname, { lastHitAt });
+        }
+    };
+    loadPromotionMap(storedState?.genericHigh, autoPromotionState.genericHigh);
+    loadPromotionMap(storedState?.complete, autoPromotionState.complete);
+    if (
+        autoPromotionState.genericHigh.size === 0 &&
+        Array.isArray(legacyGenericHighHosts)
+    ) {
+        const now = Date.now();
+        for ( const hostname of legacyGenericHighHosts ) {
+            const normalizedHostname = normalizeAutoPromotedHostname(hostname);
+            if ( normalizedHostname === '' ) { continue; }
+            autoPromotionState.genericHigh.set(normalizedHostname, { lastHitAt: now });
+        }
+        await persistAutoPromotionState();
+    }
+    scheduleAutoPromotionAlarm();
+};
+
+const loadRemoteCosmeticsRuntimeStats = async () => {
+    const stored = await localRead(REMOTE_COSMETICS_RUNTIME_STATS_KEY);
+    remoteCosmeticsRuntimeStats = stored instanceof Object
+        ? { ...stored }
+        : {};
+};
+
+const pruneExpiredSubsystemBackoffEntries = async (now = Date.now()) => {
     let changed = false;
+    for ( const [hostname, subsystems] of Array.from(autoBackoffSubsystemState.entries()) ) {
+        if ( subsystems instanceof Map === false ) {
+            autoBackoffSubsystemState.delete(hostname);
+            changed = true;
+            continue;
+        }
+        for ( const [subsystemId, entry] of Array.from(subsystems.entries()) ) {
+            const expiresAt = Number(entry?.expiresAt) || 0;
+            if ( expiresAt > now ) { continue; }
+            subsystems.delete(subsystemId);
+            changed = true;
+        }
+        if ( subsystems.size !== 0 ) { continue; }
+        autoBackoffSubsystemState.delete(hostname);
+        changed = true;
+    }
+    if ( changed ) {
+        await persistAutoBackoffSubsystemState();
+    }
+    return changed;
+};
+
+const restoreExpiredAutoBackoffs = async () => {
+    const now = Date.now();
+    let hostBackoffChanged = false;
     for (const [hostname, entry] of Array.from(autoBackoffState.entries())) {
         const expiresAt = Number(entry?.expiresAt) || 0;
         if (expiresAt > now) { continue; }
         const currentLevel = await getFilteringMode(hostname);
         if (Number(currentLevel) === Number(entry.downgradedLevel)) {
-            const restored = await setFilteringMode(hostname, entry.previousLevel);
-            if (restored === entry.previousLevel) {
-                registerInjectablesIfEntitled().catch(ubolErr);
-            }
+            await setFilteringMode(hostname, entry.previousLevel);
         }
         autoBackoffState.delete(hostname);
-        changed = true;
+        hostBackoffChanged = true;
     }
-    if (changed) {
+    if (hostBackoffChanged) {
         await persistAutoBackoffState();
     }
+    const subsystemChanged = await pruneExpiredSubsystemBackoffEntries(now);
     scheduleAutoBackoffAlarm();
+    if ( hostBackoffChanged || subsystemChanged ) {
+        await syncInjectablesAndRefreshTabs({ runtimeOnly: false });
+    }
 };
 
 const pruneStaleAutoBackoffEvidence = async () => {
@@ -228,19 +446,183 @@ const pruneStaleAutoBackoffEvidence = async () => {
     }
 };
 
-const applyAutoBackoff = async (hostname) => {
-    if (hostname === '') { return; }
+const pruneExpiredAutoPromotions = async (now = Date.now()) => {
+    let genericHighChanged = false;
+    let completeChanged = false;
+    for ( const [hostname, entry] of Array.from(autoPromotionState.genericHigh.entries()) ) {
+        const lastHitAt = Number(entry?.lastHitAt) || 0;
+        if ( lastHitAt > 0 && (lastHitAt + AUTO_PROMOTION_TTL_MS) > now ) { continue; }
+        autoPromotionState.genericHigh.delete(hostname);
+        genericHighChanged = true;
+    }
+    for ( const [hostname, entry] of Array.from(autoPromotionState.complete.entries()) ) {
+        const lastHitAt = Number(entry?.lastHitAt) || 0;
+        if ( lastHitAt > 0 && (lastHitAt + AUTO_PROMOTION_TTL_MS) > now ) { continue; }
+        autoPromotionState.complete.delete(hostname);
+        completeChanged = true;
+        const currentLevel = await getFilteringMode(hostname);
+        if ( currentLevel === MODE_COMPLETE ) {
+            await setFilteringMode(hostname, MODE_OPTIMAL);
+        }
+    }
+    if ( genericHighChanged || completeChanged ) {
+        await persistAutoPromotionState();
+        await syncInjectablesAndRefreshTabs({ runtimeOnly: false });
+    }
+    scheduleAutoPromotionAlarm();
+    return genericHighChanged || completeChanged;
+};
+
+const pruneStaleRemoteCosmeticsRuntimeStats = async (now = Date.now()) => {
+    let changed = false;
+    const next = {};
+    for ( const [hostname, entry] of Object.entries(remoteCosmeticsRuntimeStats || {}) ) {
+        const updatedAt = Number(entry?.updatedAt) || 0;
+        if ( updatedAt > 0 && (now - updatedAt) <= REMOTE_COSMETICS_RUNTIME_STATS_TTL_MS ) {
+            next[hostname] = entry;
+            continue;
+        }
+        changed = true;
+    }
+    remoteCosmeticsRuntimeStats = next;
+    if ( changed ) {
+        await persistRemoteCosmeticsRuntimeStats();
+    }
+};
+
+const getSubsystemBackoffMap = hostname => {
+    const normalizedHostname = normalizeSiteKeyHostname(hostname);
+    if ( normalizedHostname === '' ) { return null; }
+    let hostMap = autoBackoffSubsystemState.get(normalizedHostname);
+    if ( hostMap instanceof Map ) { return hostMap; }
+    hostMap = new Map();
+    autoBackoffSubsystemState.set(normalizedHostname, hostMap);
+    return hostMap;
+};
+
+const hasActiveSubsystemBackoff = (hostname, subsystemId, now = Date.now()) => {
+    const normalizedHostname = normalizeSiteKeyHostname(hostname);
+    const normalizedSubsystem = normalizeBreakageSubsystem(subsystemId);
+    if ( normalizedHostname === '' || normalizedSubsystem === '' ) { return false; }
+    const hostMap = autoBackoffSubsystemState.get(normalizedHostname);
+    const entry = hostMap instanceof Map ? hostMap.get(normalizedSubsystem) : undefined;
+    return (Number(entry?.expiresAt) || 0) > now;
+};
+
+const resetRemoteCosmeticsRuntimeStats = async () => {
+    remoteCosmeticsRuntimeStats = {};
+    await localRemove(REMOTE_COSMETICS_RUNTIME_STATS_KEY);
+};
+
+const recordRemoteCosmeticsRuntimeStats = async ({
+    hostname,
+    chunkCount = 0,
+    selectorCount = 0,
+    hostSpecificSelectorCount = 0,
+    droppedAtApply = 0,
+} = {}) => {
+    const normalizedHostname = normalizeSiteKeyHostname(hostname);
+    if ( normalizedHostname === '' ) { return; }
+    await pruneStaleRemoteCosmeticsRuntimeStats();
+    remoteCosmeticsRuntimeStats[normalizedHostname] = {
+        chunkCount: Math.max(0, Math.floor(Number(chunkCount) || 0)),
+        selectorCount: Math.max(0, Math.floor(Number(selectorCount) || 0)),
+        hostSpecificSelectorCount: Math.max(0, Math.floor(Number(hostSpecificSelectorCount) || 0)),
+        droppedAtApply: Math.max(0, Math.floor(Number(droppedAtApply) || 0)),
+        updatedAt: Date.now(),
+    };
+    await persistRemoteCosmeticsRuntimeStats();
+};
+
+const touchAutoPromotionState = async (kind, hostname) => {
+    const normalizedHostname = normalizeAutoPromotedHostname(hostname);
+    if ( normalizedHostname === '' ) { return ''; }
+    const targetMap = kind === 'complete'
+        ? autoPromotionState.complete
+        : autoPromotionState.genericHigh;
+    targetMap.set(normalizedHostname, { lastHitAt: Date.now() });
+    if ( kind !== 'complete' && targetMap.size > AUTO_GENERIC_HIGH_MAX ) {
+        const overflow = targetMap.size - AUTO_GENERIC_HIGH_MAX;
+        const oldest = Array.from(targetMap.entries())
+            .sort((a, b) => (Number(a[1]?.lastHitAt) || 0) - (Number(b[1]?.lastHitAt) || 0))
+            .slice(0, overflow);
+        for ( const [hostToDrop] of oldest ) {
+            targetMap.delete(hostToDrop);
+        }
+    }
+    await persistAutoPromotionState();
+    scheduleAutoPromotionAlarm();
+    return normalizedHostname;
+};
+
+const clearAutoPromotionStateForHostname = async (
+    hostname,
+    { revertComplete = false } = {}
+) => {
+    const normalizedHostname = normalizeAutoPromotedHostname(hostname);
+    if ( normalizedHostname === '' ) { return false; }
+    let changed = false;
+    if ( autoPromotionState.genericHigh.delete(normalizedHostname) ) {
+        changed = true;
+    }
+    const hadComplete = autoPromotionState.complete.delete(normalizedHostname);
+    changed = changed || hadComplete;
+    if ( hadComplete && revertComplete ) {
+        const currentLevel = await getFilteringMode(normalizedHostname);
+        if ( currentLevel === MODE_COMPLETE ) {
+            await setFilteringMode(normalizedHostname, MODE_OPTIMAL);
+        }
+    }
+    if ( changed ) {
+        await persistAutoPromotionState();
+        scheduleAutoPromotionAlarm();
+    }
+    return changed;
+};
+
+const applySubsystemBackoff = async (hostname, subsystemId) => {
+    const normalizedHostname = normalizeSiteKeyHostname(hostname);
+    const normalizedSubsystem = normalizeBreakageSubsystem(subsystemId);
+    if ( normalizedHostname === '' || normalizedSubsystem === '' ) { return 'invalid'; }
     const now = Date.now();
-    const existing = autoBackoffState.get(hostname);
+    const hostMap = getSubsystemBackoffMap(normalizedHostname);
+    const existing = hostMap?.get(normalizedSubsystem);
+    if ( existing && Number(existing.expiresAt) > now ) {
+        existing.expiresAt = now + AUTO_BACKOFF_TTL_MS;
+        hostMap.set(normalizedSubsystem, existing);
+        await persistAutoBackoffSubsystemState();
+        scheduleAutoBackoffAlarm();
+        return hostMap.size >= BREAKAGE_SUBSYSTEM_IDS.length
+            ? 'escalate'
+            : 'handled';
+    }
+    hostMap.set(normalizedSubsystem, {
+        expiresAt: now + AUTO_BACKOFF_TTL_MS,
+    });
+    await persistAutoBackoffSubsystemState();
+    scheduleAutoBackoffAlarm();
+    await clearAutoPromotionStateForHostname(normalizedHostname, {
+        revertComplete: true,
+    });
+    await syncInjectablesAndRefreshTabs({ runtimeOnly: true });
+    return 'handled';
+};
+
+const applyAutoBackoff = async (hostname) => {
+    const normalizedHostname = normalizeSiteKeyHostname(hostname);
+    if (normalizedHostname === '') { return; }
+    const now = Date.now();
+    const existing = autoBackoffState.get(normalizedHostname);
     if (existing && Number(existing.expiresAt) > now) {
         existing.expiresAt = now + AUTO_BACKOFF_TTL_MS;
-        autoBackoffState.set(hostname, existing);
+        autoBackoffState.set(normalizedHostname, existing);
         await persistAutoBackoffState();
         scheduleAutoBackoffAlarm();
+        await clearAutoPromotionStateForHostname(normalizedHostname);
         return;
     }
 
-    const beforeLevel = Number(await getFilteringMode(hostname));
+    const beforeLevel = Number(await getFilteringMode(normalizedHostname));
     const targetLevel = getDowngradedFilteringMode(
         beforeLevel,
         MODE_COMPLETE,
@@ -249,18 +631,18 @@ const applyAutoBackoff = async (hostname) => {
     );
     if (targetLevel === beforeLevel) { return; }
 
-    const afterLevel = await setFilteringMode(hostname, targetLevel);
+    const afterLevel = await setFilteringMode(normalizedHostname, targetLevel);
     if (afterLevel !== targetLevel) { return; }
 
-    registerInjectablesIfEntitled().catch(ubolErr);
-
-    autoBackoffState.set(hostname, {
+    autoBackoffState.set(normalizedHostname, {
         previousLevel: beforeLevel,
         downgradedLevel: targetLevel,
         expiresAt: now + AUTO_BACKOFF_TTL_MS,
     });
     await persistAutoBackoffState();
     scheduleAutoBackoffAlarm();
+    await clearAutoPromotionStateForHostname(normalizedHostname);
+    await syncInjectablesAndRefreshTabs({ runtimeOnly: false });
 };
 
 const recordBlockedNavigation = (hostname) => {
@@ -283,26 +665,56 @@ const recordBlockedNavigation = (hostname) => {
 const recordBreakageSignal = async (hostname, signal, details = {}) => {
     if (hostname === '' || typeof signal !== 'string' || signal.trim() === '') { return; }
     const normalizedSignal = signal.trim();
+    const normalizedHostname = normalizeSiteKeyHostname(hostname);
+    if ( normalizedHostname === '' ) { return; }
+    const normalizedDetails = sanitizeBreakageDetails(details);
+    const subsystem = normalizeBreakageSubsystem(
+        details?.subsystem ?? normalizedDetails.subsystem
+    );
     const now = Date.now();
     autoBackoffEvidence.set(
-        hostname,
-        mergeBreakageEvidenceEntry(autoBackoffEvidence.get(hostname), {
+        normalizedHostname,
+        mergeBreakageEvidenceEntry(autoBackoffEvidence.get(normalizedHostname), {
             signal: normalizedSignal,
-            details: sanitizeBreakageDetails(details),
+            details: normalizedDetails,
         }, now)
     );
     await persistAutoBackoffEvidence();
-    const counter = updateSignalCounter(autoBackoffSignalCounts, hostname, normalizedSignal, now);
+    const counter = updateSignalCounter(
+        autoBackoffSignalCounts,
+        normalizedHostname,
+        normalizedSignal,
+        now,
+        subsystem
+    );
     if ( shouldTriggerSignalBackoff(normalizedSignal, counter) ) {
-        await applyAutoBackoff(hostname);
+        if ( subsystem !== '' ) {
+            const subsystemResult = await applySubsystemBackoff(
+                normalizedHostname,
+                subsystem
+            );
+            if ( subsystemResult !== 'escalate' ) { return; }
+        }
+        await applyAutoBackoff(normalizedHostname);
     }
 };
 
 const initAutoBackoff = async () => {
     await loadAutoBackoffState();
     await loadAutoBackoffEvidence();
+    await loadAutoBackoffSubsystemState();
     await restoreExpiredAutoBackoffs();
     await pruneStaleAutoBackoffEvidence();
+};
+
+const initAutoPromotionState = async () => {
+    await loadAutoPromotionState();
+    await pruneExpiredAutoPromotions();
+};
+
+const initRuntimeDiagnosticsState = async () => {
+    await loadRemoteCosmeticsRuntimeStats();
+    await pruneStaleRemoteCosmeticsRuntimeStats();
 };
 
 if (chrome.webNavigation?.onErrorOccurred) {
@@ -527,7 +939,7 @@ let lastCommunityCleanupReason = '';
 
 const AUTO_GENERIC_HIGH_KEY = 'autoGenericHighHosts';
 const AUTO_GENERIC_HIGH_MAX = 200;
-const AUTO_PROMOTE_ENABLED = false;
+const AUTO_PROMOTE_ENABLED = true;
 const MAX_MESSAGE_CSS_LENGTH = 120000;
 const MAX_NAVIGATION_URL_LENGTH = 4096;
 const MAX_LICENSE_KEY_LENGTH = 512;
@@ -1800,6 +2212,94 @@ async function syncToolbarIconsForAllTabs() {
     await Promise.all(jobs);
 }
 
+function stopLiveRuntimeControllers() {
+    const controllerTargets = [
+        [ 'TalonRemoteCosmeticsController', [ 'stop', 'clear' ] ],
+        [ 'TalonNativeHeuristicsController', [ 'stop' ] ],
+        [ 'TalonAutomationController', [ 'stop' ] ],
+        [ 'TalonPostHideCleanupController', [ 'stop' ] ],
+    ];
+    const jobs = [];
+    for ( const [globalName, methods] of controllerTargets ) {
+        const controller = globalThis[globalName];
+        if ( controller instanceof Object === false ) { continue; }
+        let invoked = false;
+        for ( const method of methods ) {
+            if ( typeof controller[method] !== 'function' ) { continue; }
+            invoked = true;
+            try {
+                jobs.push(Promise.resolve(controller[method]()));
+            } catch {
+            }
+            break;
+        }
+        if ( invoked ) { continue; }
+    }
+    return Promise.all(jobs).then(() => true);
+}
+
+async function refreshRuntimeStateForTab(tabId, filteringLevel) {
+    if ( browser.scripting?.executeScript === undefined ) { return false; }
+    try {
+        if ( filteringLevel >= MODE_OPTIMAL ) {
+            await browser.scripting.executeScript({
+                files: LIVE_RUNTIME_REFRESH_FILES,
+                target: { tabId },
+            });
+            return true;
+        }
+        await browser.scripting.executeScript({
+            func: stopLiveRuntimeControllers,
+            target: { tabId },
+        });
+        return true;
+    } catch (reason) {
+        if ( isIgnorableRuntimeError(reason) === false ) {
+            ubolErr(`refreshRuntimeStateForTab/${reason}`);
+        }
+    }
+    return false;
+}
+
+async function refreshRuntimeStateForOpenTabs() {
+    if ( browser.tabs?.query === undefined ) { return false; }
+    let tabs = [];
+    try {
+        tabs = await browser.tabs.query({});
+    } catch (reason) {
+        ubolErr(`refreshRuntimeStateForOpenTabs/query/${reason}`);
+        return false;
+    }
+    const jobs = [];
+    for ( const tab of tabs || [] ) {
+        const tabId = Number.isInteger(tab?.id) ? tab.id : -1;
+        if ( tabId < 0 ) { continue; }
+        const hostname = normalizeHttpHostname(tab?.url || '');
+        if ( hostname === '' ) { continue; }
+        jobs.push(
+            getFilteringMode(hostname)
+                .then(level => refreshRuntimeStateForTab(tabId, Number(level) || MODE_NONE))
+                .catch(reason => {
+                    if ( isIgnorableRuntimeError(reason) === false ) {
+                        ubolErr(`refreshRuntimeStateForOpenTabs/${reason}`);
+                    }
+                    return false;
+                })
+        );
+    }
+    await Promise.all(jobs);
+    return true;
+}
+
+async function syncInjectablesAndRefreshTabs({ runtimeOnly = false } = {}) {
+    if ( isEntitled() === false ) { return false; }
+    if ( runtimeOnly || runtimeOnly === false ) {
+        await registerInjectablesIfEntitled().catch(ubolErr);
+    }
+    await refreshRuntimeStateForOpenTabs().catch(ubolErr);
+    return true;
+}
+
 function registerInjectablesIfEntitled() {
     if (isEntitled() === false) { return Promise.resolve(false); }
     return registerInjectables();
@@ -1824,7 +2324,8 @@ async function handleCommunitySyncResult(result) {
         lastCommunityCleanupReason = '';
     }
     if (result.requiresInjectableRefresh) {
-        await registerInjectablesIfEntitled().catch(ubolErr);
+        await resetRemoteCosmeticsRuntimeStats().catch(ubolErr);
+        await syncInjectablesAndRefreshTabs({ runtimeOnly: false }).catch(ubolErr);
     }
     return result;
 }
@@ -2084,22 +2585,8 @@ async function enforceEntitlement({ verify = false, forceVerify = false } = {}) 
 }
 
 async function addAutoGenericHighHost(hostname) {
-    const hn = normalizeAutoPromotedHostname(hostname);
-    if (hn === '') { return; }
-
-    const stored = await localRead(AUTO_GENERIC_HIGH_KEY);
-    const list = Array.isArray(stored)
-        ? stored.filter(v => typeof v === 'string' && v.trim() !== '')
-        : [];
-
-    const idx = list.indexOf(hn);
-    if (idx !== -1) { list.splice(idx, 1); }
-    list.unshift(hn);
-    if (list.length > AUTO_GENERIC_HIGH_MAX) {
-        list.length = AUTO_GENERIC_HIGH_MAX;
-    }
-
-    await localWrite(AUTO_GENERIC_HIGH_KEY, list);
+    const hn = await touchAutoPromotionState('genericHigh', hostname);
+    if ( hn === '' ) { return; }
     registerInjectablesIfEntitled().catch(ubolErr);
 }
 
@@ -2314,7 +2801,7 @@ function onMessage(request, sender, callback) {
             if (AUTO_PROMOTE_ENABLED === false) { return false; }
             if (isEntitled() === false) { return false; }
             if (typeof request.hostname === 'string') {
-                addAutoGenericHighHost(request.hostname);
+                addAutoGenericHighHost(request.hostname).catch(ubolErr);
             }
             return false;
         }
@@ -2330,7 +2817,8 @@ function onMessage(request, sender, callback) {
                     if (beforeLevel !== MODE_OPTIMAL) { return; }
                     const afterLevel = await setFilteringMode(hn, MODE_COMPLETE);
                     if (afterLevel === MODE_COMPLETE) {
-                        registerInjectablesIfEntitled().catch(ubolErr);
+                        await touchAutoPromotionState('complete', hn);
+                        await syncInjectablesAndRefreshTabs({ runtimeOnly: false });
                     }
                 })().catch(ubolErr);
             }
@@ -2344,7 +2832,26 @@ function onMessage(request, sender, callback) {
             const senderHostname = normalizeHttpHostname(sender?.url || '');
             const hostname = reportedHostname || senderHostname;
             if (hostname === '') { return false; }
-            recordBreakageSignal(hostname, request.signal, request.details).catch(ubolErr);
+            const details = request.details instanceof Object
+                ? { ...request.details }
+                : {};
+            const subsystem = normalizeBreakageSubsystem(request.subsystem || details.subsystem);
+            if ( subsystem !== '' ) {
+                details.subsystem = subsystem;
+            }
+            recordBreakageSignal(hostname, request.signal, details).catch(ubolErr);
+            return false;
+        }
+
+        case 'recordRemoteCosmeticsRuntimeStats': {
+            if ( isEntitled() === false ) { return false; }
+            recordRemoteCosmeticsRuntimeStats({
+                hostname: request.hostname,
+                chunkCount: request.chunkCount,
+                selectorCount: request.selectorCount,
+                hostSpecificSelectorCount: request.hostSpecificSelectorCount,
+                droppedAtApply: request.droppedAtApply,
+            }).catch(ubolErr);
             return false;
         }
 
@@ -2744,6 +3251,9 @@ function onMessage(request, sender, callback) {
                     youtubeOwnerConfig: getYouTubeWatchOwnerProfileConfig(youtubeOwnerProfile),
                     evidence: evidence || {},
                     activeBackoffs: serializeAutoBackoffState(),
+                    activeSubsystemBackoffs: serializeAutoBackoffSubsystemState({
+                        activeOnly: true,
+                    }),
                     enabledRulesets: Array.isArray(enabledRulesets)
                         ? enabledRulesets.slice().sort()
                         : [],
@@ -2763,6 +3273,7 @@ function onMessage(request, sender, callback) {
                 localRead('communityBundleHeuristics'),
                 localRead('communityBundleDirectives'),
                 localRead('communityBundleScriptlets'),
+                localRead(REMOTE_COSMETICS_RUNTIME_STATS_KEY),
             ]).then(([
                 meta,
                 lastAttempt,
@@ -2772,10 +3283,30 @@ function onMessage(request, sender, callback) {
                 heuristics,
                 directives,
                 scriptlets,
+                liveRuntimeStats,
             ]) => {
                 const diagnosticsMeta = meta instanceof Object
                     ? { ...meta }
                     : {};
+                const stats = liveRuntimeStats instanceof Object
+                    ? liveRuntimeStats
+                    : {};
+                let liveRemoteCosmeticChunkCount = 0;
+                let liveRemoteCosmeticDroppedAtApply = 0;
+                let liveRemoteCosmeticHostCount = 0;
+                for ( const entry of Object.values(stats) ) {
+                    const chunkCount = Math.max(0, Math.floor(Number(entry?.chunkCount) || 0));
+                    const selectorCount = Math.max(0, Math.floor(Number(entry?.selectorCount) || 0));
+                    const droppedAtApply = Math.max(
+                        0,
+                        Math.floor(Number(entry?.droppedAtApply) || 0)
+                    );
+                    liveRemoteCosmeticChunkCount += chunkCount;
+                    liveRemoteCosmeticDroppedAtApply += droppedAtApply;
+                    if ( chunkCount !== 0 || selectorCount !== 0 ) {
+                        liveRemoteCosmeticHostCount += 1;
+                    }
+                }
                 diagnosticsMeta.cosmeticsCount = countCommunityCosmeticSelectors(cosmetics);
                 diagnosticsMeta.hostCosmeticsCount =
                     countHostSpecificCommunityCosmeticSelectors(cosmetics);
@@ -2787,6 +3318,10 @@ function onMessage(request, sender, callback) {
                 diagnosticsMeta.scriptletsCount = Array.isArray(scriptlets)
                     ? scriptlets.length
                     : 0;
+                diagnosticsMeta.liveRemoteCosmeticChunkCount = liveRemoteCosmeticChunkCount;
+                diagnosticsMeta.liveRemoteCosmeticDroppedAtApply =
+                    liveRemoteCosmeticDroppedAtApply;
+                diagnosticsMeta.liveRemoteCosmeticHostCount = liveRemoteCosmeticHostCount;
                 callback({
                     meta: diagnosticsMeta,
                     lastAttempt: Number(lastAttempt) || 0,
@@ -3483,6 +4018,8 @@ async function start() {
     }
 
     await initAutoBackoff().catch(ubolErr);
+    await initAutoPromotionState().catch(ubolErr);
+    await initRuntimeDiagnosticsState().catch(ubolErr);
     await syncToolbarIconsForAllTabs().catch(ubolErr);
 
     toggleDeveloperMode(rulesetConfig.developerMode);
@@ -3799,6 +4336,10 @@ runtime.onInstalled.addListener((details) => {
 browser.alarms?.onAlarm.addListener(alarm => {
     if (alarm?.name === AUTO_BACKOFF_ALARM) {
         restoreExpiredAutoBackoffs().catch(ubolErr);
+        return;
+    }
+    if (alarm?.name === AUTO_PROMOTION_ALARM) {
+        pruneExpiredAutoPromotions().catch(ubolErr);
         return;
     }
     if (alarm?.name === TRIAL_EXPIRED_REMINDER_ALARM) {

@@ -1,5 +1,11 @@
 export const AUTO_BACKOFF_SIGNAL_WINDOW_MS = 5 * 60 * 1000;
 export const AUTO_BACKOFF_SIGNAL_MIN_COUNT = 2;
+export const BREAKAGE_SUBSYSTEM_IDS = Object.freeze([
+    'nativeHeuristics',
+    'automation',
+    'remoteCosmetics',
+    'postHideCleanup',
+]);
 
 const SEVERE_BREAKAGE_SIGNALS = new Set([
     'page-shell-hidden',
@@ -48,12 +54,22 @@ export function sanitizeBreakageDetails(input) {
     copyString('reason', 128);
     copyString('selector', 256);
     copyString('source', 64);
+    copyString('subsystem', 32);
     copyNumber('beforeHeight');
     copyNumber('afterHeight');
     copyNumber('beforeText');
     copyNumber('afterText');
 
     return out;
+}
+
+export function normalizeBreakageSubsystem(value) {
+    if ( typeof value !== 'string' ) { return ''; }
+    const normalized = value.trim();
+    if ( BREAKAGE_SUBSYSTEM_IDS.includes(normalized) ) {
+        return normalized;
+    }
+    return '';
 }
 
 export function mergeBreakageEvidenceEntry(current, signalPayload, now = Date.now()) {
@@ -83,8 +99,16 @@ export function mergeBreakageEvidenceEntry(current, signalPayload, now = Date.no
     return next;
 }
 
-export function updateSignalCounter(counterMap, hostname, signal, now = Date.now()) {
-    const key = `${hostname}::${signal}`;
+export function updateSignalCounter(
+    counterMap,
+    hostname,
+    signal,
+    now = Date.now(),
+    subsystem = ''
+) {
+    const normalizedSubsystem = normalizeBreakageSubsystem(subsystem);
+    const scope = normalizedSubsystem || 'host';
+    const key = `${hostname}::${scope}::${signal}`;
     const current = counterMap.get(key);
     if ( current && (now - current.firstTs) <= AUTO_BACKOFF_SIGNAL_WINDOW_MS ) {
         current.count += 1;

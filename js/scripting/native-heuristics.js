@@ -3,6 +3,11 @@
 // Isolate from global scope
 (function uBOL_nativeHeuristics() {
 
+    if ( self.TalonNativeHeuristicsController ) {
+        self.TalonNativeHeuristicsController.refresh().catch(() => {});
+        return;
+    }
+
     const CONFIG_PATH = 'automation/native-heuristics.json';
     const REMOTE_CONFIG_KEY = 'communityBundleHeuristics';
     const BOOST_STORAGE_PREFIX = 'nativeHeuristicsBoost';
@@ -246,11 +251,11 @@
 
     const TEXT_LABEL_SELECTOR = 'span,small,a,div,p,strong,em,label';
 
-    const pendingLabels = [];
+    let pendingLabels = [];
     let pendingIndex = 0;
-    const seenLabels = new WeakSet();
-    const hiddenContainers = new WeakSet();
-    const iframeCandidates = new WeakSet();
+    let seenLabels = new WeakSet();
+    let hiddenContainers = new WeakSet();
+    let iframeCandidates = new WeakSet();
 
     let labelRegexes = [];
     let labelSelectors = [];
@@ -928,9 +933,56 @@
         scheduleProcess();
     });
 
+    let observerConnected = false;
+
+    const resetState = () => {
+        remoteConfigPromise = undefined;
+        pendingLabels = [];
+        pendingIndex = 0;
+        seenLabels = new WeakSet();
+        hiddenContainers = new WeakSet();
+        iframeCandidates = new WeakSet();
+        hideCount = 0;
+        strongHideCount = 0;
+        aggressionBoost = 0;
+        persistedBoostState = null;
+        strongHidesSincePersist = 0;
+        genericHighSent = false;
+        completeSent = false;
+        hostProtection = guard?.getProtection?.() || {
+            category: '',
+            allowedRiskTier: 3,
+            matchedBy: '',
+        };
+    };
+
+    const stop = async () => {
+        if (observerConnected) {
+            observer.disconnect();
+            observerConnected = false;
+        }
+        if (processTimer !== undefined) {
+            try { self.cancelAnimationFrame(processTimer); } catch { }
+            processTimer = undefined;
+        }
+        if (shadowScanTimer !== undefined) {
+            try { clearTimeout(shadowScanTimer); } catch { }
+            shadowScanTimer = undefined;
+        }
+        if (persistTimer !== undefined) {
+            try { clearTimeout(persistTimer); } catch { }
+            persistTimer = undefined;
+        }
+        resetState();
+    };
+
     const init = async () => {
         await guard?.whenReady?.();
-        if (guard?.shouldRunSubsystem?.('nativeHeuristics') === false) { return; }
+        if (guard?.shouldRunSubsystem?.('nativeHeuristics') === false) {
+            await stop();
+            return { applied: false };
+        }
+        await stop();
         hostProtection = guard?.getProtection?.() || hostProtection;
         config = await loadConfig();
         const remoteConfig = await loadRemoteConfig();
@@ -1032,10 +1084,17 @@
         scheduleProcess();
 
         observer.observe(document, { childList: true, subtree: true });
+        observerConnected = true;
+        return { applied: true };
     };
 
     let config = defaultConfig;
-    init();
+    self.TalonNativeHeuristicsController = {
+        refresh: init,
+        stop,
+    };
+
+    self.TalonNativeHeuristicsController.refresh().catch(() => {});
 
 })();
 

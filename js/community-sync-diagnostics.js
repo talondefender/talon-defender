@@ -37,6 +37,13 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
         unsupportedRedirectPath: toNonNegativeInteger(dropped.unsupportedRedirectPath),
         quota: toNonNegativeInteger(dropped.quota),
         regexUnsupported: toNonNegativeInteger(dropped.regexUnsupported),
+        quotaByClass: {
+            exactExceptions: toNonNegativeInteger(dropped?.quotaByClass?.exactExceptions),
+            exactRedirects: toNonNegativeInteger(dropped?.quotaByClass?.exactRedirects),
+            exactBlocks: toNonNegativeInteger(dropped?.quotaByClass?.exactBlocks),
+            broadBlocks: toNonNegativeInteger(dropped?.quotaByClass?.broadBlocks),
+            regexBlocks: toNonNegativeInteger(dropped?.quotaByClass?.regexBlocks),
+        },
     };
 
     const lastError = typeof input?.lastError === 'string'
@@ -54,6 +61,10 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
     const heuristicRegexCount = toNonNegativeInteger(meta?.heuristicRegexCount);
     const directivesCount = toNonNegativeInteger(meta?.directivesCount);
     const scriptletsCount = toNonNegativeInteger(meta?.scriptletsCount);
+    const liveRemoteCosmeticChunkCount = toNonNegativeInteger(meta?.liveRemoteCosmeticChunkCount);
+    const liveRemoteCosmeticDroppedAtApply =
+        toNonNegativeInteger(meta?.liveRemoteCosmeticDroppedAtApply);
+    const liveRemoteCosmeticHostCount = toNonNegativeInteger(meta?.liveRemoteCosmeticHostCount);
 
     const hasAnyData = meta instanceof Object && (
         Object.keys(meta).length !== 0 ||
@@ -90,6 +101,9 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
         heuristicRegexCount,
         directivesCount,
         scriptletsCount,
+        liveRemoteCosmeticChunkCount,
+        liveRemoteCosmeticDroppedAtApply,
+        liveRemoteCosmeticHostCount,
         actions: actionCounts,
         dropped: droppedCounts,
     };

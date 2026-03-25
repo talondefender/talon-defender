@@ -19,6 +19,9 @@ const dnrState = {
   failCommunityUpdateCount: 0,
 };
 
+const DEFAULT_MAX_NUMBER_OF_DYNAMIC_RULES = 5000;
+const DEFAULT_MAX_NUMBER_OF_REGEX_RULES = 1000;
+
 const makeStorageArea = data => ({
   async get(key) {
     if (key === null) {
@@ -70,8 +73,8 @@ const filterRulesByIds = (rules, ruleIds) => {
 };
 
 const dnr = {
-  MAX_NUMBER_OF_DYNAMIC_RULES: 5000,
-  MAX_NUMBER_OF_REGEX_RULES: 1000,
+  MAX_NUMBER_OF_DYNAMIC_RULES: DEFAULT_MAX_NUMBER_OF_DYNAMIC_RULES,
+  MAX_NUMBER_OF_REGEX_RULES: DEFAULT_MAX_NUMBER_OF_REGEX_RULES,
   async getDynamicRules(options = {}) {
     return clone(filterRulesByIds(dnrState.dynamicRules, options.ruleIds));
   },
@@ -252,6 +255,8 @@ const resetEnvironment = () => {
   dnrState.dynamicRules.length = 0;
   dnrState.sessionRules.length = 0;
   dnrState.failCommunityUpdateCount = 0;
+  dnr.MAX_NUMBER_OF_DYNAMIC_RULES = DEFAULT_MAX_NUMBER_OF_DYNAMIC_RULES;
+  dnr.MAX_NUMBER_OF_REGEX_RULES = DEFAULT_MAX_NUMBER_OF_REGEX_RULES;
   remoteBundle = null;
   rulesetConfig.communityRulesEnabled = true;
   rulesetConfig.communityRulesURL = '';
@@ -363,6 +368,115 @@ test('community sync stores signed global cosmetics and heuristic selector tunin
   assert.equal(storageData.communityBundleMeta.heuristicRegexCount, 1);
   assert.ok(typeof storageData.communityBundleLastSuccess === 'number');
   assert.equal(Object.hasOwn(storageData, 'communityBundleLastError'), false);
+});
+
+test('community sync prioritizes exact-host exceptions and redirects under dynamic quota pressure', { concurrency: false }, async () => {
+  resetEnvironment();
+  dnr.MAX_NUMBER_OF_DYNAMIC_RULES = 254;
+
+  remoteBundle = await createSignedBundle({
+    schemaVersion: 2,
+    rules: [
+      {
+        action: { type: 'block' },
+        condition: {
+          urlFilter: '||broad.example^',
+          resourceTypes: ['script'],
+        },
+      },
+      {
+        action: { type: 'block' },
+        condition: {
+          regexFilter: '^https:' + '\\/\\/regex\\.example/',
+          resourceTypes: ['script'],
+        },
+      },
+      {
+        action: { type: 'block' },
+        condition: {
+          requestDomains: ['exact.example'],
+          resourceTypes: ['script'],
+        },
+      },
+      {
+        action: {
+          type: 'redirect',
+          redirect: {
+            extensionPath: 'web_accessible_resources/noop.js',
+          },
+        },
+        condition: {
+          initiatorDomains: ['news.example.com'],
+          requestDomains: ['cdn.example.net'],
+          resourceTypes: ['script'],
+        },
+      },
+      {
+        action: { type: 'allow' },
+        condition: {
+          initiatorDomains: ['news.example.com'],
+          requestDomains: ['cdn.example.net'],
+          resourceTypes: ['script'],
+        },
+      },
+      {
+        action: { type: 'allowAllRequests' },
+        condition: {
+          requestDomains: ['news.example.com'],
+          resourceTypes: ['main_frame'],
+        },
+      },
+    ],
+  });
+
+  const result = await syncCommunityRules({ force: true });
+  const communityRules = dnrState.dynamicRules
+    .filter(rule => rule.id >= 6000000 && rule.id < 7000000);
+
+  assert.equal(result.source, 'remote');
+  assert.equal(result.applied.added, 4);
+  assert.equal(result.applied.droppedQuota, 2);
+  assert.deepEqual(result.applied.dropped.quotaByClass, {
+    exactExceptions: 0,
+    exactRedirects: 0,
+    exactBlocks: 0,
+    broadBlocks: 1,
+    regexBlocks: 1,
+  });
+  assert.deepEqual(
+    communityRules.map(rule => ({
+      action: rule.action.type,
+      requestDomains: rule.condition.requestDomains || [],
+      hasRegex: Boolean(rule.condition.regexFilter),
+      urlFilter: rule.condition.urlFilter || '',
+    })),
+    [
+      {
+        action: 'allow',
+        requestDomains: ['cdn.example.net'],
+        hasRegex: false,
+        urlFilter: '',
+      },
+      {
+        action: 'allowAllRequests',
+        requestDomains: ['news.example.com'],
+        hasRegex: false,
+        urlFilter: '',
+      },
+      {
+        action: 'redirect',
+        requestDomains: ['cdn.example.net'],
+        hasRegex: false,
+        urlFilter: '',
+      },
+      {
+        action: 'block',
+        requestDomains: ['exact.example'],
+        hasRegex: false,
+        urlFilter: '',
+      },
+    ]
+  );
 });
 
 test('packaged community fallback bundle is valid and non-empty', { concurrency: false }, () => {

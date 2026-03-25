@@ -42,9 +42,18 @@ import { createSingleFlightRunner } from './single-flight.js';
 const resourceDetailPromises = new Map();
 const REMOTE_SCRIPTLETS_KEY = 'communityBundleScriptlets';
 const AUTO_GENERIC_HIGH_KEY = 'autoGenericHighHosts';
+const AUTO_PROMOTION_STATE_KEY = 'autoPromotionStateV2';
+const AUTO_BACKOFF_SUBSYSTEMS_KEY = 'autoBackoffSubsystemsV1';
+const AUTO_PROMOTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const INTERNAL_UNFILTERED_DOMAINS = [
     'talondefender.com',
 ];
+const SUPPRESSIBLE_SUBSYSTEMS = Object.freeze([
+    'nativeHeuristics',
+    'automation',
+    'remoteCosmetics',
+    'postHideCleanup',
+]);
 const SCRIPTLET_PATH_ALIASES = new Map([
     // Upstream YouTube quick fixes now rely on the XHR request editor rather
     // than the older fetch request variant. Reuse the bundled implementation
@@ -141,6 +150,20 @@ const exactAndWildcardMatchesFromHostnames = hostnames => {
     return out;
 };
 
+const exactMatchesFromHostnames = hostnames => {
+    const out = [];
+    const seen = new Set();
+    for ( const hostname of hostnames || [] ) {
+        if ( typeof hostname !== 'string' || hostname.trim() === '' ) { continue; }
+        const normalized = hostname.trim().toLowerCase();
+        const match = `*://${normalized}/*`;
+        if ( seen.has(match) ) { continue; }
+        seen.add(match);
+        out.push(match);
+    }
+    return out;
+};
+
 const pushCompatibilityExcludeMatches = (excludeMatches, hostnames) => {
     if ( Array.isArray(excludeMatches) === false || Array.isArray(hostnames) === false ) {
         return;
@@ -151,6 +174,73 @@ const pushCompatibilityExcludeMatches = (excludeMatches, hostnames) => {
         seen.add(match);
         excludeMatches.push(match);
     }
+};
+
+const pushExactExcludeMatches = (excludeMatches, hostnames) => {
+    if ( Array.isArray(excludeMatches) === false || Array.isArray(hostnames) === false ) {
+        return;
+    }
+    const seen = new Set(excludeMatches);
+    for ( const match of exactMatchesFromHostnames(hostnames) ) {
+        if ( seen.has(match) ) { continue; }
+        seen.add(match);
+        excludeMatches.push(match);
+    }
+};
+
+const readActiveAutoGenericHighHosts = async () => {
+    const now = Date.now();
+    const state = await readOptionalLocalValue(
+        AUTO_PROMOTION_STATE_KEY,
+        null,
+        `registerInjectables/${AUTO_PROMOTION_STATE_KEY}`
+    );
+    if ( state?.genericHigh instanceof Object ) {
+        const out = new Set();
+        for ( const [ hostname, entry ] of Object.entries(state.genericHigh) ) {
+            if ( typeof hostname !== 'string' || hostname.trim() === '' ) { continue; }
+            const lastHitAt = Number(entry?.lastHitAt ?? entry?.ts ?? entry);
+            if ( Number.isFinite(lastHitAt) === false || lastHitAt <= 0 ) { continue; }
+            if ( (now - lastHitAt) > AUTO_PROMOTION_TTL_MS ) { continue; }
+            out.add(hostname.trim().toLowerCase());
+        }
+        return out;
+    }
+    const legacyHosts = await readOptionalLocalValue(
+        AUTO_GENERIC_HIGH_KEY,
+        [],
+        `registerInjectables/${AUTO_GENERIC_HIGH_KEY}`
+    );
+    return Array.isArray(legacyHosts)
+        ? new Set(
+            legacyHosts
+                .filter(v => typeof v === 'string' && v.trim() !== '')
+                .map(v => v.trim().toLowerCase())
+        )
+        : new Set();
+};
+
+const readActiveSubsystemSuppressionHostnames = async () => {
+    const stored = await readOptionalLocalValue(
+        AUTO_BACKOFF_SUBSYSTEMS_KEY,
+        {},
+        `registerInjectables/${AUTO_BACKOFF_SUBSYSTEMS_KEY}`
+    );
+    const out = Object.fromEntries(
+        SUPPRESSIBLE_SUBSYSTEMS.map(id => [ id, [] ])
+    );
+    if ( stored instanceof Object === false ) { return out; }
+    const now = Date.now();
+    for ( const [ hostname, subsystems ] of Object.entries(stored) ) {
+        if ( typeof hostname !== 'string' || hostname.trim() === '' ) { continue; }
+        if ( subsystems instanceof Object === false ) { continue; }
+        for ( const subsystemId of SUPPRESSIBLE_SUBSYSTEMS ) {
+            const expiresAt = Number(subsystems?.[subsystemId]?.expiresAt) || 0;
+            if ( expiresAt <= now ) { continue; }
+            out[subsystemId].push(hostname.trim().toLowerCase());
+        }
+    }
+    return out;
 };
 
 const applyCompatibilityHostExclusions = (
@@ -757,7 +847,7 @@ function registerRemoteScriptlets(context, scriptletDetails) {
 /******************************************************************************/
 
 function registerNativeHeuristics(context) {
-    const { before, filteringModeDetails } = context;
+    const { before, filteringModeDetails, subsystemSuppressionHostnames } = context;
 
     const js = [
         '/shared/site-key-resolver.js',
@@ -781,6 +871,10 @@ function registerNativeHeuristics(context) {
     if ( basic.has('all-urls') === false ) {
         excludeMatches.push(...ut.matchesFromHostnames(basic));
     }
+    pushExactExcludeMatches(
+        excludeMatches,
+        subsystemSuppressionHostnames?.nativeHeuristics
+    );
 
     const registered = before.get('native-heuristics');
     before.delete('native-heuristics'); // Important!
@@ -812,7 +906,7 @@ function registerNativeHeuristics(context) {
 }
 
 function registerAutomation(context) {
-    const { before, filteringModeDetails } = context;
+    const { before, filteringModeDetails, subsystemSuppressionHostnames } = context;
 
     const js = [ '/js/scripting/breakage-guard.js', '/js/scripting/automation.js' ];
 
@@ -832,6 +926,10 @@ function registerAutomation(context) {
     if ( basic.has('all-urls') === false ) {
         excludeMatches.push(...ut.matchesFromHostnames(basic));
     }
+    pushExactExcludeMatches(
+        excludeMatches,
+        subsystemSuppressionHostnames?.automation
+    );
 
     const registered = before.get('automation');
     before.delete('automation'); // Important!
@@ -916,7 +1014,7 @@ function registerAdShellStyles(context) {
 /******************************************************************************/
 
 function registerRemoteCosmetics(context) {
-    const { before, filteringModeDetails } = context;
+    const { before, filteringModeDetails, subsystemSuppressionHostnames } = context;
 
     const js = [
         '/shared/site-key-resolver.js',
@@ -940,6 +1038,10 @@ function registerRemoteCosmetics(context) {
     if ( basic.has('all-urls') === false ) {
         excludeMatches.push(...ut.matchesFromHostnames(basic));
     }
+    pushExactExcludeMatches(
+        excludeMatches,
+        subsystemSuppressionHostnames?.remoteCosmetics
+    );
 
     const registered = before.get('remote-cosmetics');
     before.delete('remote-cosmetics'); // Important!
@@ -973,7 +1075,7 @@ function registerRemoteCosmetics(context) {
 /******************************************************************************/
 
 function registerPostHideCleanup(context) {
-    const { before, filteringModeDetails } = context;
+    const { before, filteringModeDetails, subsystemSuppressionHostnames } = context;
 
     const js = [ '/js/scripting/breakage-guard.js', '/js/scripting/post-hide-cleanup.js' ];
 
@@ -993,6 +1095,10 @@ function registerPostHideCleanup(context) {
     if ( basic.has('all-urls') === false ) {
         excludeMatches.push(...ut.matchesFromHostnames(basic));
     }
+    pushExactExcludeMatches(
+        excludeMatches,
+        subsystemSuppressionHostnames?.postHideCleanup
+    );
 
     const registered = before.get('post-hide-cleanup');
     before.delete('post-hide-cleanup'); // Important!
@@ -1038,6 +1144,7 @@ const registerInjectablesImpl = async () => {
         genericDetails,
         remoteScriptlets,
         autoGenericHighHosts,
+        subsystemSuppressionHostnames,
         youtubeWatchOwnerProfile,
         registered,
     ] = await Promise.all([
@@ -1050,11 +1157,8 @@ const registerInjectablesImpl = async () => {
             [],
             `registerInjectables/${REMOTE_SCRIPTLETS_KEY}`
         ),
-        readOptionalLocalValue(
-            AUTO_GENERIC_HIGH_KEY,
-            [],
-            `registerInjectables/${AUTO_GENERIC_HIGH_KEY}`
-        ),
+        readActiveAutoGenericHighHosts(),
+        readActiveSubsystemSuppressionHostnames(),
         readOptionalLocalValue(
             YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY,
             YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT,
@@ -1076,7 +1180,11 @@ const registerInjectablesImpl = async () => {
         toAdd,
         toRemove,
         remoteScriptlets,
-        autoGenericHighHosts: Array.isArray(autoGenericHighHosts) ? new Set(autoGenericHighHosts) : new Set(),
+        autoGenericHighHosts:
+            autoGenericHighHosts instanceof Set
+                ? autoGenericHighHosts
+                : new Set(),
+        subsystemSuppressionHostnames,
         youtubeWatchOwnerProfile: normalizeYouTubeWatchOwnerProfile(youtubeWatchOwnerProfile),
     };
 

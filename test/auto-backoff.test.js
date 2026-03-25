@@ -36,15 +36,24 @@ test('breakage evidence stores counts and recent entries', () => {
 });
 
 test('signal counters trigger immediate backoff for severe signals and threshold for repeated mild ones', () => {
-  assert.equal(shouldTriggerSignalBackoff('primary-content-hidden', { count: 1 }), true);
+    assert.equal(shouldTriggerSignalBackoff('primary-content-hidden', { count: 1 }), true);
 
-  const counters = new Map();
-  const first = updateSignalCounter(counters, 'example.com', 'scroll-lock-persisted', 1000);
+    const counters = new Map();
+    const first = updateSignalCounter(counters, 'example.com', 'scroll-lock-persisted', 1000);
   assert.equal(shouldTriggerSignalBackoff('scroll-lock-persisted', first), false);
 
   const second = updateSignalCounter(counters, 'example.com', 'scroll-lock-persisted', 1500);
   assert.equal(second.count, AUTO_BACKOFF_SIGNAL_MIN_COUNT);
   assert.equal(shouldTriggerSignalBackoff('scroll-lock-persisted', second), true);
+
+  const subsystemScoped = updateSignalCounter(
+    counters,
+    'example.com',
+    'scroll-lock-persisted',
+    2000,
+    'remoteCosmetics'
+  );
+  assert.equal(subsystemScoped.count, 1);
 });
 
 test('sanitizeBreakageDetails keeps only bounded scalar fields', () => {
@@ -53,6 +62,7 @@ test('sanitizeBreakageDetails keeps only bounded scalar fields', () => {
     reason: 'shell-target',
     selector: '#root',
     source: 'native-heuristics',
+    subsystem: 'nativeHeuristics',
     beforeHeight: 1200,
     afterHeight: 10,
     nested: { nope: true },
@@ -63,6 +73,7 @@ test('sanitizeBreakageDetails keeps only bounded scalar fields', () => {
     reason: 'shell-target',
     selector: '#root',
     source: 'native-heuristics',
+    subsystem: 'nativeHeuristics',
     beforeHeight: 1200,
     afterHeight: 10,
   });

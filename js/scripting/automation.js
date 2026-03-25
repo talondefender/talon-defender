@@ -10,10 +10,16 @@ const runtime = self.browser?.runtime || self.chrome?.runtime;
 const getURL = runtime?.getURL?.bind(runtime) || (p => p);
 const storage = self.browser?.storage?.local || self.chrome?.storage?.local;
 const guard = self.TalonBreakageGuard;
+const AUTOMATION_MARK_ATTR = 'data-ubol-automation';
+
+if ( self.TalonAutomationController ) {
+    self.TalonAutomationController.refresh().catch(( ) => {});
+    return;
+}
 
 let directivesPromise;
-
 let remoteDirectivesPromise;
+
 const loadRemoteDirectives = ( ) => {
     if ( remoteDirectivesPromise !== undefined ) { return remoteDirectivesPromise; }
     if ( storage?.get === undefined ) {
@@ -116,7 +122,6 @@ const queryTargets = selectors => {
     const lightDomHits = queryTargetsInRoot(document, selectors);
     if ( lightDomHits.length !== 0 ) { return lightDomHits; }
 
-    // Fallback: scan open shadow roots for consent overlays.
     const roots = [];
     try {
         const walker = document.createTreeWalker(
@@ -143,7 +148,7 @@ const queryTargets = selectors => {
 
 const markApplied = (el, id) => {
     try {
-        el.dataset.uBolAutomation = id;
+        el.setAttribute(AUTOMATION_MARK_ATTR, String(id || ''));
     } catch {
     }
 };
@@ -152,14 +157,15 @@ const selectorListToText = selectors => selectors
     .filter(sel => typeof sel === 'string' && sel.trim() !== '')
     .join(',');
 
-const styleIdForDirective = id => `ubol-automation-style-${String(id || 'directive').replace(/[^a-z0-9_-]/gi, '_')}`;
+const styleIdForDirective = id =>
+    `ubol-automation-style-${String(id || 'directive').replace(/[^a-z0-9_-]/gi, '_')}`;
 
 const escapeAttrValue = value => String(value || '').replace(/["\\]/g, '\\$&');
 
 const ensureHideStyle = (id, selectors) => {
     const selectorText = selectorListToText(selectors);
     if ( selectorText === '' ) { return; }
-    const attrSelector = `[data-uBolAutomation="${escapeAttrValue(id)}"]`;
+    const attrSelector = `[${AUTOMATION_MARK_ATTR}="${escapeAttrValue(id)}"]`;
     const styleId = styleIdForDirective(id);
     const styleText = `${selectorText},${attrSelector}{display:none!important;visibility:hidden!important;}`;
     try {
@@ -178,6 +184,16 @@ const ensureHideStyle = (id, selectors) => {
     }
 };
 
+const removeHideStyle = id => {
+    try {
+        const style = document.getElementById(styleIdForDirective(id));
+        if ( style ) {
+            style.remove();
+        }
+    } catch {
+    }
+};
+
 const resolveMutationRiskTier = context => {
     if ( context?.category === 'consent' ) {
         return guard?.RISK_TIERS?.medium || 2;
@@ -188,7 +204,7 @@ const resolveMutationRiskTier = context => {
 const applyClick = (id, selectors) => {
     const targets = queryTargets(selectors);
     for ( const el of targets ) {
-        if ( el.dataset.uBolAutomation ) { continue; }
+        if ( el.getAttribute?.(AUTOMATION_MARK_ATTR) ) { continue; }
         try { el.click(); } catch { continue; }
         markApplied(el, id);
         guard?.auditAfterMutation?.('automation-click');
@@ -204,18 +220,12 @@ const applyHide = (id, selectors, context) => {
     const targets = queryTargets(selectors);
     for ( const el of targets ) {
         if ( el === document.body || el === document.documentElement ) { continue; }
-        if ( el.dataset.uBolAutomation && isVisible(el) === false ) { continue; }
+        if ( el.getAttribute?.(AUTOMATION_MARK_ATTR) && isVisible(el) === false ) { continue; }
         const decision = guard?.canMutateElement?.(el, {
             riskTier,
             source: 'automation-hide',
         });
         if ( decision?.allowed === false ) { continue; }
-        try {
-            el.style.setProperty('display', 'none', 'important');
-            el.style.setProperty('visibility', 'hidden', 'important');
-        } catch {
-            continue;
-        }
         markApplied(el, id);
         changed = true;
     }
@@ -231,7 +241,7 @@ const applyRemove = (id, selectors, context) => {
     const targets = queryTargets(selectors);
     for ( const el of targets ) {
         if ( el === document.body || el === document.documentElement ) { continue; }
-        if ( el.dataset.uBolAutomation ) { continue; }
+        if ( el.getAttribute?.(AUTOMATION_MARK_ATTR) ) { continue; }
         const decision = guard?.canMutateElement?.(el, {
             riskTier,
             source: 'automation-remove',
@@ -275,6 +285,19 @@ const OBSERVED_ATTRIBUTE_FILTER = [ 'style', 'class', 'hidden', 'open', 'aria-hi
 const directiveCounts = new Map();
 
 let activeDirectives = [];
+let observerConnected = false;
+let sweepTimer;
+
+const cleanupDirectiveStyles = directives => {
+    const styleIds = new Set();
+    for ( const directive of directives || [] ) {
+        const id = directive?.id || '(unknown)';
+        styleIds.add(id);
+    }
+    for ( const id of styleIds ) {
+        removeHideStyle(id);
+    }
+};
 
 const applyDirective = directive => {
     const id = directive.id || '(unknown)';
@@ -313,8 +336,6 @@ const applyDirective = directive => {
     return did;
 };
 
-let sweepTimer;
-
 const sweep = ( ) => {
     sweepTimer = undefined;
     let changed = false;
@@ -332,6 +353,7 @@ const sweep = ( ) => {
         });
         if ( allMaxed ) {
             domObserver.disconnect();
+            observerConnected = false;
         }
     }
 };
@@ -345,15 +367,50 @@ const domObserver = new MutationObserver(( ) => {
     scheduleSweep();
 });
 
-const init = async ( ) => {
+const stop = async ( ) => {
+    if ( observerConnected ) {
+        domObserver.disconnect();
+        observerConnected = false;
+    }
+    if ( sweepTimer !== undefined ) {
+        try { clearTimeout(sweepTimer); } catch { }
+        sweepTimer = undefined;
+    }
+    cleanupDirectiveStyles(activeDirectives);
+    activeDirectives = [];
+    directiveCounts.clear();
+};
+
+const refresh = async ( ) => {
+    remoteDirectivesPromise = undefined;
+    directivesPromise = undefined;
+
     await guard?.whenReady?.();
-    if ( guard?.shouldRunSubsystem?.('automation') === false ) { return; }
+    if ( guard?.shouldRunSubsystem?.('automation') === false ) {
+        await stop();
+        return { applied: false, directives: 0 };
+    }
+
+    const previousDirectives = activeDirectives.slice();
     const directives = await loadDirectives();
     activeDirectives = directives
         .filter(hostMatchesDirective)
         .map(directive => ({ ...directive }))
         .filter(directive => guard?.shouldAllowDirective?.(directive) !== false);
-    if ( activeDirectives.length === 0 ) { return; }
+
+    cleanupDirectiveStyles(previousDirectives.filter(previous =>
+        activeDirectives.some(next => next.id === previous.id) === false
+    ));
+
+    directiveCounts.clear();
+    if ( activeDirectives.length === 0 ) {
+        if ( observerConnected ) {
+            domObserver.disconnect();
+            observerConnected = false;
+        }
+        return { applied: false, directives: 0 };
+    }
+
     for ( const directive of activeDirectives ) {
         if ( directive.action === 'hide' ) {
             ensureHideStyle(directive.id || '(unknown)', directive.selectors);
@@ -362,16 +419,26 @@ const init = async ( ) => {
             ensureHideStyle(directive.id || '(unknown)', directive.fallbackSelectors);
         }
     }
+
     scheduleSweep(0);
-    domObserver.observe(document, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: OBSERVED_ATTRIBUTE_FILTER,
-    });
+    if ( observerConnected === false ) {
+        domObserver.observe(document, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: OBSERVED_ATTRIBUTE_FILTER,
+        });
+        observerConnected = true;
+    }
+    return { applied: true, directives: activeDirectives.length };
 };
 
-init();
+self.TalonAutomationController = {
+    refresh,
+    stop,
+};
+
+self.TalonAutomationController.refresh().catch(( ) => {});
 
 })();
 

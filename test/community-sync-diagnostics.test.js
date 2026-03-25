@@ -15,6 +15,9 @@ test('community sync diagnostics summary reports schema version, action counts, 
       heuristicRegexCount: 2,
       directivesCount: 4,
       scriptletsCount: 3,
+      liveRemoteCosmeticChunkCount: 5,
+      liveRemoteCosmeticDroppedAtApply: 2,
+      liveRemoteCosmeticHostCount: 2,
       applied: {
         added: 7,
         byAction: {
@@ -29,6 +32,13 @@ test('community sync diagnostics summary reports schema version, action counts, 
           unsupportedRedirectPath: 1,
           quota: 4,
           regexUnsupported: 2,
+          quotaByClass: {
+            exactExceptions: 1,
+            exactRedirects: 1,
+            exactBlocks: 1,
+            broadBlocks: 1,
+            regexBlocks: 0,
+          },
         },
       },
     },
@@ -52,6 +62,9 @@ test('community sync diagnostics summary reports schema version, action counts, 
   assert.equal(summary.heuristicRegexCount, 2);
   assert.equal(summary.directivesCount, 4);
   assert.equal(summary.scriptletsCount, 3);
+  assert.equal(summary.liveRemoteCosmeticChunkCount, 5);
+  assert.equal(summary.liveRemoteCosmeticDroppedAtApply, 2);
+  assert.equal(summary.liveRemoteCosmeticHostCount, 2);
   assert.deepEqual(summary.actions, {
     block: 4,
     redirect: 1,
@@ -64,6 +77,13 @@ test('community sync diagnostics summary reports schema version, action counts, 
     unsupportedRedirectPath: 1,
     quota: 4,
     regexUnsupported: 2,
+    quotaByClass: {
+      exactExceptions: 1,
+      exactRedirects: 1,
+      exactBlocks: 1,
+      broadBlocks: 1,
+      regexBlocks: 0,
+    },
   });
 });
 

@@ -180,6 +180,13 @@ test('community exception quotas cap total exceptions and allowAllRequests relie
   assert.equal(allowResult.rules.length, COMMUNITY_EXCEPTION_RULES_MAX);
   assert.equal(allowResult.byAction.allow, COMMUNITY_EXCEPTION_RULES_MAX);
   assert.equal(allowResult.dropped.quota, 1);
+  assert.deepEqual(allowResult.dropped.quotaByClass, {
+    exactExceptions: 1,
+    exactRedirects: 0,
+    exactBlocks: 0,
+    broadBlocks: 0,
+    regexBlocks: 0,
+  });
 
   const allowAllRules = Array.from({ length: COMMUNITY_ALLOW_ALL_REQUESTS_MAX + 1 }, (_, index) => ({
     action: { type: 'allowAllRequests' },
@@ -192,6 +199,13 @@ test('community exception quotas cap total exceptions and allowAllRequests relie
   assert.equal(allowAllResult.rules.length, COMMUNITY_ALLOW_ALL_REQUESTS_MAX);
   assert.equal(allowAllResult.byAction.allowAllRequests, COMMUNITY_ALLOW_ALL_REQUESTS_MAX);
   assert.equal(allowAllResult.dropped.quota, 1);
+  assert.deepEqual(allowAllResult.dropped.quotaByClass, {
+    exactExceptions: 1,
+    exactRedirects: 0,
+    exactBlocks: 0,
+    broadBlocks: 0,
+    regexBlocks: 0,
+  });
 });
 
 test('community exception priorities stay ordered and below user/admin dynamic priorities', () => {
