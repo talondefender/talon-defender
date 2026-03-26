@@ -27,10 +27,14 @@ export const ALLOW_ALL_RULES_DIAGNOSTICS_KEY = 'allowAllRulesDiagnosticsV1';
 
 const ruleCompare = (a, b) => a.id - b.id;
 
+const cloneRules = rules => Array.isArray(rules)
+    ? rules.map(rule => structuredClone(rule))
+    : [];
+
 const isSameRules = (a, b) => {
-    a.sort(ruleCompare);
-    b.sort(ruleCompare);
-    return JSON.stringify(a) === JSON.stringify(b);
+    const left = cloneRules(a).sort(ruleCompare);
+    const right = cloneRules(b).sort(ruleCompare);
+    return JSON.stringify(left) === JSON.stringify(right);
 };
 
 const readLocalDiagnostics = async key => {
@@ -53,15 +57,42 @@ const writeLocalDiagnostics = async (key, value) => {
     }
 };
 
+const writeAllowAllRulesDiagnosticsPatch = async patch => {
+    const current = await readLocalDiagnostics(ALLOW_ALL_RULES_DIAGNOSTICS_KEY);
+    await writeLocalDiagnostics(ALLOW_ALL_RULES_DIAGNOSTICS_KEY, {
+        partialRepairCount: Math.max(
+            0,
+            Number(current?.partialRepairCount) || 0
+        ),
+        rollbackCount: Math.max(
+            0,
+            Number(current?.rollbackCount) || 0
+        ),
+        lastRepairAt: Number(current?.lastRepairAt) || 0,
+        lastRollbackAt: Number(current?.lastRollbackAt) || 0,
+        ...patch,
+    });
+};
+
 const recordAllowAllRulesPartialRepair = async () => {
     const current = await readLocalDiagnostics(ALLOW_ALL_RULES_DIAGNOSTICS_KEY);
-    const partialRepairCount = Math.max(
-        0,
-        Number(current?.partialRepairCount) || 0
-    ) + 1;
-    await writeLocalDiagnostics(ALLOW_ALL_RULES_DIAGNOSTICS_KEY, {
-        partialRepairCount,
+    await writeAllowAllRulesDiagnosticsPatch({
+        partialRepairCount: Math.max(
+            0,
+            Number(current?.partialRepairCount) || 0
+        ) + 1,
         lastRepairAt: Date.now(),
+    });
+};
+
+const recordAllowAllRulesRollback = async () => {
+    const current = await readLocalDiagnostics(ALLOW_ALL_RULES_DIAGNOSTICS_KEY);
+    await writeAllowAllRulesDiagnosticsPatch({
+        rollbackCount: Math.max(
+            0,
+            Number(current?.rollbackCount) || 0
+        ) + 1,
+        lastRollbackAt: Date.now(),
     });
 };
 
@@ -121,25 +152,72 @@ dnr.setAllowAllRules = async function(id, allowed, notAllowed, reverse, priority
     const dynamicMatches = isSameRules(addDynamicRules, beforeDynamicRules);
     const sessionMatches = isSameRules(addSessionRules, beforeSessionRules);
     if ( dynamicMatches && sessionMatches ) { return false; }
-    const updates = [];
-    if ( dynamicMatches === false ) {
-        updates.push(dnr.updateDynamicRules({
-            addRules: addDynamicRules,
-            removeRuleIds: beforeDynamicRules.map(r => r.id),
-        }));
-    }
-    if ( sessionMatches === false ) {
-        updates.push(dnr.updateSessionRules({
-            addRules: addSessionRules,
-            removeRuleIds: beforeSessionRules.map(r => r.id),
-        }));
-    }
-    return Promise.all(updates).then(async ( ) => {
+
+    const verifyState = async (expectedDynamicRules, expectedSessionRules) => {
+        const [
+            actualDynamicRules,
+            actualSessionRules,
+        ] = await Promise.all([
+            dnr.getDynamicRules({ ruleIds: [ id+0 ] }),
+            dnr.getSessionRules({ ruleIds: [ id+1 ] }),
+        ]);
+        return isSameRules(actualDynamicRules, expectedDynamicRules) &&
+            isSameRules(actualSessionRules, expectedSessionRules);
+    };
+
+    const restorePreviousState = async () => {
+        await Promise.all([
+            dnr.updateDynamicRules({
+                addRules: cloneRules(beforeDynamicRules),
+                removeRuleIds: [ id+0 ],
+            }),
+            dnr.updateSessionRules({
+                addRules: cloneRules(beforeSessionRules),
+                removeRuleIds: [ id+1 ],
+            }),
+        ]);
+        const restored = await verifyState(beforeDynamicRules, beforeSessionRules);
+        if ( restored !== true ) {
+            throw new Error('setAllowAllRules rollback verification failed');
+        }
+        await recordAllowAllRulesRollback();
+        return false;
+    };
+
+    try {
+        if ( dynamicMatches === false ) {
+            await dnr.updateDynamicRules({
+                addRules: cloneRules(addDynamicRules),
+                removeRuleIds: beforeDynamicRules.map(r => r.id),
+            });
+        }
+        if ( sessionMatches === false ) {
+            await dnr.updateSessionRules({
+                addRules: cloneRules(addSessionRules),
+                removeRuleIds: beforeSessionRules.map(r => r.id),
+            });
+        }
+        const verified = await verifyState(addDynamicRules, addSessionRules);
+        if ( verified !== true ) {
+            return restorePreviousState();
+        }
         if ( dynamicMatches !== sessionMatches ) {
             await recordAllowAllRulesPartialRepair();
         }
         return true;
-    }).catch(( ) =>
-        false
-    );
+    } catch (reason) {
+        try {
+            return await restorePreviousState();
+        } catch (rollbackReason) {
+            const originalMessage = reason instanceof Error
+                ? reason.message
+                : String(reason);
+            const rollbackMessage = rollbackReason instanceof Error
+                ? rollbackReason.message
+                : String(rollbackReason);
+            throw new Error(
+                `setAllowAllRules rollback failed: ${rollbackMessage}; original error: ${originalMessage}`
+            );
+        }
+    }
 };

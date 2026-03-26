@@ -296,6 +296,16 @@ async function getEffectiveDynamicRules() {
 
 /******************************************************************************/
 
+async function getActiveCommunityRules() {
+    const allRules = await dnr.getDynamicRules();
+    return allRules.filter(rule => (
+        rule.id >= COMMUNITY_RULES_BASE_RULE_ID &&
+        rule.id < COMMUNITY_RULES_BASE_RULE_ID + COMMUNITY_RULES_RANGE
+    ));
+}
+
+/******************************************************************************/
+
 async function updateStrictBlockRules(currentRules, addRules, removeRuleIds) {
     // Remove existing strictblock-related rules
     for ( const rule of currentRules ) {
@@ -970,6 +980,7 @@ export {
     enableRulesets,
     excludeFromStrictBlock,
     filteringModesToDNR,
+    getActiveCommunityRules,
     getEffectiveDynamicRules,
     getEffectiveSessionRules,
     getEffectiveUserRules,

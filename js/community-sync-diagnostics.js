@@ -80,8 +80,25 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
     const hotfixLane = typeof meta?.hotfixLane === 'string'
         ? meta.hotfixLane.trim()
         : '';
+    const activationStatus = typeof meta?.activationStatus === 'string'
+        ? meta.activationStatus.trim()
+        : '';
+    const activationRollbackAt = toIsoTimestamp(meta?.activationRollbackAt);
+    const activationRollbackReason = typeof meta?.activationRollbackReason === 'string'
+        ? meta.activationRollbackReason.trim()
+        : '';
+    const activationRollbackAttemptedVersion =
+        typeof meta?.activationRollbackAttemptedVersion === 'string'
+            ? meta.activationRollbackAttemptedVersion.trim()
+            : '';
+    const activationRollbackRestoredVersion =
+        typeof meta?.activationRollbackRestoredVersion === 'string'
+            ? meta.activationRollbackRestoredVersion.trim()
+            : '';
     const partialDnrRepairCount = toNonNegativeInteger(meta?.partialDnrRepairCount);
     const lastPartialDnrRepair = toIsoTimestamp(meta?.lastPartialDnrRepair);
+    const allowAllRollbackCount = toNonNegativeInteger(meta?.allowAllRollbackCount);
+    const lastAllowAllRollback = toIsoTimestamp(meta?.lastAllowAllRollback);
     const emergencySyncRollingCount =
         toNonNegativeInteger(meta?.emergencySyncRollingCount);
     const lastEmergencySync = toIsoTimestamp(meta?.lastEmergencySyncAt);
@@ -103,6 +120,8 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
     const hasMeaningfulMeta = (
         (typeof meta?.version === 'string' && meta.version.trim() !== '') ||
         (typeof meta?.integrity === 'string' && meta.integrity.trim() !== '') ||
+        activationStatus !== '' ||
+        activationRollbackReason !== '' ||
         Number(meta?.generatedAt) > 0 ||
         activeRules !== 0 ||
         activeExceptions !== 0 ||
@@ -122,6 +141,7 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
         liveRemoteCosmeticHostCount !== 0 ||
         emergencySyncRollingCount !== 0 ||
         partialDnrRepairCount !== 0 ||
+        allowAllRollbackCount !== 0 ||
         hasActionCounts ||
         hasDroppedCounts
     );
@@ -170,9 +190,19 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
         ttlHours,
         retryMinutes,
         hotfixLane: hotfixLane || 'unknown',
+        activationStatus: activationStatus || 'none',
+        activationRollbackAt,
+        activationRollbackReason: activationRollbackReason || 'none',
+        activationRollbackAttemptedVersion:
+            activationRollbackAttemptedVersion || 'none',
+        activationRollbackRestoredVersion:
+            activationRollbackRestoredVersion || 'none',
         partialDnrRepairSeen: partialDnrRepairCount !== 0,
         partialDnrRepairCount,
         lastPartialDnrRepair,
+        allowAllRollbackSeen: allowAllRollbackCount !== 0,
+        allowAllRollbackCount,
+        lastAllowAllRollback,
         emergencySyncRollingCount,
         lastEmergencySync,
         lastEmergencySyncDomain: lastEmergencySyncDomain || 'none',

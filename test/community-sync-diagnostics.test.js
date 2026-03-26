@@ -7,6 +7,7 @@ test('community sync diagnostics summary reports schema version, action counts, 
   const lastAttempt = Date.UTC(2026, 2, 25, 18, 15, 0, 0);
   const lastSuccess = Date.UTC(2026, 2, 25, 18, 0, 0, 0);
   const lastPartialDnrRepair = Date.UTC(2026, 2, 25, 17, 55, 0, 0);
+  const lastAllowAllRollback = Date.UTC(2026, 2, 25, 17, 57, 0, 0);
   const lastEmergencySyncAt = Date.UTC(2026, 2, 25, 17, 50, 0, 0);
   const summary = buildCommunitySyncDiagnosticsSummary({
     meta: {
@@ -15,6 +16,11 @@ test('community sync diagnostics summary reports schema version, action counts, 
       ttlHours: 24,
       retryMinutes: 15,
       hotfixLane: 'public',
+      activationStatus: 'rolled_back',
+      activationRollbackAt: lastAttempt,
+      activationRollbackReason: 'injectable registration failed',
+      activationRollbackAttemptedVersion: '2026.03.25.2',
+      activationRollbackRestoredVersion: '2026.03.25.1',
       cosmeticsCount: 6,
       hostCosmeticsCount: 5,
       protectedCosmeticsCount: 2,
@@ -28,6 +34,8 @@ test('community sync diagnostics summary reports schema version, action counts, 
       proofScriptletsCount: 1,
       partialDnrRepairCount: 1,
       lastPartialDnrRepair,
+      allowAllRollbackCount: 2,
+      lastAllowAllRollback,
       emergencySyncRollingCount: 3,
       lastEmergencySyncAt,
       lastEmergencySyncDomain: 'checkout.example.com',
@@ -88,9 +96,17 @@ test('community sync diagnostics summary reports schema version, action counts, 
   assert.equal(summary.ttlHours, 24);
   assert.equal(summary.retryMinutes, 15);
   assert.equal(summary.hotfixLane, 'public');
+  assert.equal(summary.activationStatus, 'rolled_back');
+  assert.equal(summary.activationRollbackAt, new Date(lastAttempt).toISOString());
+  assert.equal(summary.activationRollbackReason, 'injectable registration failed');
+  assert.equal(summary.activationRollbackAttemptedVersion, '2026.03.25.2');
+  assert.equal(summary.activationRollbackRestoredVersion, '2026.03.25.1');
   assert.equal(summary.partialDnrRepairSeen, true);
   assert.equal(summary.partialDnrRepairCount, 1);
   assert.equal(summary.lastPartialDnrRepair, new Date(lastPartialDnrRepair).toISOString());
+  assert.equal(summary.allowAllRollbackSeen, true);
+  assert.equal(summary.allowAllRollbackCount, 2);
+  assert.equal(summary.lastAllowAllRollback, new Date(lastAllowAllRollback).toISOString());
   assert.equal(summary.emergencySyncRollingCount, 3);
   assert.equal(summary.lastEmergencySync, new Date(lastEmergencySyncAt).toISOString());
   assert.equal(summary.lastEmergencySyncDomain, 'checkout.example.com');
@@ -149,6 +165,9 @@ test('community sync diagnostics summary reports partial repair-only state', () 
   assert.equal(summary.partialDnrRepairSeen, true);
   assert.equal(summary.partialDnrRepairCount, 2);
   assert.equal(summary.lastPartialDnrRepair, new Date(lastPartialDnrRepair).toISOString());
+  assert.equal(summary.allowAllRollbackSeen, false);
+  assert.equal(summary.allowAllRollbackCount, 0);
+  assert.equal(summary.lastAllowAllRollback, 'never');
   assert.equal(summary.ttlHours, 6);
   assert.equal(summary.retryMinutes, 15);
 });

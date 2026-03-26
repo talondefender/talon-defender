@@ -822,7 +822,9 @@ import {
 import {
     ALARM_NAME as COMMUNITY_ALARM_NAME,
     COMMUNITY_URL_DEFAULT,
+    finalizeCommunityActivationSuccess,
     normalizeCommunityURL,
+    rollbackCommunityActivation,
     scrubPrivateCommunityState,
     syncCommunityRules,
 } from './community-sync.js';
@@ -2401,7 +2403,82 @@ async function handleCommunitySyncResult(result) {
     } else if (result.source === 'remote') {
         lastCommunityCleanupReason = '';
     }
-    if (result.requiresInjectableRefresh) {
+
+    const activation = result.activation;
+    if ( activation instanceof Object ) {
+        const describeInjectableFailure = value => {
+            if ( value instanceof Object ) {
+                if ( value.ok === true ) { return ''; }
+                if ( typeof value.lastError === 'string' && value.lastError !== '' ) {
+                    return value.lastError;
+                }
+                if ( typeof value.initialError === 'string' && value.initialError !== '' ) {
+                    return value.initialError;
+                }
+            }
+            return 'injectable activation failed';
+        };
+        const appendCommunitySyncError = async extraMessage => {
+            if ( typeof extraMessage !== 'string' || extraMessage === '' ) { return; }
+            try {
+                const current = await localRead('communityBundleLastError');
+                const message = typeof current === 'string' && current !== ''
+                    ? `${current}; ${extraMessage}`
+                    : extraMessage;
+                await localWrite('communityBundleLastError', message);
+            } catch (reason) {
+                ubolErr(`community-sync/append-error/${reason}`);
+            }
+        };
+        const rollbackActivation = async failureReason => {
+            const rollbackResult = await rollbackCommunityActivation(
+                activation,
+                failureReason
+            ).catch(reason => {
+                ubolErr(`community-sync/rollback/${reason}`);
+                return {
+                    lastError: String(reason || failureReason || 'rollback failed'),
+                };
+            });
+            const restoreResult = await registerInjectablesIfEntitled().catch(reason => ({
+                ok: false,
+                lastError: String(reason || 'rollback injectable restore failed'),
+            }));
+            if ( restoreResult instanceof Object && restoreResult.ok !== true ) {
+                await appendCommunitySyncError(
+                    `rollback injectable restore failed: ${describeInjectableFailure(restoreResult)}`
+                );
+            }
+            await refreshRuntimeStateForOpenTabs().catch(ubolErr);
+            return {
+                ...result,
+                source: 'remote-rolled-back',
+                rolledBack: true,
+                error: rollbackResult?.lastError || String(failureReason || ''),
+            };
+        };
+
+        try {
+            if ( result.requiresInjectableRefresh ) {
+                await resetRemoteCosmeticsRuntimeStats().catch(ubolErr);
+                const injectableResult = await registerInjectablesIfEntitled();
+                if (
+                    injectableResult instanceof Object
+                        ? injectableResult.ok !== true
+                        : injectableResult !== true
+                ) {
+                    return rollbackActivation(describeInjectableFailure(injectableResult));
+                }
+                await refreshRuntimeStateForOpenTabs().catch(ubolErr);
+            }
+            await finalizeCommunityActivationSuccess(activation);
+            return result;
+        } catch (reason) {
+            return rollbackActivation(String(reason || 'remote activation failed'));
+        }
+    }
+
+    if ( result.requiresInjectableRefresh ) {
         await resetRemoteCosmeticsRuntimeStats().catch(ubolErr);
         await syncInjectablesAndRefreshTabs({ runtimeOnly: false }).catch(ubolErr);
     }
@@ -3501,6 +3578,15 @@ function onMessage(request, sender, callback) {
                     diagnosticsMeta.partialDnrRepairCount = partialDnrRepairCount;
                     diagnosticsMeta.lastPartialDnrRepair =
                         Number(allowAllRulesDiagnostics?.lastRepairAt) || 0;
+                }
+                const allowAllRollbackCount = Math.max(
+                    0,
+                    Math.floor(Number(allowAllRulesDiagnostics?.rollbackCount) || 0)
+                );
+                if ( allowAllRollbackCount !== 0 ) {
+                    diagnosticsMeta.allowAllRollbackCount = allowAllRollbackCount;
+                    diagnosticsMeta.lastAllowAllRollback =
+                        Number(allowAllRulesDiagnostics?.lastRollbackAt) || 0;
                 }
                 if ( Object.keys(diagnosticsMeta).length !== 0 || partialDnrRepairCount !== 0 ) {
                     diagnosticsMeta.ttlHours = normalizeCommunitySyncTtlHours(

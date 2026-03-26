@@ -9,7 +9,7 @@ import {
 
 import { isDeveloperModeAllowed, rulesetConfig } from './config.js';
 import { ubolErr, ubolLog } from './debug.js';
-import { updateCommunityRules } from './ruleset-manager.js';
+import { getActiveCommunityRules, updateCommunityRules } from './ruleset-manager.js';
 import {
     isExactHostnamePattern,
     isRemoteScriptletAllowed,
@@ -86,6 +86,26 @@ const COMMUNITY_PRIVATE_ONLY_KEYS = [
 const COMMUNITY_STATE_KEYS = [
     ...Object.values(STORAGE_KEYS),
     ...Object.values(LEGACY_PRIVATE_STORAGE_KEYS),
+];
+const COMMUNITY_ROLLBACK_SNAPSHOT_KEYS = [
+    STORAGE_KEYS.meta,
+    STORAGE_KEYS.rules,
+    STORAGE_KEYS.cosmetics,
+    STORAGE_KEYS.heuristics,
+    STORAGE_KEYS.publicDirectives,
+    STORAGE_KEYS.publicScriptlets,
+    STORAGE_KEYS.privateDirectives,
+    STORAGE_KEYS.privateScriptlets,
+    STORAGE_KEYS.lastSuccess,
+    LEGACY_PRIVATE_STORAGE_KEYS.directives,
+    LEGACY_PRIVATE_STORAGE_KEYS.scriptlets,
+];
+const COMMUNITY_ACTIVATION_META_KEYS = [
+    'activationStatus',
+    'activationRollbackAt',
+    'activationRollbackReason',
+    'activationRollbackAttemptedVersion',
+    'activationRollbackRestoredVersion',
 ];
 
 const COMMUNITY_ALLOWED_HOSTS = (() => {
@@ -303,6 +323,46 @@ const loadFallbackRules = async ( ) => {
 const removeStoredCommunityKeys = keys =>
     Promise.all(keys.map(key => localRemove(key)));
 
+const cloneValue = value => value === undefined
+    ? undefined
+    : structuredClone(value);
+
+const readLocalStorageSnapshot = async keys => {
+    if ( browser.storage?.local?.get === undefined ) { return {}; }
+    try {
+        const bin = await browser.storage.local.get(keys);
+        if ( bin instanceof Object === false ) { return {}; }
+        const snapshot = {};
+        for ( const key of keys ) {
+            if ( Object.hasOwn(bin, key) === false ) { continue; }
+            snapshot[key] = cloneValue(bin[key]);
+        }
+        return snapshot;
+    } catch {
+    }
+    return {};
+};
+
+const restoreLocalStorageSnapshot = async (snapshot, keys) => {
+    const writes = {};
+    const removes = [];
+    for ( const key of keys ) {
+        if ( Object.hasOwn(snapshot, key) ) {
+            writes[key] = cloneValue(snapshot[key]);
+            continue;
+        }
+        removes.push(key);
+    }
+    const jobs = [];
+    if ( Object.keys(writes).length !== 0 ) {
+        jobs.push(browser.storage.local.set(writes));
+    }
+    if ( removes.length !== 0 ) {
+        jobs.push(browser.storage.local.remove(removes));
+    }
+    await Promise.all(jobs);
+};
+
 const getCommunityApplyError = applied => {
     const rawError = typeof applied?.error === 'string'
         ? applied.error.trim()
@@ -317,6 +377,79 @@ const mergeCommunityExtras = (...inputs) => {
     for ( const input of inputs ) {
         if ( Array.isArray(input) === false ) { continue; }
         out.push(...input);
+    }
+    return out.length === 0 ? null : out;
+};
+
+const clearCommunityActivationMeta = meta => {
+    const out = meta instanceof Object
+        ? { ...meta }
+        : {};
+    for ( const key of COMMUNITY_ACTIVATION_META_KEYS ) {
+        delete out[key];
+    }
+    return out;
+};
+
+const normalizeRollbackReason = reason => {
+    if ( reason instanceof Error ) { return reason.message; }
+    return typeof reason === 'string'
+        ? reason.trim()
+        : String(reason || '').trim();
+};
+
+const buildCommunityActivationMeta = (meta, patch = {}) =>
+    Object.assign(clearCommunityActivationMeta(meta), patch);
+
+export const canonicalizeCommunityScriptlets = (
+    input,
+    { maxEntries = 120 } = {}
+) => {
+    if ( Array.isArray(input) === false ) { return null; }
+    const grouped = new Map();
+    for ( const entry of input ) {
+        if ( entry instanceof Object === false ) { continue; }
+        const rulesetId = typeof entry.rulesetId === 'string'
+            ? entry.rulesetId.trim()
+            : '';
+        const token = typeof entry.token === 'string'
+            ? entry.token.trim()
+            : '';
+        if ( rulesetId === '' || token === '' ) { continue; }
+        if ( isRemoteScriptletAllowed(token) === false ) { continue; }
+        const world = entry.world === 'MAIN' ? 'MAIN' : 'ISOLATED';
+        const key = `${rulesetId}\n${token}\n${world}`;
+        let bucket = grouped.get(key);
+        if ( bucket === undefined ) {
+            if ( grouped.size >= maxEntries ) { continue; }
+            bucket = {
+                rulesetId,
+                token,
+                world,
+                hosts: new Set(),
+            };
+            grouped.set(key, bucket);
+        }
+        const hosts = Array.isArray(entry.hosts) ? entry.hosts : [];
+        for ( const host of hosts ) {
+            const normalizedHost = normalizeScopedHostPattern(host, {
+                allowGlobal: false,
+            });
+            if ( normalizedHost === '' ) { continue; }
+            if ( patternCouldMatchProtectedDomain(normalizedHost) ) { continue; }
+            bucket.hosts.add(normalizedHost);
+        }
+    }
+    const out = [];
+    for ( const bucket of grouped.values() ) {
+        const hosts = Array.from(bucket.hosts).sort();
+        if ( hosts.length === 0 ) { continue; }
+        out.push({
+            rulesetId: bucket.rulesetId,
+            token: bucket.token,
+            hosts,
+            world: bucket.world,
+        });
     }
     return out.length === 0 ? null : out;
 };
@@ -393,6 +526,95 @@ export async function scrubPrivateCommunityState(
     return {
         cleanupReason: requiresInjectableRefresh ? cleanupReason : '',
         requiresInjectableRefresh,
+    };
+}
+
+const snapshotCommunityActivationState = async ({ candidateMeta, attemptedAt } = {}) => {
+    const [
+        activeRules,
+        storageSnapshot,
+    ] = await Promise.all([
+        getActiveCommunityRules(),
+        readLocalStorageSnapshot(COMMUNITY_ROLLBACK_SNAPSHOT_KEYS),
+    ]);
+    return {
+        activeRules,
+        storageSnapshot,
+        attemptedAt: Number(attemptedAt) || Date.now(),
+        candidateMeta: candidateMeta instanceof Object
+            ? cloneValue(candidateMeta)
+            : null,
+    };
+};
+
+export async function finalizeCommunityActivationSuccess(activation) {
+    if ( activation instanceof Object === false ) { return {}; }
+    const now = Date.now();
+    const currentMeta = await localRead(STORAGE_KEYS.meta);
+    const nextMeta = buildCommunityActivationMeta(currentMeta);
+    await Promise.all([
+        localWrite(STORAGE_KEYS.meta, nextMeta),
+        localWrite(STORAGE_KEYS.lastSuccess, now),
+        localRemove(STORAGE_KEYS.lastError),
+    ]);
+    scheduleCommunitySuccessAlarm({
+        ttlHours: activation?.candidateMeta?.ttlHours,
+    });
+    return {
+        meta: nextMeta,
+        lastSuccess: now,
+    };
+}
+
+export async function rollbackCommunityActivation(activation, reason) {
+    const failureMessage = normalizeRollbackReason(reason) || 'activation failed';
+    const attemptedAt = Number(activation?.attemptedAt) || Date.now();
+    const storageSnapshot = activation?.storageSnapshot instanceof Object
+        ? activation.storageSnapshot
+        : {};
+    const candidateMeta = activation?.candidateMeta instanceof Object
+        ? activation.candidateMeta
+        : {};
+    const restoredMeta = Object.hasOwn(storageSnapshot, STORAGE_KEYS.meta)
+        ? storageSnapshot[STORAGE_KEYS.meta]
+        : undefined;
+    const restoreResult = await updateCommunityRules(
+        Array.isArray(activation?.activeRules) ? activation.activeRules : [],
+        {
+            source: 'rollback',
+            version: restoredMeta?.version,
+            schemaVersion: restoredMeta?.schemaVersion,
+        }
+    );
+    const restoreError = getCommunityApplyError(restoreResult);
+    const effectiveFailureMessage = [
+        failureMessage,
+        restoreError !== ''
+            ? `rollback community rules failed: ${restoreError}`
+            : '',
+    ].filter(part => part !== '').join('; ');
+    await restoreLocalStorageSnapshot(storageSnapshot, COMMUNITY_ROLLBACK_SNAPSHOT_KEYS);
+    const rollbackMeta = buildCommunityActivationMeta(restoredMeta, {
+        activationStatus: 'rolled_back',
+        activationRollbackAt: attemptedAt,
+        activationRollbackReason: effectiveFailureMessage,
+        activationRollbackAttemptedVersion: typeof candidateMeta?.version === 'string'
+            ? candidateMeta.version
+            : '',
+        activationRollbackRestoredVersion: typeof restoredMeta?.version === 'string'
+            ? restoredMeta.version
+            : '',
+    });
+    await Promise.all([
+        localWrite(STORAGE_KEYS.meta, rollbackMeta),
+        localWrite(STORAGE_KEYS.lastAttempt, attemptedAt),
+        localWrite(STORAGE_KEYS.lastFetch, attemptedAt),
+        localWrite(STORAGE_KEYS.lastError, effectiveFailureMessage),
+    ]);
+    scheduleCommunityRetryAlarm();
+    return {
+        meta: rollbackMeta,
+        lastError: effectiveFailureMessage,
     };
 }
 
@@ -622,6 +844,9 @@ export async function syncCommunityRules({ force = false } = {}) {
     }
 
     const normalizedSchemaVersion = schemaVersion || COMMUNITY_RULE_SCHEMA_VERSION_LEGACY;
+    const activationSnapshot = await snapshotCommunityActivationState({
+        attemptedAt: Date.now(),
+    });
     const applied = await updateCommunityRules(rules, {
         source: 'remote',
         version: bundle.version,
@@ -812,24 +1037,9 @@ export async function syncCommunityRules({ force = false } = {}) {
         return out;
     };
 
-    const sanitizeScriptlets = input => {
-        if ( Array.isArray(input) === false ) { return null; }
-        const out = [];
-        for ( const s of input ) {
-            if ( s instanceof Object === false ) { continue; }
-            const rulesetId = typeof s.rulesetId === 'string' ? s.rulesetId.trim() : '';
-            const token = typeof s.token === 'string' ? s.token.trim() : '';
-            if ( rulesetId === '' || token === '' ) { continue; }
-            if ( isRemoteScriptletAllowed(token) === false ) { continue; }
-            const sanitizedHosts = sanitizeScopedHostPatterns(s.hosts, 80);
-            if ( sanitizedHosts.length === 0 ) { continue; }
-            if ( sanitizedHosts.some(patternCouldMatchProtectedDomain) ) { continue; }
-            const world = s.world === 'MAIN' ? 'MAIN' : 'ISOLATED';
-            out.push({ rulesetId, token, hosts: sanitizedHosts, world });
-            if ( out.length >= 120 ) { break; }
-        }
-        return out;
-    };
+    const sanitizeScriptlets = input => canonicalizeCommunityScriptlets(input, {
+        maxEntries: 120,
+    });
 
     let cosmeticsToStore = null;
     let heuristicsToStore = null;
@@ -888,14 +1098,12 @@ export async function syncCommunityRules({ force = false } = {}) {
         proofScriptletsCount: privateScriptletsToStore?.length || 0,
     };
 
-    const now = Date.now();
+    const now = activationSnapshot.attemptedAt;
     const writes = [
         localWrite(STORAGE_KEYS.rules, rules),
         localWrite(STORAGE_KEYS.meta, metaToStore),
         localWrite(STORAGE_KEYS.lastAttempt, now),
-        localWrite(STORAGE_KEYS.lastSuccess, now),
         localWrite(STORAGE_KEYS.lastFetch, now),
-        localRemove(STORAGE_KEYS.lastError),
     ];
     if ( extrasSigned ) {
         writes.push(
@@ -938,7 +1146,6 @@ export async function syncCommunityRules({ force = false } = {}) {
         hasCommunityInjectableStateChanged(beforeInjectableState, afterInjectableState)
     );
 
-    scheduleCommunitySuccessAlarm({ ttlHours: metaToStore.ttlHours });
     ubolLog(`community-sync: applied ${applied.added || 0} rules from remote`);
 
     return {
@@ -947,6 +1154,10 @@ export async function syncCommunityRules({ force = false } = {}) {
         meta: metaToStore,
         requiresInjectableRefresh,
         cleanupReason: '',
+        activation: {
+            ...activationSnapshot,
+            candidateMeta: cloneValue(metaToStore),
+        },
     };
 }
 

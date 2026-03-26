@@ -30,6 +30,7 @@ import {
     YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT,
     YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY,
 } from './breakage-policy.js';
+import { canonicalizeCommunityScriptlets } from './community-sync.js';
 import { fetchJSON } from './fetch.js';
 import { getEnabledRulesetsDetails } from './ruleset-manager.js';
 import { getFilteringModeDetails } from './mode-manager.js';
@@ -773,7 +774,9 @@ function registerScriptlet(context, scriptletDetails) {
 
 function registerRemoteScriptlets(context, scriptletDetails) {
     const { before, filteringModeDetails, remoteScriptlets } = context;
-    if ( Array.isArray(remoteScriptlets) === false || remoteScriptlets.length === 0 ) {
+    const canonicalRemoteScriptlets = canonicalizeCommunityScriptlets(remoteScriptlets);
+    if ( Array.isArray(canonicalRemoteScriptlets) === false ||
+        canonicalRemoteScriptlets.length === 0 ) {
         return;
     }
 
@@ -799,14 +802,15 @@ function registerRemoteScriptlets(context, scriptletDetails) {
         ...filteringModeDetails.complete,
     ];
 
-    for ( const details of remoteScriptlets ) {
+    for ( const details of canonicalRemoteScriptlets ) {
         const rulesetId = details?.rulesetId;
         const token = details?.token;
         if ( typeof rulesetId !== 'string' || typeof token !== 'string' ) { continue; }
         const baseId = `${rulesetId}.${token}`;
         if ( validIds.has(baseId) === false ) { continue; }
 
-        const id = `remote-scriptlet.${baseId}`;
+        const world = details.world === 'MAIN' ? 'MAIN' : 'ISOLATED';
+        const id = `remote-scriptlet.${world.toLowerCase()}.${baseId}`;
         const registered = before.get(id);
 
         const excludeMatches = [];
@@ -840,7 +844,7 @@ function registerRemoteScriptlets(context, scriptletDetails) {
             allFrames: shouldUseAllFramesForScriptlet(rulesetId, token),
             matchOriginAsFallback: shouldUseOriginFallbackForScriptlet(rulesetId, token),
             runAt: 'document_start',
-            world: details.world === 'MAIN' ? 'MAIN' : 'ISOLATED',
+            world,
         };
         if ( excludeMatches.length !== 0 ) {
             directive.excludeMatches = excludeMatches;

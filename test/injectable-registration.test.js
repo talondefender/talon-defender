@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 
 import { runInjectableRegistrationFlow } from '../js/injectable-registration.js';
 
@@ -88,4 +89,14 @@ test('injectable registration surfaces failure after recovery retry is exhausted
     { type: 'unregister', ids: ['stale-registered-a'] },
     { type: 'register', ids: ['remote-cosmetics'] },
   ]);
+});
+
+test('remote scriptlet registration canonicalizes duplicate entries and scopes ids by world', async () => {
+  const source = await fs.readFile(
+    new URL('../js/scripting-manager.js', import.meta.url),
+    'utf8'
+  );
+
+  assert.match(source, /canonicalizeCommunityScriptlets\(remoteScriptlets\)/);
+  assert.match(source, /remote-scriptlet\.\$\{world\.toLowerCase\(\)\}\.\$\{baseId\}/);
 });

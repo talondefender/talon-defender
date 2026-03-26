@@ -64,6 +64,7 @@ const dnrState = {
   dynamicRules: [],
   sessionRules: [],
   failCommunityUpdateCount: 0,
+  failSessionUpdateCount: 0,
   enabledRulesets: [],
 };
 
@@ -141,6 +142,10 @@ const dnr = {
     return clone(filterRulesByIds(dnrState.sessionRules, options.ruleIds));
   },
   async updateSessionRules({ addRules = [], removeRuleIds = [] } = {}) {
+    if (dnrState.failSessionUpdateCount > 0) {
+      dnrState.failSessionUpdateCount -= 1;
+      throw new Error('simulated session update failure');
+    }
     dnrState.sessionRules = dnrState.sessionRules.filter(
       rule => removeRuleIds.includes(rule.id) === false
     );
@@ -255,6 +260,9 @@ const {
 } = await import(new URL('../js/community-sync-logic.js', import.meta.url));
 const { textFromRules } = await import(new URL('../js/dnr-parser.js', import.meta.url));
 const {
+  canonicalizeCommunityScriptlets,
+  finalizeCommunityActivationSuccess,
+  rollbackCommunityActivation,
   scrubPrivateCommunityState,
   syncCommunityRules,
 } = await import(new URL('../js/community-sync.js', import.meta.url));
@@ -338,6 +346,7 @@ const resetEnvironment = () => {
   dnrState.dynamicRules.length = 0;
   dnrState.sessionRules.length = 0;
   dnrState.failCommunityUpdateCount = 0;
+  dnrState.failSessionUpdateCount = 0;
   dnrState.enabledRulesets.length = 0;
   dnr.MAX_NUMBER_OF_DYNAMIC_RULES = DEFAULT_MAX_NUMBER_OF_DYNAMIC_RULES;
   dnr.MAX_NUMBER_OF_REGEX_RULES = DEFAULT_MAX_NUMBER_OF_REGEX_RULES;
@@ -435,6 +444,7 @@ test('community sync stores signed protected exact-host cosmetics and aligned he
   });
 
   const result = await syncCommunityRules({ force: true });
+  await finalizeCommunityActivationSuccess(result.activation);
 
   assert.equal(result.source, 'remote');
   assert.equal(result.requiresInjectableRefresh, true);
@@ -636,6 +646,7 @@ test('community sync stores signed public directives and scriptlets without deve
   });
 
   const result = await syncCommunityRules({ force: true });
+  await finalizeCommunityActivationSuccess(result.activation);
 
   assert.equal(result.source, 'remote');
   assert.equal(rulesetConfig.developerMode, false);
@@ -672,6 +683,136 @@ test('community sync stores signed public directives and scriptlets without deve
   assert.equal(storageData.communityBundlePrivateScriptlets, null);
   assert.equal(Object.hasOwn(storageData, 'communityBundleDirectives'), false);
   assert.equal(Object.hasOwn(storageData, 'communityBundleScriptlets'), false);
+});
+
+test('community scriptlet canonicalization merges duplicate hosts and keeps worlds separate', () => {
+  const canonical = canonicalizeCommunityScriptlets([
+    {
+      rulesetId: 'ublock-filters',
+      token: 'abort-on-property-read',
+      hosts: ['beta.example', 'alpha.example'],
+      world: 'MAIN',
+    },
+    {
+      rulesetId: 'ublock-filters',
+      token: 'abort-on-property-read',
+      hosts: ['alpha.example', '=checkout.shopify.com', '*'],
+      world: 'MAIN',
+    },
+    {
+      rulesetId: 'ublock-filters',
+      token: 'abort-on-property-read',
+      hosts: ['gamma.example'],
+      world: 'ISOLATED',
+    },
+  ]);
+
+  assert.deepEqual(canonical, [
+    {
+      rulesetId: 'ublock-filters',
+      token: 'abort-on-property-read',
+      hosts: ['alpha.example', 'beta.example'],
+      world: 'MAIN',
+    },
+    {
+      rulesetId: 'ublock-filters',
+      token: 'abort-on-property-read',
+      hosts: ['gamma.example'],
+      world: 'ISOLATED',
+    },
+  ]);
+});
+
+test('community activation rollback restores last-known-good bundle state after injectable failure', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  const storedRules = [
+    {
+      action: { type: 'block' },
+      condition: { urlFilter: '||stored.example^' },
+    },
+  ];
+  const storedMeta = {
+    version: 'stored-v1',
+    schemaVersion: 2,
+    ttlHours: 6,
+    retryMinutes: 15,
+    hotfixLane: 'public',
+  };
+  const lastSuccess = Date.UTC(2026, 2, 25, 17, 0, 0, 0);
+  await browserStub.storage.local.set({
+    communityBundleRules: storedRules,
+    communityBundleMeta: storedMeta,
+    communityBundleLastSuccess: lastSuccess,
+    communityBundlePublicScriptlets: [
+      {
+        rulesetId: 'ublock-filters',
+        token: 'abort-on-property-read',
+        hosts: ['stored.example'],
+        world: 'MAIN',
+      },
+    ],
+  });
+  await updateCommunityRules(storedRules, {
+    source: 'stored',
+    version: storedMeta.version,
+    schemaVersion: storedMeta.schemaVersion,
+  });
+
+  remoteBundle = await createSignedBundle({
+    version: 'remote-v2',
+    rules: [
+      {
+        action: { type: 'block' },
+        condition: { urlFilter: '||remote.example^' },
+      },
+    ],
+    scriptlets: [
+      {
+        rulesetId: 'ublock-filters',
+        token: 'abort-on-property-read',
+        hosts: ['remote.example'],
+        world: 'MAIN',
+      },
+    ],
+  });
+
+  const result = await syncCommunityRules({ force: true });
+  const rollbackStartedAt = Date.now();
+  const rollback = await rollbackCommunityActivation(
+    result.activation,
+    'injectable registration failed'
+  );
+  const retryAlarm = alarmCreates.at(-1);
+
+  assert.equal(result.source, 'remote');
+  assert.equal(storageData.communityBundleMeta.version, 'stored-v1');
+  assert.equal(storageData.communityBundleMeta.activationStatus, 'rolled_back');
+  assert.equal(
+    storageData.communityBundleMeta.activationRollbackReason,
+    'injectable registration failed'
+  );
+  assert.equal(
+    storageData.communityBundleMeta.activationRollbackAttemptedVersion,
+    'remote-v2'
+  );
+  assert.equal(
+    storageData.communityBundleMeta.activationRollbackRestoredVersion,
+    'stored-v1'
+  );
+  assert.equal(storageData.communityBundleLastSuccess, lastSuccess);
+  assert.equal(storageData.communityBundleLastError, 'injectable registration failed');
+  assert.equal(rollback.lastError, 'injectable registration failed');
+  assert.ok(typeof storageData.communityBundleLastAttempt === 'number');
+  assert.ok(typeof storageData.communityBundleLastFetch === 'number');
+  assert.equal(retryAlarm.name, 'community-sync');
+  assert.ok(retryAlarm.info.when >= rollbackStartedAt + COMMUNITY_SYNC_FAILURE_RETRY_MS - 2000);
+  assert.deepEqual(
+    dnrState.dynamicRules
+      .filter(rule => rule.id >= 6000000 && rule.id < 7000000)
+      .map(rule => rule.condition.urlFilter),
+    ['||stored.example^']
+  );
 });
 
 test('scrubPrivateCommunityState preserves public hotfix state while clearing proof-only extras', { concurrency: false }, async () => {
@@ -832,8 +973,73 @@ test('setAllowAllRules repairs missing session companion rules and records the r
   assert.deepEqual(storageData.allowAllRulesDiagnosticsV1, {
     partialRepairCount: 1,
     lastRepairAt: storageData.allowAllRulesDiagnosticsV1.lastRepairAt,
+    rollbackCount: 0,
+    lastRollbackAt: 0,
   });
   assert.equal(typeof storageData.allowAllRulesDiagnosticsV1.lastRepairAt, 'number');
+});
+
+test('setAllowAllRules rolls back partial updates when the session companion write fails', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  dnrState.dynamicRules.push({
+    id: 8000000,
+    action: { type: 'allowAllRequests' },
+    condition: {
+      resourceTypes: ['main_frame'],
+      requestDomains: ['stored.example'],
+    },
+    priority: 2000000,
+  });
+  dnrState.sessionRules.push({
+    id: 8000001,
+    action: { type: 'allow' },
+    condition: {
+      tabIds: [-1],
+      initiatorDomains: ['stored.example'],
+    },
+    priority: 2000000,
+  });
+  dnrState.failSessionUpdateCount = 1;
+
+  const modified = await compatDnr.setAllowAllRules(
+    8000000,
+    ['news.example'],
+    [],
+    false,
+    2000000
+  );
+
+  assert.equal(modified, false);
+  assert.deepEqual(dnrState.dynamicRules, [
+    {
+      id: 8000000,
+      action: { type: 'allowAllRequests' },
+      condition: {
+        resourceTypes: ['main_frame'],
+        requestDomains: ['stored.example'],
+      },
+      priority: 2000000,
+    },
+  ]);
+  assert.deepEqual(dnrState.sessionRules, [
+    {
+      id: 8000001,
+      action: { type: 'allow' },
+      condition: {
+        tabIds: [-1],
+        initiatorDomains: ['stored.example'],
+      },
+      priority: 2000000,
+    },
+  ]);
+  assert.deepEqual(storageData.allowAllRulesDiagnosticsV1, {
+    partialRepairCount: 0,
+    rollbackCount: 1,
+    lastRepairAt: 0,
+    lastRollbackAt: storageData.allowAllRulesDiagnosticsV1.lastRollbackAt,
+  });
+  assert.equal(typeof storageData.allowAllRulesDiagnosticsV1.lastRollbackAt, 'number');
 });
 
 test('packaged community fallback bundle is valid and non-empty', { concurrency: false }, () => {

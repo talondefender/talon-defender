@@ -42,15 +42,17 @@ Community bundle behavior now:
 - community sync now runs through a single-flight lane, and a forced post-activation sync queues one follow-up run if another sync is already in flight
 - schema `v2` community bundles can now ship tightly scoped MV3-safe exception rules using exact-host `allow`, exact-host `allowAllRequests`, and packaged-resource `redirect` actions
 - signed public bundles can now also ship host-scoped directives and bundled-allowlist scriptlets in normal store builds without developer mode
+- signed remote extras now activate with rollback semantics: the worker snapshots the prior community state, stages the candidate bundle, and restores the last-known-good rules and extras if injectable registration fails
 - when community sync is disabled or the configured bundle URL is invalid, the extension clears active community DNR rules plus stored remote cosmetics, heuristics, directives, scriptlets, and sync diagnostics state
 - public startup now scrubs only proof-lane directives, scriptlets, and breakage-audit overrides before injectable registration, while preserving active public signed hotfix extras
 - successful sync and private-state cleanup now trigger an immediate full injectable refresh when remote cosmetics, heuristics, directives, or scriptlets changed
 - signed remote cosmetics can now carry both global selectors and host-scoped selectors without a store update
 - remote heuristics can now carry signed `labelRegexes`, `labelSelectors`, and `widgetSelectors` so the native ad-marker vocabulary and selector tuning can expand without a store update
+- remote scriptlet authoring now canonicalizes duplicate `rulesetId` + `token` + `world` entries by merging and sorting hosts before storage and registration, so public and proof lanes cannot collide on content-script ids
 - when remote fetch or remote apply fails, the extension falls back to stored rules or a non-empty packaged DNR fallback bundle, clears stale private proof-lane state, and retries after `15` minutes without treating the failed attempt as a successful sync
-- the allow-all DNR helper now self-heals partial dynamic/session mismatches and reports those repairs through troubleshooting diagnostics
+- the allow-all DNR helper now self-heals partial dynamic/session mismatches, verifies the final paired state, rolls back on partial update failure, and reports both repairs and rollbacks through troubleshooting diagnostics
 - injectable registration now retries once after a full reset of extension-managed content scripts and persists the latest sync result for troubleshooting
-- troubleshooting/report output now exposes community bundle version, schema version, last success/error state, cleanup reason, public versus proof hotfix counts, dropped quota classes, partial DNR repair state, active exception counts, remote heuristic regex counts, host-scoped cosmetic counts, and injectable sync recovery errors for operator diagnostics
+- troubleshooting/report output now exposes community bundle version, schema version, last success/error state, cleanup reason, activation rollback state, public versus proof hotfix counts, dropped quota classes, partial DNR repair state, allow-all rollback state, active exception counts, remote heuristic regex counts, host-scoped cosmetic counts, and injectable sync recovery errors for operator diagnostics
 
 Release posture now:
 - this workspace is the only public-safe source surface
