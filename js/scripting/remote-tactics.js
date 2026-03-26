@@ -2,6 +2,7 @@
 (function talonRemoteTactics() {
     const REQUEST_EVENT = 'td-remote-tactics-request';
     const CONFIG_EVENT = 'td-remote-tactics-config';
+    const HIT_EVENT = 'td-remote-tactics-hit';
     const CONFIG_WAIT_TIMEOUT_MS = 250;
     const hostname = (self.location?.hostname || '').trim().toLowerCase();
     const nativeFetch = typeof self.fetch === 'function' ? self.fetch : undefined;
@@ -15,6 +16,8 @@
     const VALID_KIND_SET = 'jsonSet';
     const VALID_KIND_PRUNE = 'jsonPrune';
     const VALID_TRANSPORT_BOTH = 'both';
+    const VALID_PHASE_RESPONSE = 'response';
+    const VALID_PHASE_REQUEST = 'request';
 
     const state = {
         tactics: [],
@@ -26,6 +29,8 @@
         resolveConfig: undefined,
         configTimeout: 0,
     };
+
+    const isObjectLike = value => value !== null && typeof value === 'object';
 
     const clearConfigTimeout = () => {
         if ( state.configTimeout === 0 ) { return; }
@@ -53,12 +58,15 @@
         if ( Array.isArray(input) === false ) { return []; }
         const out = [];
         for ( const entry of input ) {
-            if ( entry instanceof Object === false ) { continue; }
+            if ( isObjectLike(entry) === false ) { continue; }
             const id = typeof entry.id === 'string' ? entry.id.trim() : '';
             const kind = typeof entry.kind === 'string' ? entry.kind.trim() : '';
             const transport = typeof entry.transport === 'string'
                 ? entry.transport.trim()
                 : '';
+            const phase = typeof entry.phase === 'string'
+                ? entry.phase.trim()
+                : VALID_PHASE_RESPONSE;
             const urlPathPrefixes = Array.isArray(entry.urlPathPrefixes)
                 ? entry.urlPathPrefixes.filter(v => typeof v === 'string' && v !== '')
                 : [];
@@ -68,6 +76,7 @@
             if (
                 id === '' ||
                 (kind !== VALID_KIND_PRUNE && kind !== VALID_KIND_SET) ||
+                (phase !== VALID_PHASE_RESPONSE && phase !== VALID_PHASE_REQUEST) ||
                 (transport !== 'fetch' && transport !== 'xhr' && transport !== VALID_TRANSPORT_BOTH) ||
                 urlPathPrefixes.length === 0 ||
                 jsonPaths.length === 0
@@ -77,6 +86,7 @@
             const tactic = {
                 id,
                 kind,
+                phase,
                 transport,
                 urlPathPrefixes,
                 jsonPaths,
@@ -132,12 +142,23 @@
         url.hostname.toLowerCase() === hostname
     );
 
-    const applicableTactics = (transport, pathname) => state.tactics.filter(entry => (
+    const applicableTactics = (transport, pathname, phase = VALID_PHASE_RESPONSE) => state.tactics.filter(entry => (
+        (entry.phase || VALID_PHASE_RESPONSE) === phase
+    )).filter(entry => (
         entry.transport === transport ||
         entry.transport === VALID_TRANSPORT_BOTH
     )).filter(entry => (
         entry.urlPathPrefixes.some(prefix => pathname.startsWith(prefix))
     ));
+
+    const emitHitEvent = detail => {
+        try {
+            document.dispatchEvent(new CustomEvent(HIT_EVENT, {
+                detail: isObjectLike(detail) ? { ...detail } : {},
+            }));
+        } catch {
+        }
+    };
 
     const collectConcretePaths = (root, segments, index = 0, prefix = [], out = []) => {
         if ( index >= segments.length ) {
@@ -159,14 +180,14 @@
                 }
                 return out;
             }
-            if ( root instanceof Object ) {
+            if ( isObjectLike(root) ) {
                 for ( const key of Object.keys(root) ) {
                     collectConcretePaths(root[key], segments, index + 1, [ ...prefix, key ], out);
                 }
             }
             return out;
         }
-        if ( root instanceof Object === false || Object.hasOwn(root, segment) === false ) {
+        if ( isObjectLike(root) === false || Object.hasOwn(root, segment) === false ) {
             return out;
         }
         collectConcretePaths(root[segment], segments, index + 1, [ ...prefix, segment ], out);
@@ -178,7 +199,7 @@
         let owner = root;
         for ( let i = 0; i < path.length - 1; i++ ) {
             const key = path[i];
-            if ( owner instanceof Object === false || Object.hasOwn(owner, key) === false ) {
+            if ( isObjectLike(owner) === false || Object.hasOwn(owner, key) === false ) {
                 return null;
             }
             owner = owner[key];
@@ -214,7 +235,7 @@
         if ( tactic.kind === VALID_KIND_SET ) {
             for ( const path of targets ) {
                 const ref = resolvePathOwner(root, path);
-                if ( ref === null || ref.owner instanceof Object === false ) { continue; }
+                if ( ref === null || isObjectLike(ref.owner) === false ) { continue; }
                 ref.owner[ref.key] = cloneJsonValue(tactic.value);
                 mutated = true;
             }
@@ -222,7 +243,7 @@
         }
         for ( const path of targets.sort(compareConcretePathsForDeletion) ) {
             const ref = resolvePathOwner(root, path);
-            if ( ref === null || ref.owner instanceof Object === false ) { continue; }
+            if ( ref === null || isObjectLike(ref.owner) === false ) { continue; }
             if ( Array.isArray(ref.owner) && typeof ref.key === 'number' ) {
                 if ( ref.key < 0 || ref.key >= ref.owner.length ) { continue; }
                 ref.owner.splice(ref.key, 1);
@@ -237,7 +258,7 @@
     };
 
     const applyTacticsToJson = (input, matchingTactics) => {
-        if ( input instanceof Object === false || matchingTactics.length === 0 ) {
+        if ( isObjectLike(input) === false || matchingTactics.length === 0 ) {
             return { applied: false, value: input };
         }
         const clone = structuredClone(input);
@@ -251,6 +272,82 @@
             applied,
             value: applied ? clone : input,
         };
+    };
+
+    const isBodyEligibleMethod = method => {
+        const normalized = typeof method === 'string'
+            ? method.trim().toUpperCase()
+            : 'GET';
+        return normalized !== 'GET' && normalized !== 'HEAD';
+    };
+
+    const applyTacticsToJsonText = (bodyText, matchingTactics, hitDetail) => {
+        if ( typeof bodyText !== 'string' || bodyText === '' || matchingTactics.length === 0 ) {
+            return { applied: false, bodyText };
+        }
+        try {
+            const payload = JSON.parse(bodyText);
+            if ( isObjectLike(payload) === false ) {
+                return { applied: false, bodyText };
+            }
+            const result = applyTacticsToJson(payload, matchingTactics);
+            if ( result.applied !== true ) {
+                return { applied: false, bodyText };
+            }
+            emitHitEvent(hitDetail);
+            return {
+                applied: true,
+                bodyText: JSON.stringify(result.value),
+            };
+        } catch {
+        }
+        return { applied: false, bodyText };
+    };
+
+    const getFetchCandidateUrl = args => parseUrl(
+        args?.[0] instanceof Request
+            ? args[0].url
+            : String(args?.[0] || '')
+    );
+
+    const resolveFetchMethod = args => {
+        const init = args?.[1];
+        if ( typeof init?.method === 'string' && init.method.trim() !== '' ) {
+            return init.method;
+        }
+        if ( args?.[0] instanceof Request ) {
+            return args[0].method;
+        }
+        return 'GET';
+    };
+
+    const maybeRewriteFetchRequestArgs = args => {
+        const init = args?.[1];
+        if ( isObjectLike(init) === false || typeof init.body !== 'string' ) {
+            return args;
+        }
+        const candidateUrl = getFetchCandidateUrl(args);
+        if ( isInspectableUrl(candidateUrl) === false ) { return args; }
+        if ( isBodyEligibleMethod(resolveFetchMethod(args)) === false ) { return args; }
+        const matchingTactics = applicableTactics(
+            'fetch',
+            candidateUrl.pathname,
+            VALID_PHASE_REQUEST
+        );
+        if ( matchingTactics.length === 0 ) { return args; }
+        const result = applyTacticsToJsonText(init.body, matchingTactics, {
+            hostname,
+            pathname: candidateUrl.pathname,
+            phase: VALID_PHASE_REQUEST,
+            transport: 'fetch',
+        });
+        if ( result.applied !== true ) { return args; }
+        const nextArgs = Array.isArray(args) ? args.slice() : [];
+        nextArgs[1] = {
+            ...init,
+            body: result.bodyText,
+        };
+        return nextArgs;
     };
 
     const preserveFetchResponseMetadata = (source, target) => {
@@ -269,21 +366,27 @@
         if ( response instanceof Response === false ) { return response; }
         await state.configReady.catch(() => {});
         if ( state.tactics.length === 0 ) { return response; }
-        const candidateUrl = parseUrl(response.url) || parseUrl(
-            args?.[0] instanceof Request
-                ? args[0].url
-                : String(args?.[0] || '')
-        );
+        const candidateUrl = parseUrl(response.url) || getFetchCandidateUrl(args);
         if ( isInspectableUrl(candidateUrl) === false ) { return response; }
-        const matchingTactics = applicableTactics('fetch', candidateUrl.pathname);
+        const matchingTactics = applicableTactics(
+            'fetch',
+            candidateUrl.pathname,
+            VALID_PHASE_RESPONSE
+        );
         if ( matchingTactics.length === 0 ) { return response; }
         const contentType = `${response.headers?.get?.('content-type') || ''}`;
         if ( /json/i.test(contentType) === false ) { return response; }
         try {
             const payload = await response.clone().json();
-            if ( payload instanceof Object === false ) { return response; }
+            if ( isObjectLike(payload) === false ) { return response; }
             const result = applyTacticsToJson(payload, matchingTactics);
             if ( result.applied === false ) { return response; }
+            emitHitEvent({
+                hostname,
+                pathname: candidateUrl.pathname,
+                phase: VALID_PHASE_RESPONSE,
+                transport: 'fetch',
+            });
             const rewritten = Response.json(result.value, {
                 status: response.status,
                 statusText: response.statusText,
@@ -328,7 +431,7 @@
         contentType,
     }) => {
         if ( responseType === 'json' ) {
-            if ( innerResponse instanceof Object === false ) {
+            if ( isObjectLike(innerResponse) === false ) {
                 return { ok: false };
             }
             return {
@@ -346,7 +449,7 @@
         }
         try {
             const value = JSON.parse(rawText);
-            if ( value instanceof Object === false ) {
+            if ( isObjectLike(value) === false ) {
                 return { ok: false };
             }
             return {
@@ -362,12 +465,22 @@
 
     if ( typeof self.fetch === 'function' ) {
         self.fetch = new Proxy(self.fetch, {
-            apply(target, thisArg, args) {
-                const fetchPromise = Reflect.apply(target, thisArg, args);
-                return Promise.resolve(fetchPromise).then(
-                    response => rewriteFetchResponse(response, args),
-                    () => fetchPromise
-                );
+            async apply(target, thisArg, args) {
+                let nextArgs = args;
+                const candidateUrl = getFetchCandidateUrl(args);
+                const shouldAwaitConfig =
+                    isInspectableUrl(candidateUrl) &&
+                    isObjectLike(args?.[1]) &&
+                    typeof args[1]?.body === 'string' &&
+                    isBodyEligibleMethod(resolveFetchMethod(args));
+                if ( shouldAwaitConfig && state.configResolved === false ) {
+                    await state.configReady.catch(() => {});
+                }
+                if ( shouldAwaitConfig ) {
+                    nextArgs = maybeRewriteFetchRequestArgs(args);
+                }
+                const response = await Reflect.apply(target, thisArg, nextArgs);
+                return rewriteFetchResponse(response, nextArgs);
             },
         });
     }
@@ -395,11 +508,40 @@
         clearPendingXhrSend(xhr);
         if ( typeof nativeXhrSend !== 'function' ) { return false; }
         try {
-            Reflect.apply(nativeXhrSend, xhr.instance, sendArgs);
+            Reflect.apply(nativeXhrSend, xhr.instance, rewriteXhrSendArgs(xhr, sendArgs));
             return true;
         } catch {
         }
         return false;
+    };
+
+    const rewriteXhrSendArgs = (xhr, args) => {
+        if (
+            isObjectLike(xhr) === false ||
+            Array.isArray(args) === false ||
+            typeof args[0] !== 'string'
+        ) {
+            return args;
+        }
+        const requestUrl = parseUrl(xhr.url);
+        if ( isInspectableUrl(requestUrl) === false ) { return args; }
+        if ( isBodyEligibleMethod(xhr.method) === false ) { return args; }
+        const matchingTactics = applicableTactics(
+            'xhr',
+            requestUrl.pathname,
+            VALID_PHASE_REQUEST
+        );
+        if ( matchingTactics.length === 0 ) { return args; }
+        const result = applyTacticsToJsonText(args[0], matchingTactics, {
+            hostname,
+            pathname: requestUrl.pathname,
+            phase: VALID_PHASE_REQUEST,
+            transport: 'xhr',
+        });
+        if ( result.applied !== true ) { return args; }
+        const nextArgs = args.slice();
+        nextArgs[0] = result.bodyText;
+        return nextArgs;
     };
 
     const resolvePatchedXhrResponse = (
@@ -416,7 +558,11 @@
         if ( isInspectableUrl(requestUrl) === false ) {
             return innerResponse;
         }
-        const matchingTactics = applicableTactics('xhr', requestUrl.pathname);
+        const matchingTactics = applicableTactics(
+            'xhr',
+            requestUrl.pathname,
+            VALID_PHASE_RESPONSE
+        );
         if ( matchingTactics.length === 0 ) {
             return innerResponse;
         }
@@ -450,6 +596,12 @@
                 xhr.responseText = carrier.outputKind === 'text' ? rawText : undefined;
                 return innerResponse;
             }
+            emitHitEvent({
+                hostname,
+                pathname: requestUrl.pathname,
+                phase: VALID_PHASE_RESPONSE,
+                transport: 'xhr',
+            });
             xhr.response = carrier.outputKind === 'text'
                 ? JSON.stringify(result.value)
                 : result.value;
@@ -520,6 +672,7 @@
             open(method, url, ...args) {
                 xhrState.set(this, {
                     instance: this,
+                    method: typeof method === 'string' ? method : 'GET',
                     url: parseUrl(String(url || ''))?.toString() || '',
                     async: args.length === 0 || args[0] !== false,
                     signature: '',
@@ -533,14 +686,16 @@
             }
             send(...args) {
                 const xhr = xhrState.get(this);
+                const inspectable = isInspectableUrl(parseUrl(xhr?.url));
                 if (
                     xhr === undefined ||
-                    xhr.async !== true ||
-                    state.configResolved === true ||
-                    isInspectableUrl(parseUrl(xhr.url)) === false ||
+                    inspectable === false ||
                     typeof nativeXhrSend !== 'function'
                 ) {
                     return super.send(...args);
+                }
+                if ( xhr.async !== true || state.configResolved === true ) {
+                    return super.send(...rewriteXhrSendArgs(xhr, args));
                 }
                 if ( xhr.pendingSend === true ) { return; }
                 xhr.pendingSend = true;

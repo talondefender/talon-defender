@@ -49,6 +49,7 @@ import { createSingleFlightRunner } from './single-flight.js';
 /******************************************************************************/
 
 const resourceDetailPromises = new Map();
+const PUBLIC_REMOTE_COSMETICS_KEY = 'communityBundleCosmetics';
 const PUBLIC_REMOTE_SCRIPTLETS_KEY = 'communityBundlePublicScriptlets';
 const PUBLIC_REMOTE_TACTICS_KEY = 'communityBundlePublicTactics';
 const PRIVATE_REMOTE_SCRIPTLETS_KEY = 'communityBundlePrivateScriptlets';
@@ -76,6 +77,7 @@ const SCRIPTLET_PATH_ALIASES = new Map([
 ]);
 const TALON_PUBLIC_SUFFIX_DATA_PATH = '/shared/public-suffix-data.js';
 const TALON_SHADOW_DOM_HELPER_PATH = '/js/scripting/shadow-dom-helper.js';
+const TALON_BLOCK_HINTS_PATH = '/js/scripting/block-hints.js';
 
 const readOptionalLocalValue = async (key, fallbackValue, context) => {
     if ( browser.storage?.local?.get === undefined ) { return fallbackValue; }
@@ -306,6 +308,49 @@ const collectRegisteredRemoteTacticHostnames = (
     ];
     if ( permissionGrantedHostnames.length === 0 ) { return []; }
     return ut.intersectHostnameIters(tacticHostnames, permissionGrantedHostnames);
+};
+
+const classifyRemoteCosmeticsState = cosmetics => {
+    const hostnames = [];
+    const seen = new Set();
+    let hasGlobal = Array.isArray(cosmetics?.all) && cosmetics.all.length !== 0;
+    const hosts = cosmetics?.hosts;
+    if ( hosts instanceof Object ) {
+        for ( const [ pattern, selectors ] of Object.entries(hosts) ) {
+            if ( Array.isArray(selectors) === false || selectors.length === 0 ) { continue; }
+            const normalized = `${pattern || ''}`.trim().toLowerCase();
+            if ( normalized.startsWith('=') ) {
+                const hostname = normalized.slice(1);
+                if ( hostname === '' || seen.has(hostname) ) { continue; }
+                seen.add(hostname);
+                hostnames.push(hostname);
+                continue;
+            }
+            hasGlobal = true;
+        }
+    }
+    return {
+        hasGlobal,
+        hostnames,
+    };
+};
+
+const collectRegisteredRemoteCosmeticHostnames = (
+    filteringModeDetails,
+    remoteCosmetics,
+) => {
+    const cosmeticHostnames = classifyRemoteCosmeticsState(remoteCosmetics).hostnames;
+    if ( cosmeticHostnames.length === 0 ) { return []; }
+    const hasBroadHostPermission =
+        filteringModeDetails?.optimal?.has?.('all-urls') ||
+        filteringModeDetails?.complete?.has?.('all-urls');
+    if ( hasBroadHostPermission ) { return cosmeticHostnames; }
+    const permissionGrantedHostnames = [
+        ...(filteringModeDetails?.optimal || []),
+        ...(filteringModeDetails?.complete || []),
+    ];
+    if ( permissionGrantedHostnames.length === 0 ) { return []; }
+    return ut.intersectHostnameIters(cosmeticHostnames, permissionGrantedHostnames);
 };
 
 /******************************************************************************/
@@ -910,6 +955,7 @@ function registerNativeHeuristics(context) {
         '/shared/site-key-resolver.js',
         '/js/scripting/breakage-guard.js',
         TALON_SHADOW_DOM_HELPER_PATH,
+        TALON_BLOCK_HINTS_PATH,
         '/js/scripting/native-heuristics.js',
     ];
 
@@ -972,6 +1018,7 @@ function registerAutomation(context) {
     const js = [
         '/js/scripting/breakage-guard.js',
         TALON_SHADOW_DOM_HELPER_PATH,
+        TALON_BLOCK_HINTS_PATH,
         '/js/scripting/automation.js',
     ];
 
@@ -1082,24 +1129,28 @@ function registerAdShellStyles(context) {
 /******************************************************************************/
 
 function registerRemoteCosmetics(context) {
-    const { before, filteringModeDetails, subsystemSuppressionHostnames } = context;
+    const {
+        before,
+        filteringModeDetails,
+        subsystemSuppressionHostnames,
+        remoteCosmetics,
+    } = context;
 
-    const js = [
+    const baseJs = [
         TALON_PUBLIC_SUFFIX_DATA_PATH,
         '/shared/site-key-resolver.js',
         '/js/scripting/breakage-guard.js',
         TALON_SHADOW_DOM_HELPER_PATH,
+        TALON_BLOCK_HINTS_PATH,
         '/js/scripting/remote-cosmetics.js',
     ];
-
     const { none, basic, optimal, complete } = filteringModeDetails;
-    const matches = [
+    const broadMatches = [
         ...ut.matchesFromHostnames(optimal),
         ...ut.matchesFromHostnames(complete),
     ];
-    if ( matches.length === 0 ) { return; }
-
-    normalizeMatches(matches);
+    if ( broadMatches.length === 0 ) { return; }
+    normalizeMatches(broadMatches);
 
     const excludeMatches = [];
     if ( none.has('all-urls') === false ) {
@@ -1113,35 +1164,83 @@ function registerRemoteCosmetics(context) {
         subsystemSuppressionHostnames?.remoteCosmetics
     );
 
-    const registered = before.get('remote-cosmetics');
+    const registeredGlobal = before.get('remote-cosmetics-global');
+    before.delete('remote-cosmetics-global'); // Important!
+    const registeredHost = before.get('remote-cosmetics-host');
+    before.delete('remote-cosmetics-host'); // Important!
+    const registeredLegacy = before.get('remote-cosmetics');
     before.delete('remote-cosmetics'); // Important!
-
-    const directive = {
-        id: 'remote-cosmetics',
-        js,
-        allFrames: true,
-        matchOriginAsFallback: true,
-        matches,
-        runAt: 'document_start',
-    };
-    if ( excludeMatches.length !== 0 ) {
-        directive.excludeMatches = excludeMatches;
-    }
-
-    if ( registered === undefined ) {
-        context.toAdd.push(directive);
-        return;
-    }
-
-    if (
-        ut.strArrayEq(registered.js, js, false) === false ||
-        ut.strArrayEq(registered.matches, matches) === false ||
-        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false ||
-        Boolean(registered.matchOriginAsFallback) !==
-            Boolean(directive.matchOriginAsFallback)
-    ) {
+    if ( registeredLegacy !== undefined ) {
         context.toRemove.push('remote-cosmetics');
-        context.toAdd.push(directive);
+    }
+
+    const { hasGlobal } = classifyRemoteCosmeticsState(remoteCosmetics);
+    if ( hasGlobal ) {
+        const globalDirective = {
+            id: 'remote-cosmetics-global',
+            js: [
+                ...baseJs,
+                '/js/scripting/remote-cosmetics-global.js',
+            ],
+            allFrames: true,
+            matchOriginAsFallback: true,
+            matches: broadMatches,
+            runAt: 'document_start',
+        };
+        if ( excludeMatches.length !== 0 ) {
+            globalDirective.excludeMatches = excludeMatches;
+        }
+        if ( registeredGlobal === undefined ) {
+            context.toAdd.push(globalDirective);
+        } else if (
+            ut.strArrayEq(registeredGlobal.js, globalDirective.js, false) === false ||
+            ut.strArrayEq(registeredGlobal.matches, broadMatches) === false ||
+            ut.strArrayEq(registeredGlobal.excludeMatches, excludeMatches) === false ||
+            Boolean(registeredGlobal.matchOriginAsFallback) !==
+                Boolean(globalDirective.matchOriginAsFallback)
+        ) {
+            context.toRemove.push('remote-cosmetics-global');
+            context.toAdd.push(globalDirective);
+        }
+    } else if ( registeredGlobal !== undefined ) {
+        context.toRemove.push('remote-cosmetics-global');
+    }
+
+    const targetHostnames = collectRegisteredRemoteCosmeticHostnames(
+        filteringModeDetails,
+        remoteCosmetics
+    );
+    const hostMatches = exactMatchesFromHostnames(targetHostnames);
+    if ( hostMatches.length !== 0 ) {
+        normalizeMatches(hostMatches);
+        const hostDirective = {
+            id: 'remote-cosmetics-host',
+            js: [
+                ...baseJs,
+                '/js/scripting/remote-cosmetics-host.js',
+            ],
+            allFrames: true,
+            matchOriginAsFallback: true,
+            matches: hostMatches,
+            runAt: 'document_start',
+        };
+        if ( excludeMatches.length !== 0 ) {
+            hostDirective.excludeMatches = excludeMatches;
+        }
+        if ( registeredHost === undefined ) {
+            context.toAdd.push(hostDirective);
+        } else if (
+            ut.strArrayEq(registeredHost.js, hostDirective.js, false) === false ||
+            ut.strArrayEq(registeredHost.matches, hostMatches) === false ||
+            ut.strArrayEq(registeredHost.excludeMatches, excludeMatches) === false ||
+            Boolean(registeredHost.matchOriginAsFallback) !==
+                Boolean(hostDirective.matchOriginAsFallback)
+        ) {
+            context.toRemove.push('remote-cosmetics-host');
+            context.toAdd.push(hostDirective);
+        }
+    } else if ( registeredHost !== undefined ) {
+        context.toRemove.push('remote-cosmetics-host');
     }
 }
 
@@ -1262,6 +1361,7 @@ function registerPostHideCleanup(context) {
     const js = [
         '/js/scripting/breakage-guard.js',
         TALON_SHADOW_DOM_HELPER_PATH,
+        TALON_BLOCK_HINTS_PATH,
         '/js/scripting/post-hide-cleanup.js',
     ];
 
@@ -1389,6 +1489,7 @@ const buildInjectablesRegistrationPlan = async () => {
         rulesetsDetails,
         scriptletDetails,
         genericDetails,
+        remoteCosmetics,
         remoteScriptlets,
         remoteTactics,
         autoGenericHighHosts,
@@ -1400,6 +1501,11 @@ const buildInjectablesRegistrationPlan = async () => {
         getEnabledRulesetsDetails(),
         getScriptletDetails(),
         getGenericDetails(),
+        readOptionalLocalValue(
+            PUBLIC_REMOTE_COSMETICS_KEY,
+            null,
+            `registerInjectables/${PUBLIC_REMOTE_COSMETICS_KEY}`
+        ),
         readMergedLocalArrays(
             [
                 PUBLIC_REMOTE_SCRIPTLETS_KEY,
@@ -1435,6 +1541,7 @@ const buildInjectablesRegistrationPlan = async () => {
         before,
         toAdd,
         toRemove,
+        remoteCosmetics: remoteCosmetics instanceof Object ? remoteCosmetics : null,
         remoteScriptlets,
         remoteTactics: Array.isArray(remoteTactics) ? remoteTactics : null,
         autoGenericHighHosts:

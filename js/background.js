@@ -122,16 +122,28 @@ const AUTO_PROMOTION_ALARM = 'auto-promotion-expire';
 const AUTO_PROMOTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const REMOTE_COSMETICS_RUNTIME_STATS_KEY = 'remoteCosmeticsRuntimeStatsV1';
 const REMOTE_COSMETICS_RUNTIME_STATS_TTL_MS = 24 * 60 * 60 * 1000;
+const REMOTE_COSMETICS_STORAGE_KEY = 'communityBundleCosmetics';
 const REMOTE_TACTICS_STORAGE_KEY = 'communityBundlePublicTactics';
 const ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object.freeze([
     '/shared/public-suffix-data.js',
     '/shared/site-key-resolver.js',
     '/js/scripting/breakage-guard.js',
     '/js/scripting/shadow-dom-helper.js',
+    '/js/scripting/block-hints.js',
     '/js/scripting/remote-cosmetics.js',
+    '/js/scripting/remote-cosmetics-global.js',
     '/js/scripting/native-heuristics.js',
     '/js/scripting/automation.js',
     '/js/scripting/post-hide-cleanup.js',
+]);
+const REMOTE_COSMETICS_HOST_LIVE_RUNTIME_REFRESH_FILES = Object.freeze([
+    '/shared/public-suffix-data.js',
+    '/shared/site-key-resolver.js',
+    '/js/scripting/breakage-guard.js',
+    '/js/scripting/shadow-dom-helper.js',
+    '/js/scripting/block-hints.js',
+    '/js/scripting/remote-cosmetics.js',
+    '/js/scripting/remote-cosmetics-host.js',
 ]);
 const REMOTE_TACTICS_ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object.freeze([
     '/js/scripting/remote-tactics-bootstrap.js',
@@ -265,6 +277,24 @@ const listTabFrameUrls = async (tabId, fallbackUrl = '') => {
     return Array.from(urls);
 };
 
+const tabMatchesHostnameSet = async (
+    tabId,
+    {
+        fallbackUrl = '',
+        hostname = '',
+        hostnames = new Set(),
+    } = {}
+) => {
+    if ( hostnames instanceof Set === false || hostnames.size === 0 ) {
+        return false;
+    }
+    if ( hostname !== '' && hostnames.has(hostname) ) {
+        return true;
+    }
+    const frameUrls = await listTabFrameUrls(tabId, fallbackUrl);
+    return frameUrls.some(url => hostnames.has(normalizeHttpHostname(url)));
+};
+
 const tabMatchesRemoteTacticHosts = async (
     tabId,
     {
@@ -272,15 +302,24 @@ const tabMatchesRemoteTacticHosts = async (
         hostname = '',
         remoteTacticHostnames = new Set(),
     } = {}
-) => {
-    if ( remoteTacticHostnames instanceof Set === false || remoteTacticHostnames.size === 0 ) {
-        return false;
+) => tabMatchesHostnameSet(tabId, {
+    fallbackUrl,
+    hostname,
+    hostnames: remoteTacticHostnames,
+});
+
+const collectStoredRemoteCosmeticHostnames = cosmetics => {
+    const out = new Set();
+    if ( cosmetics?.hosts instanceof Object === false ) { return out; }
+    for ( const [ pattern, selectors ] of Object.entries(cosmetics.hosts) ) {
+        if ( Array.isArray(selectors) === false || selectors.length === 0 ) { continue; }
+        const normalized = `${pattern || ''}`.trim().toLowerCase();
+        if ( normalized.startsWith('=') === false ) { continue; }
+        const hostname = normalized.slice(1);
+        if ( hostname === '' ) { continue; }
+        out.add(hostname);
     }
-    if ( hostname !== '' && remoteTacticHostnames.has(hostname) ) {
-        return true;
-    }
-    const frameUrls = await listTabFrameUrls(tabId, fallbackUrl);
-    return frameUrls.some(url => remoteTacticHostnames.has(normalizeHttpHostname(url)));
+    return out;
 };
 
 const markTabsForRemoteScriptletReload = async reloadHint => {
@@ -753,6 +792,7 @@ const resetRemoteCosmeticsRuntimeStats = async () => {
 
 const recordRemoteCosmeticsRuntimeStats = async ({
     hostname,
+    laneScope = 'global',
     chunkCount = 0,
     selectorCount = 0,
     hostSpecificSelectorCount = 0,
@@ -760,12 +800,37 @@ const recordRemoteCosmeticsRuntimeStats = async ({
 } = {}) => {
     const normalizedHostname = normalizeSiteKeyHostname(hostname);
     if ( normalizedHostname === '' ) { return; }
+    const normalizedLaneScope = laneScope === 'host' ? 'host' : 'global';
     await pruneStaleRemoteCosmeticsRuntimeStats();
-    remoteCosmeticsRuntimeStats[normalizedHostname] = {
+    const previous = remoteCosmeticsRuntimeStats[normalizedHostname];
+    const scopes = previous?.scopes instanceof Object
+        ? { ...previous.scopes }
+        : {};
+    scopes[normalizedLaneScope] = {
         chunkCount: Math.max(0, Math.floor(Number(chunkCount) || 0)),
         selectorCount: Math.max(0, Math.floor(Number(selectorCount) || 0)),
         hostSpecificSelectorCount: Math.max(0, Math.floor(Number(hostSpecificSelectorCount) || 0)),
         droppedAtApply: Math.max(0, Math.floor(Number(droppedAtApply) || 0)),
+        updatedAt: Date.now(),
+    };
+    const aggregate = {
+        chunkCount: 0,
+        selectorCount: 0,
+        hostSpecificSelectorCount: 0,
+        droppedAtApply: 0,
+    };
+    for ( const entry of Object.values(scopes) ) {
+        aggregate.chunkCount += Math.max(0, Math.floor(Number(entry?.chunkCount) || 0));
+        aggregate.selectorCount += Math.max(0, Math.floor(Number(entry?.selectorCount) || 0));
+        aggregate.hostSpecificSelectorCount += Math.max(
+            0,
+            Math.floor(Number(entry?.hostSpecificSelectorCount) || 0)
+        );
+        aggregate.droppedAtApply += Math.max(0, Math.floor(Number(entry?.droppedAtApply) || 0));
+    }
+    remoteCosmeticsRuntimeStats[normalizedHostname] = {
+        ...aggregate,
+        scopes,
         updatedAt: Date.now(),
     };
     await persistRemoteCosmeticsRuntimeStats();
@@ -2578,6 +2643,7 @@ function stopIsolatedRuntimeControllers() {
     const controllerTargets = [
         [ 'TalonRemoteCosmeticsController', [ 'stop', 'clear' ] ],
         [ 'TalonRemoteTacticsBootstrapController', [ 'stop' ] ],
+        [ 'TalonBlockHintsController', [ 'stop' ] ],
         [ 'TalonNativeHeuristicsController', [ 'stop' ] ],
         [ 'TalonAutomationController', [ 'stop' ] ],
         [ 'TalonPostHideCleanupController', [ 'stop' ] ],
@@ -2636,6 +2702,29 @@ async function readRegisteredRemoteTacticHostnames() {
     return new Set(collectCommunityTacticHostnames(storedTactics));
 }
 
+async function readRegisteredRemoteCosmeticHostnames() {
+    const storedCosmetics = await localRead(REMOTE_COSMETICS_STORAGE_KEY);
+    return collectStoredRemoteCosmeticHostnames(storedCosmetics);
+}
+
+function stopRemoteCosmeticsHostController() {
+    const controller = globalThis.TalonRemoteCosmeticsController;
+    if ( controller instanceof Object === false ) { return Promise.resolve(true); }
+    if ( typeof controller.stop === 'function' ) {
+        try {
+            return Promise.resolve(controller.stop({ scope: 'host' })).then(() => true);
+        } catch {
+        }
+    }
+    if ( typeof controller.clear === 'function' ) {
+        try {
+            return Promise.resolve(controller.clear({ scope: 'host' })).then(() => true);
+        } catch {
+        }
+    }
+    return Promise.resolve(true);
+}
+
 function stopRemoteTacticsBootstrapController() {
     const controller = globalThis.TalonRemoteTacticsBootstrapController;
     if ( controller instanceof Object === false ) { return Promise.resolve(true); }
@@ -2653,6 +2742,7 @@ async function refreshRuntimeStateForTab(
     {
         url = '',
         hostname = '',
+        remoteCosmeticHostnames = new Set(),
         remoteTacticHostnames = new Set(),
     } = {}
 ) {
@@ -2660,6 +2750,19 @@ async function refreshRuntimeStateForTab(
     try {
         if ( filteringLevel >= MODE_OPTIMAL ) {
             await executeRuntimeRefreshLane(tabId, ISOLATED_LIVE_RUNTIME_REFRESH_FILES);
+            const shouldRefreshRemoteCosmeticsHost = await tabMatchesHostnameSet(tabId, {
+                fallbackUrl: url,
+                hostname,
+                hostnames: remoteCosmeticHostnames,
+            });
+            if ( shouldRefreshRemoteCosmeticsHost ) {
+                await executeRuntimeRefreshLane(
+                    tabId,
+                    REMOTE_COSMETICS_HOST_LIVE_RUNTIME_REFRESH_FILES
+                );
+            } else {
+                await executeRuntimeStopLane(tabId, stopRemoteCosmeticsHostController);
+            }
             const shouldRefreshRemoteTactics = await tabMatchesRemoteTacticHosts(tabId, {
                 fallbackUrl: url,
                 hostname,
@@ -2697,6 +2800,9 @@ async function refreshRuntimeStateForTab(
 async function refreshRuntimeStateForOpenTabs() {
     if ( browser.tabs?.query === undefined ) { return false; }
     let tabs = [];
+    const remoteCosmeticHostnames = await readRegisteredRemoteCosmeticHostnames().catch(
+        () => new Set()
+    );
     const remoteTacticHostnames = await readRegisteredRemoteTacticHostnames().catch(
         () => new Set()
     );
@@ -2717,6 +2823,7 @@ async function refreshRuntimeStateForOpenTabs() {
                 .then(level => refreshRuntimeStateForTab(tabId, Number(level) || MODE_NONE, {
                     url: tab?.url || '',
                     hostname,
+                    remoteCosmeticHostnames,
                     remoteTacticHostnames,
                 }))
                 .catch(reason => {
@@ -3499,6 +3606,7 @@ function onMessage(request, sender, callback) {
             if ( isEntitled() === false ) { return false; }
             recordRemoteCosmeticsRuntimeStats({
                 hostname: request.hostname,
+                laneScope: request.laneScope,
                 chunkCount: request.chunkCount,
                 selectorCount: request.selectorCount,
                 hostSpecificSelectorCount: request.hostSpecificSelectorCount,

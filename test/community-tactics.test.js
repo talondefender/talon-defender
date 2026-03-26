@@ -38,6 +38,53 @@ test('community tactics sanitizer accepts bounded prune and set tactics with exa
   assert.equal(tactics[1].value, false);
 });
 
+test('community tactics sanitizer accepts request phase only for schema v5 bundles', () => {
+  const requestPhaseTactics = sanitizeCommunityTactics([
+    {
+      id: 'request-prune',
+      kind: 'jsonPrune',
+      phase: 'request',
+      hosts: ['video.example'],
+      transport: 'fetch',
+      urlPathPrefixes: ['/api/player'],
+      jsonPaths: ['payload.ads'],
+    },
+  ], {
+    schemaVersion: 5,
+  });
+  const droppedForV4 = sanitizeCommunityTactics([
+    {
+      id: 'request-prune',
+      kind: 'jsonPrune',
+      phase: 'request',
+      hosts: ['video.example'],
+      transport: 'fetch',
+      urlPathPrefixes: ['/api/player'],
+      jsonPaths: ['payload.ads'],
+    },
+  ], {
+    schemaVersion: 4,
+  });
+  const invalidPhase = sanitizeCommunityTactics([
+    {
+      id: 'bad-phase',
+      kind: 'jsonPrune',
+      phase: 'unexpected',
+      hosts: ['video.example'],
+      transport: 'fetch',
+      urlPathPrefixes: ['/api/player'],
+      jsonPaths: ['payload.ads'],
+    },
+  ], {
+    schemaVersion: 5,
+  });
+
+  assert.equal(requestPhaseTactics.length, 1);
+  assert.equal(requestPhaseTactics[0].phase, 'request');
+  assert.equal(droppedForV4, null);
+  assert.equal(invalidPhase, null);
+});
+
 test('community tactics collect a deduped exact-host union for registration and refresh', () => {
   const hosts = collectCommunityTacticHostnames([
     {
@@ -221,6 +268,63 @@ test('community tactics apply prune and set mutations for fetch payloads', () =>
     },
   });
   assert.equal(input.contents[0].adPlacements.length, 1);
+});
+
+test('community tactics keep request and response phases isolated', () => {
+  const tactics = sanitizeCommunityTactics([
+    {
+      id: 'request-prune',
+      kind: 'jsonPrune',
+      phase: 'request',
+      hosts: ['video.example'],
+      transport: 'fetch',
+      urlPathPrefixes: ['/api/player'],
+      jsonPaths: ['payload.ads'],
+    },
+    {
+      id: 'response-flag',
+      kind: 'jsonSet',
+      phase: 'response',
+      hosts: ['video.example'],
+      transport: 'fetch',
+      urlPathPrefixes: ['/api/player'],
+      jsonPaths: ['payload.adsEnabled'],
+      value: false,
+    },
+  ], {
+    schemaVersion: 5,
+  });
+  const input = {
+    payload: {
+      ads: [{ id: 1 }],
+      adsEnabled: true,
+    },
+  };
+
+  const requestResult = applyCommunityTacticsToJsonValue(input, tactics, {
+    hostname: 'video.example',
+    phase: 'request',
+    transport: 'fetch',
+    pathname: '/api/player/v1',
+  });
+  const responseResult = applyCommunityTacticsToJsonValue(input, tactics, {
+    hostname: 'video.example',
+    phase: 'response',
+    transport: 'fetch',
+    pathname: '/api/player/v1',
+  });
+
+  assert.deepEqual(requestResult.value, {
+    payload: {
+      adsEnabled: true,
+    },
+  });
+  assert.deepEqual(responseResult.value, {
+    payload: {
+      ads: [{ id: 1 }],
+      adsEnabled: false,
+    },
+  });
 });
 
 test('community tactics accept empty array and object jsonSet values', () => {

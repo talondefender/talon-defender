@@ -384,10 +384,13 @@ js/scripting/css-specific.js
 js/scripting/css-user.js
 js/scripting/css-user-terminate.js
 js/scripting/isolated-api.js
+js/scripting/block-hints.js
 js/scripting/native-heuristics.js
 js/scripting/picker.js
 js/scripting/post-hide-cleanup.js
 js/scripting/remote-cosmetics.js
+js/scripting/remote-cosmetics-global.js
+js/scripting/remote-cosmetics-host.js
 js/scripting/remote-tactics-bootstrap.js
 js/scripting/remote-tactics.js
 js/scripting/shadow-dom-helper.js

@@ -11,13 +11,12 @@ const runtime = self.browser?.runtime || self.chrome?.runtime;
 const storage = self.browser?.storage?.local || self.chrome?.storage?.local;
 const guard = self.TalonBreakageGuard;
 const shadowController = self.TalonShadowRootController;
-const shadowRootsChangedEvent = shadowController?.ROOTS_CHANGED_EVENT || 'talon-shadow-roots-changed';
+const blockHints = self.TalonBlockHintsController;
+const shadowRootsChangedEvent =
+    shadowController?.ROOTS_CHANGED_EVENT || 'talon-shadow-roots-changed';
 if ( runtime?.sendMessage === undefined || storage?.get === undefined ) { return; }
 
-if ( self.TalonRemoteCosmeticsController ) {
-    self.TalonRemoteCosmeticsController.refresh().catch(( ) => {});
-    return;
-}
+if ( self.TalonRemoteCosmeticsController ) { return; }
 
 const hostname = (self.location?.hostname || '').toLowerCase();
 if ( hostname === '' ) { return; }
@@ -150,8 +149,10 @@ const buildCssChunks = selectors => {
     for ( const selector of selectors ) {
         if ( typeof selector !== 'string' || selector === '' ) { continue; }
         const selectorLength = selector.length + (currentSelectors.length === 0 ? 0 : 1);
-        if ( currentSelectors.length !== 0 &&
-            (currentLength + selectorLength) > MAX_CHUNK_CSS_LENGTH ) {
+        if (
+            currentSelectors.length !== 0 &&
+            (currentLength + selectorLength) > MAX_CHUNK_CSS_LENGTH
+        ) {
             flush();
         }
         if ( (CSS_RULE_SUFFIX.length + selector.length) > MAX_CHUNK_CSS_LENGTH ) {
@@ -172,11 +173,35 @@ const buildCssChunks = selectors => {
 };
 
 const STYLE_MARKER_ATTR = 'data-talon-remote-cosmetics';
-const DOCUMENT_STYLE_ID = 'talon-remote-cosmetics-style';
+const STYLE_SCOPE_ATTR = 'data-talon-remote-cosmetics-scope';
+const SCOPE_GLOBAL = 'global';
+const SCOPE_HOST = 'host';
+const SCOPE_CONFIG = Object.freeze({
+    [SCOPE_GLOBAL]: {
+        documentStyleId: 'talon-remote-cosmetics-global-style',
+    },
+    [SCOPE_HOST]: {
+        documentStyleId: 'talon-remote-cosmetics-host-style',
+    },
+});
 
-let documentStyle;
-let currentCssText = '';
-const shadowStyleMap = new Map();
+const scopeStates = new Map([
+    [ SCOPE_GLOBAL, {
+        cssText: '',
+        documentStyle: undefined,
+        shadowStyleMap: new Map(),
+        installed: false,
+    } ],
+    [ SCOPE_HOST, {
+        cssText: '',
+        documentStyle: undefined,
+        shadowStyleMap: new Map(),
+        installed: false,
+    } ],
+]);
+
+const getScopeState = scope => scopeStates.get(scope) || null;
+const isValidScope = scope => scope === SCOPE_GLOBAL || scope === SCOPE_HOST;
 
 const getDocumentStyleParent = ( ) =>
     document.head || document.documentElement || document;
@@ -188,12 +213,25 @@ const upsertStyleText = (style, cssText) => {
     return true;
 };
 
-const ensureDocumentStyle = cssText => {
+const getScopeStyleSelector = scope =>
+    `style[${STYLE_MARKER_ATTR}="1"][${STYLE_SCOPE_ATTR}="${scope}"]`;
+
+const ensureDocumentStyle = (scope, cssText) => {
     if ( cssText === '' ) { return null; }
-    let style = documentStyle;
+    const scopeState = getScopeState(scope);
+    const scopeConfig = SCOPE_CONFIG[scope];
+    if ( scopeState === null || scopeConfig === undefined ) { return null; }
+    let style = scopeState.documentStyle;
     if ( style instanceof HTMLStyleElement === false ) {
         try {
-            style = document.getElementById(DOCUMENT_STYLE_ID);
+            style = document.getElementById(scopeConfig.documentStyleId);
+        } catch {
+            style = null;
+        }
+    }
+    if ( style instanceof HTMLStyleElement === false ) {
+        try {
+            style = document.querySelector?.(getScopeStyleSelector(scope)) || null;
         } catch {
             style = null;
         }
@@ -201,8 +239,9 @@ const ensureDocumentStyle = cssText => {
     if ( style instanceof HTMLStyleElement === false ) {
         try {
             style = document.createElement('style');
-            style.id = DOCUMENT_STYLE_ID;
+            style.id = scopeConfig.documentStyleId;
             style.setAttribute(STYLE_MARKER_ATTR, '1');
+            style.setAttribute(STYLE_SCOPE_ATTR, scope);
             const parent = getDocumentStyleParent();
             parent?.append?.(style);
         } catch {
@@ -210,17 +249,19 @@ const ensureDocumentStyle = cssText => {
         }
     }
     if ( style instanceof HTMLStyleElement === false ) { return null; }
-    documentStyle = style;
+    scopeState.documentStyle = style;
     upsertStyleText(style, cssText);
     return style;
 };
 
-const ensureShadowRootStyle = (root, cssText) => {
+const ensureShadowRootStyle = (scope, root, cssText) => {
     if ( root instanceof DocumentFragment === false ) { return null; }
-    let style = shadowStyleMap.get(root) || null;
+    const scopeState = getScopeState(scope);
+    if ( scopeState === null ) { return null; }
+    let style = scopeState.shadowStyleMap.get(root) || null;
     if ( style instanceof HTMLStyleElement === false ) {
         try {
-            style = root.querySelector?.(`style[${STYLE_MARKER_ATTR}="1"]`) || null;
+            style = root.querySelector?.(getScopeStyleSelector(scope)) || null;
         } catch {
             style = null;
         }
@@ -229,38 +270,45 @@ const ensureShadowRootStyle = (root, cssText) => {
         try {
             style = document.createElement('style');
             style.setAttribute(STYLE_MARKER_ATTR, '1');
+            style.setAttribute(STYLE_SCOPE_ATTR, scope);
             root.append?.(style);
         } catch {
             style = null;
         }
     }
     if ( style instanceof HTMLStyleElement === false ) { return null; }
-    shadowStyleMap.set(root, style);
+    scopeState.shadowStyleMap.set(root, style);
     upsertStyleText(style, cssText);
     return style;
 };
 
-const removeDocumentStyle = ( ) => {
-    if ( documentStyle instanceof HTMLStyleElement ) {
-        try { documentStyle.remove(); } catch {
+const removeDocumentStyle = scope => {
+    const scopeState = getScopeState(scope);
+    if ( scopeState === null ) { return; }
+    if ( scopeState.documentStyle instanceof HTMLStyleElement ) {
+        try { scopeState.documentStyle.remove(); } catch {
         }
     }
-    documentStyle = undefined;
+    scopeState.documentStyle = undefined;
 };
 
-const removeShadowStyle = root => {
-    const style = shadowStyleMap.get(root);
+const removeShadowStyle = (scope, root) => {
+    const scopeState = getScopeState(scope);
+    if ( scopeState === null ) { return; }
+    const style = scopeState.shadowStyleMap.get(root);
     if ( style instanceof HTMLStyleElement ) {
         try { style.remove(); } catch {
         }
     }
-    shadowStyleMap.delete(root);
+    scopeState.shadowStyleMap.delete(root);
 };
 
-const syncShadowStyles = ( ) => {
-    if ( currentCssText === '' ) {
-        for ( const root of Array.from(shadowStyleMap.keys()) ) {
-            removeShadowStyle(root);
+const syncShadowStyles = scope => {
+    const scopeState = getScopeState(scope);
+    if ( scopeState === null ) { return; }
+    if ( scopeState.cssText === '' ) {
+        for ( const root of Array.from(scopeState.shadowStyleMap.keys()) ) {
+            removeShadowStyle(scope, root);
         }
         return;
     }
@@ -269,72 +317,53 @@ const syncShadowStyles = ( ) => {
     for ( const root of roots ) {
         if ( root instanceof DocumentFragment === false ) { continue; }
         activeRoots.add(root);
-        ensureShadowRootStyle(root, currentCssText);
+        ensureShadowRootStyle(scope, root, scopeState.cssText);
     }
-    for ( const root of Array.from(shadowStyleMap.keys()) ) {
+    for ( const root of Array.from(scopeState.shadowStyleMap.keys()) ) {
         if ( activeRoots.has(root) ) { continue; }
-        removeShadowStyle(root);
+        removeShadowStyle(scope, root);
     }
 };
 
-const clearAppliedCss = async ( ) => {
-    currentCssText = '';
-    removeDocumentStyle();
-    syncShadowStyles();
+const clearAppliedCss = scope => {
+    const scopeState = getScopeState(scope);
+    if ( scopeState === null ) { return Promise.resolve(); }
+    scopeState.cssText = '';
+    removeDocumentStyle(scope);
+    syncShadowStyles(scope);
+    return Promise.resolve();
 };
 
-const applyCurrentCosmetics = async ( ) => {
-    await guard?.whenReady?.();
-    if ( guard?.shouldRunSubsystem?.('remoteCosmetics') === false ) {
-        await clearAppliedCss();
-        await sendMessage({
-            what: 'recordRemoteCosmeticsRuntimeStats',
-            hostname,
-            chunkCount: 0,
-            selectorCount: 0,
-            hostSpecificSelectorCount: 0,
-            droppedAtApply: 0,
-        });
-        return {
-            applied: false,
-            chunkCount: 0,
-            selectorCount: 0,
-            hostSpecificSelectorCount: 0,
-            droppedAtApply: 0,
-        };
-    }
+const sendRuntimeStats = (scope, {
+    chunkCount = 0,
+    selectorCount = 0,
+    hostSpecificSelectorCount = 0,
+    droppedAtApply = 0,
+} = {}) => sendMessage({
+    what: 'recordRemoteCosmeticsRuntimeStats',
+    hostname,
+    laneScope: scope,
+    chunkCount,
+    selectorCount,
+    hostSpecificSelectorCount,
+    droppedAtApply,
+});
 
-    const cosmetics = await getCosmetics();
-    if ( cosmetics instanceof Object === false ) {
-        await clearAppliedCss();
-        await sendMessage({
-            what: 'recordRemoteCosmeticsRuntimeStats',
-            hostname,
-            chunkCount: 0,
-            selectorCount: 0,
-            hostSpecificSelectorCount: 0,
-            droppedAtApply: 0,
-        });
-        return {
-            applied: false,
-            chunkCount: 0,
-            selectorCount: 0,
-            hostSpecificSelectorCount: 0,
-            droppedAtApply: 0,
-        };
-    }
-
+const resolveScopeSelectors = (scope, cosmetics) => {
     const selectors = [];
     const hostSpecific = new Set();
 
-    if ( Array.isArray(cosmetics.all) ) {
+    if ( scope === SCOPE_GLOBAL && Array.isArray(cosmetics.all) ) {
         selectors.push(...cosmetics.all);
     }
 
     const hosts = cosmetics.hosts;
     if ( hosts instanceof Object ) {
         for ( const [ hostPattern, hostSelectors ] of Object.entries(hosts) ) {
+            if ( Array.isArray(hostSelectors) === false || hostSelectors.length === 0 ) { continue; }
             const exactHostPattern = isExactHostPattern(hostPattern);
+            if ( scope === SCOPE_GLOBAL && exactHostPattern ) { continue; }
+            if ( scope === SCOPE_HOST && exactHostPattern === false ) { continue; }
             if (
                 patternMatchesHostname(hostPattern, hostname) === false &&
                 (
@@ -344,45 +373,102 @@ const applyCurrentCosmetics = async ( ) => {
             ) {
                 continue;
             }
-            if ( Array.isArray(hostSelectors) ) {
-                selectors.push(...hostSelectors);
-                for ( const selector of hostSelectors ) {
-                    if ( typeof selector !== 'string' ) { continue; }
-                    hostSpecific.add(selector.trim());
-                }
+            selectors.push(...hostSelectors);
+            if ( scope !== SCOPE_HOST ) { continue; }
+            for ( const selector of hostSelectors ) {
+                if ( typeof selector !== 'string' ) { continue; }
+                hostSpecific.add(selector.trim());
             }
         }
     }
 
+    return {
+        selectors,
+        hostSpecific,
+    };
+};
+
+const applyScopeCosmetics = async scope => {
+    const scopeState = getScopeState(scope);
+    if ( scopeState === null ) {
+        return {
+            applied: false,
+            laneScope: scope,
+            chunkCount: 0,
+            selectorCount: 0,
+            hostSpecificSelectorCount: 0,
+            droppedAtApply: 0,
+        };
+    }
+
+    await guard?.whenReady?.();
+    if ( guard?.shouldRunSubsystem?.('remoteCosmetics') === false ) {
+        await clearAppliedCss(scope);
+        await sendRuntimeStats(scope);
+        return {
+            applied: false,
+            laneScope: scope,
+            chunkCount: 0,
+            selectorCount: 0,
+            hostSpecificSelectorCount: 0,
+            droppedAtApply: 0,
+        };
+    }
+
+    const cosmetics = await getCosmetics();
+    if ( cosmetics instanceof Object === false ) {
+        await clearAppliedCss(scope);
+        await sendRuntimeStats(scope);
+        return {
+            applied: false,
+            laneScope: scope,
+            chunkCount: 0,
+            selectorCount: 0,
+            hostSpecificSelectorCount: 0,
+            droppedAtApply: 0,
+        };
+    }
+
+    const { selectors, hostSpecific } = resolveScopeSelectors(scope, cosmetics);
     const normalized = normalizeSelectors(selectors).filter(selector =>
         guard?.shouldAllowRemoteCosmeticSelector?.(selector, {
-            hostSpecific: hostSpecific.has(selector),
+            hostSpecific: scope === SCOPE_HOST && hostSpecific.has(selector),
         }) !== false
     );
     const { cssText, chunks, droppedAtApply } = buildCssChunks(normalized);
 
-    if ( currentCssText !== cssText ) {
-        currentCssText = cssText;
+    if ( scopeState.cssText !== cssText ) {
+        scopeState.cssText = cssText;
         if ( cssText === '' ) {
-            await clearAppliedCss();
+            await clearAppliedCss(scope);
         } else {
-            ensureDocumentStyle(cssText);
+            ensureDocumentStyle(scope, cssText);
             shadowController?.rescanNow?.();
-            syncShadowStyles();
+            syncShadowStyles(scope);
         }
     }
 
-    const hostSpecificNormalized = normalized.filter(selector => hostSpecific.has(selector));
-    await sendMessage({
-        what: 'recordRemoteCosmeticsRuntimeStats',
-        hostname,
+    const hostSpecificNormalized = scope === SCOPE_HOST
+        ? normalized.filter(selector => hostSpecific.has(selector))
+        : [];
+    await sendRuntimeStats(scope, {
         chunkCount: chunks.length,
         selectorCount: normalized.length,
         hostSpecificSelectorCount: hostSpecificNormalized.length,
         droppedAtApply,
     });
 
-    if ( hostSpecificNormalized.length >= 3 && guard?.isProtectedSurface?.() !== true ) {
+    if ( scope === SCOPE_HOST && hostSpecificNormalized.length !== 0 ) {
+        blockHints?.noteSelectorMatches?.(hostSpecificNormalized, {
+            ancestors: 1,
+        });
+    }
+
+    if (
+        scope === SCOPE_HOST &&
+        hostSpecificNormalized.length >= 3 &&
+        guard?.isProtectedSurface?.() !== true
+    ) {
         await sendMessage({
             what: 'promoteGenericHigh',
             hostname: pageDomain || hostname,
@@ -391,6 +477,7 @@ const applyCurrentCosmetics = async ( ) => {
 
     return {
         applied: chunks.length !== 0,
+        laneScope: scope,
         chunkCount: chunks.length,
         selectorCount: normalized.length,
         hostSpecificSelectorCount: hostSpecificNormalized.length,
@@ -398,24 +485,67 @@ const applyCurrentCosmetics = async ( ) => {
     };
 };
 
-self.TalonRemoteCosmeticsController = {
-    refresh() {
-        return applyCurrentCosmetics();
-    },
-    clear() {
-        return clearAppliedCss();
-    },
-    stop() {
-        return clearAppliedCss();
-    },
+const refreshScopes = scopes => Promise.all(scopes.map(scope => applyScopeCosmetics(scope)));
+
+const shadowRootsChangedListener = ( ) => {
+    for ( const [ scope, state ] of scopeStates ) {
+        if ( state.cssText === '' ) { continue; }
+        syncShadowStyles(scope);
+    }
 };
 
-self.addEventListener?.(shadowRootsChangedEvent, ( ) => {
-    if ( currentCssText === '' ) { return; }
-    syncShadowStyles();
-});
+self.addEventListener?.(shadowRootsChangedEvent, shadowRootsChangedListener);
 
-self.TalonRemoteCosmeticsController.refresh().catch(( ) => {});
+self.TalonRemoteCosmeticsController = {
+    install(options = {}) {
+        const scope = isValidScope(options?.scope) ? options.scope : '';
+        if ( scope === '' ) { return Promise.resolve([]); }
+        const scopeState = getScopeState(scope);
+        if ( scopeState !== null ) {
+            scopeState.installed = true;
+        }
+        return applyScopeCosmetics(scope);
+    },
+    refresh(options = {}) {
+        const scope = isValidScope(options?.scope) ? options.scope : '';
+        if ( scope !== '' ) {
+            return applyScopeCosmetics(scope);
+        }
+        const scopes = Array.from(scopeStates.entries())
+            .filter(([, state]) => state.installed)
+            .map(([name]) => name);
+        return refreshScopes(scopes);
+    },
+    clear(options = {}) {
+        const scope = isValidScope(options?.scope) ? options.scope : '';
+        if ( scope !== '' ) {
+            return clearAppliedCss(scope);
+        }
+        return Promise.all(Array.from(scopeStates.keys()).map(clearAppliedCss));
+    },
+    stop(options = {}) {
+        const scope = isValidScope(options?.scope) ? options.scope : '';
+        if ( scope !== '' ) {
+            const scopeState = getScopeState(scope);
+            if ( scopeState !== null ) {
+                scopeState.installed = false;
+            }
+            return clearAppliedCss(scope);
+        }
+        self.removeEventListener?.(shadowRootsChangedEvent, shadowRootsChangedListener);
+        for ( const [, state] of scopeStates ) {
+            state.installed = false;
+        }
+        return Promise.all(Array.from(scopeStates.keys()).map(clearAppliedCss)).then(() => {
+            try {
+                delete self.TalonRemoteCosmeticsController;
+            } catch {
+                self.TalonRemoteCosmeticsController = undefined;
+            }
+            return true;
+        });
+    },
+};
 
 })();
 

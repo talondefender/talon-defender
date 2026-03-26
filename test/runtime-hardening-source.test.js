@@ -9,12 +9,12 @@ test('adaptive subsystems register the shared shadow DOM helper before their run
   const source = await readSource('js/scripting-manager.js');
 
   assert.match(source, /const TALON_SHADOW_DOM_HELPER_PATH = '\/js\/scripting\/shadow-dom-helper\.js'/);
+  assert.match(source, /const TALON_BLOCK_HINTS_PATH = '\/js\/scripting\/block-hints\.js'/);
   assert.match(source, /const TALON_PUBLIC_SUFFIX_DATA_PATH = '\/shared\/public-suffix-data\.js'/);
-  assert.match(source, /TALON_SHADOW_DOM_HELPER_PATH,\s*'\/js\/scripting\/native-heuristics\.js'/);
-  assert.match(source, /TALON_SHADOW_DOM_HELPER_PATH,\s*'\/js\/scripting\/automation\.js'/);
-  assert.match(source, /TALON_PUBLIC_SUFFIX_DATA_PATH,\s*'\/shared\/site-key-resolver\.js',\s*'\/js\/scripting\/breakage-guard\.js',\s*TALON_SHADOW_DOM_HELPER_PATH,\s*'\/js\/scripting\/remote-cosmetics\.js'/);
-  assert.match(source, /TALON_SHADOW_DOM_HELPER_PATH,\s*'\/js\/scripting\/remote-cosmetics\.js'/);
-  assert.match(source, /TALON_SHADOW_DOM_HELPER_PATH,\s*'\/js\/scripting\/post-hide-cleanup\.js'/);
+  assert.match(source, /TALON_SHADOW_DOM_HELPER_PATH,\s*TALON_BLOCK_HINTS_PATH,\s*'\/js\/scripting\/native-heuristics\.js'/);
+  assert.match(source, /TALON_SHADOW_DOM_HELPER_PATH,\s*TALON_BLOCK_HINTS_PATH,\s*'\/js\/scripting\/automation\.js'/);
+  assert.match(source, /TALON_PUBLIC_SUFFIX_DATA_PATH,\s*'\/shared\/site-key-resolver\.js',\s*'\/js\/scripting\/breakage-guard\.js',\s*TALON_SHADOW_DOM_HELPER_PATH,\s*TALON_BLOCK_HINTS_PATH,\s*'\/js\/scripting\/remote-cosmetics\.js'/);
+  assert.match(source, /TALON_SHADOW_DOM_HELPER_PATH,\s*TALON_BLOCK_HINTS_PATH,\s*'\/js\/scripting\/post-hide-cleanup\.js'/);
 });
 
 test('remote tactics stays packaged and bounded instead of executing remote code', async () => {
@@ -35,22 +35,27 @@ test('runtime refresh keeps remote tactics on a host-gated isolated and MAIN-wor
   const source = await readSource('js/background.js');
   const isolatedRefreshBlock = source.slice(
     source.indexOf('const ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object.freeze(['),
-    source.indexOf('const REMOTE_TACTICS_ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object.freeze([')
+    source.indexOf('const REMOTE_COSMETICS_HOST_LIVE_RUNTIME_REFRESH_FILES = Object.freeze([')
   );
 
   assert.match(source, /const ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object\.freeze\(\[/);
+  assert.match(source, /const REMOTE_COSMETICS_HOST_LIVE_RUNTIME_REFRESH_FILES = Object\.freeze\(\[[\s\S]*'\/js\/scripting\/remote-cosmetics-host\.js'[\s\S]*\]\);/);
   assert.match(source, /const REMOTE_TACTICS_ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object\.freeze\(\[[\s\S]*'\/js\/scripting\/remote-tactics-bootstrap\.js'[\s\S]*\]\);/);
   assert.match(source, /const MAIN_WORLD_LIVE_RUNTIME_REFRESH_FILES = Object\.freeze\(\[[\s\S]*'\/js\/scripting\/remote-tactics\.js'[\s\S]*\]\);/);
   assert.match(source, /target: \{ tabId, allFrames: true \}/);
-  assert.match(source, /const tabMatchesRemoteTacticHosts = async \(/);
-  assert.match(source, /if \( hostname !== '' && remoteTacticHostnames\.has\(hostname\) \) \{/);
+  assert.match(source, /const tabMatchesHostnameSet = async \(/);
+  assert.match(source, /if \( hostname !== '' && hostnames\.has\(hostname\) \) \{/);
   assert.match(source, /const frameUrls = await listTabFrameUrls\(tabId, fallbackUrl\)/);
-  assert.match(source, /frameUrls\.some\(url => remoteTacticHostnames\.has\(normalizeHttpHostname\(url\)\)\)/);
+  assert.match(source, /frameUrls\.some\(url => hostnames\.has\(normalizeHttpHostname\(url\)\)\)/);
+  assert.match(source, /const shouldRefreshRemoteCosmeticsHost = await tabMatchesHostnameSet\(tabId, \{/);
+  assert.match(source, /await executeRuntimeRefreshLane\(\s*tabId,\s*REMOTE_COSMETICS_HOST_LIVE_RUNTIME_REFRESH_FILES/);
+  assert.match(source, /await executeRuntimeStopLane\(tabId, stopRemoteCosmeticsHostController\)/);
   assert.match(source, /const shouldRefreshRemoteTactics = await tabMatchesRemoteTacticHosts\(tabId, \{/);
   assert.match(source, /await executeRuntimeRefreshLane\(\s*tabId,\s*REMOTE_TACTICS_ISOLATED_LIVE_RUNTIME_REFRESH_FILES/);
   assert.match(source, /await executeRuntimeRefreshLane\(tabId, MAIN_WORLD_LIVE_RUNTIME_REFRESH_FILES, \{\s*world: 'MAIN',\s*\}\)/);
   assert.match(source, /await executeRuntimeStopLane\(tabId, stopRemoteTacticsBootstrapController\)/);
   assert.match(source, /await executeRuntimeStopLane\(tabId, stopMainWorldRuntimeControllers, \{\s*world: 'MAIN',\s*\}\)/);
+  assert.match(source, /readRegisteredRemoteCosmeticHostnames\(\)/);
   assert.match(source, /readRegisteredRemoteTacticHostnames\(\)/);
   assert.match(source, /TalonRemoteTacticsBootstrapController/);
   assert.match(source, /TalonRemoteTacticsController/);
@@ -89,8 +94,9 @@ test('remote cosmetics uses local style ownership instead of background CSS mess
   assert.doesNotMatch(source, /what:\s*'insertCSS'/);
   assert.doesNotMatch(source, /what:\s*'removeCSS'/);
   assert.match(source, /STYLE_MARKER_ATTR = 'data-talon-remote-cosmetics'/);
-  assert.match(source, /ensureDocumentStyle\(cssText\)/);
-  assert.match(source, /syncShadowStyles\(\)/);
+  assert.match(source, /STYLE_SCOPE_ATTR = 'data-talon-remote-cosmetics-scope'/);
+  assert.match(source, /ensureDocumentStyle\(scope, cssText\)/);
+  assert.match(source, /syncShadowStyles\(scope\)/);
 });
 
 test('automation queries shadow roots and applies hide styling only to marked nodes', async () => {
@@ -116,7 +122,11 @@ test('adaptive lanes opt into related fallback frames beyond scriptlets', async 
   );
   assert.match(
     source,
-    /id: 'remote-cosmetics',[\s\S]*matchOriginAsFallback: true/
+    /id: 'remote-cosmetics-global',[\s\S]*matchOriginAsFallback: true/
+  );
+  assert.match(
+    source,
+    /id: 'remote-cosmetics-host',[\s\S]*matchOriginAsFallback: true/
   );
   assert.match(
     source,

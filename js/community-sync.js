@@ -39,6 +39,7 @@ import {
 } from './community-tactics.js';
 import {
     COMMUNITY_RULE_SCHEMA_VERSION_LEGACY,
+    COMMUNITY_RULE_SCHEMA_VERSION_REQUEST_TACTICS,
     COMMUNITY_RULE_SCHEMA_VERSION_TACTICS,
     normalizeCommunityRuleSchemaVersion,
     sanitizeCommunityRules,
@@ -104,7 +105,10 @@ const LEGACY_PRIVATE_STORAGE_KEYS = {
 const ALARM_NAME = 'community-sync';
 const COMMUNITY_FETCH_TIMEOUT_MS = 10000;
 const COMMUNITY_OVERLAY_SCHEMA_VERSION = 3;
-const COMMUNITY_OVERLAY_TACTIC_SCHEMA_VERSION = COMMUNITY_RULE_SCHEMA_VERSION_TACTICS;
+const COMMUNITY_OVERLAY_TACTIC_SCHEMA_VERSION =
+    COMMUNITY_RULE_SCHEMA_VERSION_TACTICS;
+const COMMUNITY_OVERLAY_REQUEST_TACTIC_SCHEMA_VERSION =
+    COMMUNITY_RULE_SCHEMA_VERSION_REQUEST_TACTICS;
 const COMMUNITY_OVERLAY_DEFAULT_TTL_MINUTES = 30;
 const COMMUNITY_OVERLAY_MIN_TTL_MINUTES = 10;
 const COMMUNITY_OVERLAY_MAX_TTL_MINUTES = 360;
@@ -645,7 +649,11 @@ const sanitizeCommunityScriptlets = (input, { maxEntries = 120 } = {}) =>
 
 const sanitizeCommunityTacticsForStorage = (input, {
     maxEntries = COMMUNITY_TACTIC_COMPILED_MAX,
-} = {}) => sanitizeCommunityTactics(input, { maxEntries });
+    schemaVersion = COMMUNITY_RULE_SCHEMA_VERSION_LEGACY,
+} = {}) => sanitizeCommunityTactics(input, {
+    maxEntries,
+    schemaVersion,
+});
 
 const sortObjectEntries = object => Object.fromEntries(
     Object.entries(object || {}).sort(([ left ], [ right ]) => left.localeCompare(right))
@@ -716,7 +724,10 @@ const sanitizeCommunityPayloadForStorage = (
         }),
         publicTactics: sanitizeCommunityTacticsForStorage(
             input?.tactics ?? input?.publicTactics,
-            { maxEntries: maxTactics }
+            {
+                maxEntries: maxTactics,
+                schemaVersion: sanitizedRules.schemaVersion,
+            }
         ),
     };
 };
@@ -2281,7 +2292,8 @@ export async function syncCommunityOverlayRules({
     const overlaySchemaVersion = normalizeCommunityRuleSchemaVersion(bundle.schemaVersion);
     if (
         overlaySchemaVersion !== COMMUNITY_OVERLAY_SCHEMA_VERSION &&
-        overlaySchemaVersion !== COMMUNITY_OVERLAY_TACTIC_SCHEMA_VERSION
+        overlaySchemaVersion !== COMMUNITY_OVERLAY_TACTIC_SCHEMA_VERSION &&
+        overlaySchemaVersion !== COMMUNITY_OVERLAY_REQUEST_TACTIC_SCHEMA_VERSION
     ) {
         return persistOverlayError('unsupported overlay schema version');
     }

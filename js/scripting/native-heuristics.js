@@ -20,6 +20,7 @@
     const storage = self.browser?.storage?.local || self.chrome?.storage?.local;
     const guard = self.TalonBreakageGuard;
     const shadowController = self.TalonShadowRootController;
+    const blockHints = self.TalonBlockHintsController;
     const shadowRootsChangedEvent =
         shadowController?.ROOTS_CHANGED_EVENT || 'talon-shadow-roots-changed';
     const registrableDomain = hostname => {
@@ -614,6 +615,10 @@
         const adChoicesHint = hasAdChoicesHint(container);
         const outboundHint = hasOutboundLink(container);
         const sizeHint = isStandardAdSize(rect);
+        const recentBlockHint = blockHints?.hasRecentHint?.(container, {
+            includeSubtree: true,
+        }) === true || blockHints?.hasRecentHint?.(labelEl) === true;
+        const recentNetworkHit = blockHints?.hasRecentNetworkHit?.() === true;
 
         let score = 0;
         if (widgetHint) { score += 4; }
@@ -631,6 +636,8 @@
         if (adChoicesHint) { score += 1; }
         if (outboundHint) { score += 1; }
         if (sizeHint) { score += 1; }
+        if (recentBlockHint) { score += 1; }
+        if (recentNetworkHit) { score += 1; }
 
         let overlayHint = 0;
         try {
@@ -761,6 +768,7 @@
             container.style.setProperty('display', 'none', 'important');
             container.style.setProperty('visibility', 'hidden', 'important');
             container.dataset.uBolNativeHidden = '1';
+            blockHints?.noteElement?.(container, { ancestors: 1 });
             recordHeuristicHide(isStrong);
 
             let hint = Number.isFinite(overlayHint) ? overlayHint : 0;
@@ -860,12 +868,19 @@
             parent.getAttribute('data-ad') || '',
             parent.getAttribute('data-ad-unit') || '',
         ].join(' ');
-        if (attrHintRe.test(hintParts) === false && adSized === false) { return; }
+        if (
+            attrHintRe.test(hintParts) === false &&
+            adSized === false &&
+            blockHints?.hasRecentHint?.(parent, { includeSubtree: true }) !== true
+        ) {
+            return;
+        }
 
         try {
             parent.style.setProperty('display', 'none', 'important');
             parent.style.setProperty('visibility', 'hidden', 'important');
             parent.dataset.uBolNativeCollapsed = '1';
+            blockHints?.noteElement?.(parent, { ancestors: 1 });
             ensureStaysHidden(parent);
             unlockScrollIfNeeded();
             guard?.auditAfterMutation?.('native-heuristics-collapse');

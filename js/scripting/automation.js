@@ -12,6 +12,7 @@ const runtime = self.browser?.runtime || self.chrome?.runtime;
 const getURL = runtime?.getURL?.bind(runtime) || (p => p);
 const storage = self.browser?.storage?.local || self.chrome?.storage?.local;
 const guard = self.TalonBreakageGuard;
+const blockHints = self.TalonBlockHintsController;
 const AUTOMATION_MARK_ATTR = 'data-ubol-automation';
 const AUTOMATION_STYLE_MARKER_ATTR = 'data-ubol-automation-style';
 const shadowController = self.TalonShadowRootController;
@@ -421,6 +422,7 @@ const applyHide = (id, selectors, context) => {
             });
             if ( decision?.allowed === false ) { continue; }
             markApplied(el, id);
+            blockHints?.noteElement?.(el, { ancestors: 1 });
             changed = true;
         }
     }
@@ -445,6 +447,7 @@ const applyRemove = (id, selectors, context) => {
                 source: 'automation-remove',
             });
             if ( decision?.allowed === false ) { continue; }
+            blockHints?.noteElement?.(el.parentElement || el, { ancestors: 1 });
             try { el.remove(); } catch { continue; }
             groupChanged = true;
         }

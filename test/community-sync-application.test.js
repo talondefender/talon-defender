@@ -1021,6 +1021,7 @@ test('community sync applies bounded first-party redirects and empty collection 
     {
       id: 'set-empty-array',
       kind: 'jsonSet',
+      phase: 'response',
       hosts: ['=video.example.com'],
       transport: 'fetch',
       urlPathPrefixes: ['/api/player'],
@@ -1030,6 +1031,7 @@ test('community sync applies bounded first-party redirects and empty collection 
     {
       id: 'set-empty-object',
       kind: 'jsonSet',
+      phase: 'response',
       hosts: ['=video.example.com'],
       transport: 'both',
       urlPathPrefixes: ['/api/player'],
@@ -1235,6 +1237,7 @@ test('community sync stores signed public tactics from schema v4 bundles', { con
     {
       id: 'prune-ads',
       kind: 'jsonPrune',
+      phase: 'response',
       hosts: ['=video.example'],
       transport: 'fetch',
       urlPathPrefixes: ['/api/player'],
@@ -1243,6 +1246,7 @@ test('community sync stores signed public tactics from schema v4 bundles', { con
     {
       id: 'set-empty',
       kind: 'jsonSet',
+      phase: 'response',
       hosts: ['=video.example'],
       transport: 'both',
       urlPathPrefixes: ['/api/player'],
@@ -1712,6 +1716,7 @@ test('overlay sync merges baseline and site overlay state into the compiled publ
     {
       id: 'shared-tactic',
       kind: 'jsonSet',
+      phase: 'response',
       hosts: ['=video.example'],
       transport: 'both',
       urlPathPrefixes: ['/api/player'],
@@ -1721,6 +1726,7 @@ test('overlay sync merges baseline and site overlay state into the compiled publ
     {
       id: 'overlay-only-tactic',
       kind: 'jsonPrune',
+      phase: 'response',
       hosts: ['=overlay.example'],
       transport: 'xhr',
       urlPathPrefixes: ['/api/player'],
@@ -1729,6 +1735,7 @@ test('overlay sync merges baseline and site overlay state into the compiled publ
     {
       id: 'baseline-only-tactic',
       kind: 'jsonPrune',
+      phase: 'response',
       hosts: ['=baseline.example'],
       transport: 'fetch',
       urlPathPrefixes: ['/api/player'],
@@ -1970,6 +1977,7 @@ test('overlay sync removes revoked site overlays and recompiles the effective co
     {
       id: 'baseline-tactic',
       kind: 'jsonPrune',
+      phase: 'response',
       hosts: ['=baseline.example'],
       transport: 'fetch',
       urlPathPrefixes: ['/api/player'],

@@ -6,6 +6,7 @@
 const runtime = self.browser?.runtime || self.chrome?.runtime;
 const guard = self.TalonBreakageGuard;
 const shadowController = self.TalonShadowRootController;
+const blockHints = self.TalonBlockHintsController;
 const shadowRootsChangedEvent =
     shadowController?.ROOTS_CHANGED_EVENT || 'talon-shadow-roots-changed';
 if ( runtime === undefined ) { return; }
@@ -132,11 +133,20 @@ const shouldCollapse = container => {
     if ( rect.width <= 0 || rect.height <= 0 ) { return false; }
 
     const adSized = isStandardAdSize(rect);
+    const recentBlockHint = blockHints?.hasRecentHint?.(container, {
+        includeSubtree: true,
+    }) === true;
+    const recentNetworkHit = blockHints?.hasRecentNetworkHit?.() === true;
     if ( adSized === false && (rect.height < 50 || rect.width < 100) ) {
         return false;
     }
 
-    if ( hasAdHint(container) === false && adSized === false ) {
+    if (
+        hasAdHint(container) === false &&
+        adSized === false &&
+        recentBlockHint === false &&
+        recentNetworkHit === false
+    ) {
         return false;
     }
 
@@ -241,6 +251,7 @@ const collapse = container => {
         if ( isOverlayLike(container) ) {
             unlockScrollIfNeeded();
         }
+        blockHints?.noteElement?.(container, { ancestors: 1 });
         guard?.auditAfterMutation?.('post-hide-cleanup');
         return true;
     } catch {

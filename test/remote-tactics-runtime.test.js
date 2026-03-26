@@ -148,8 +148,9 @@ class FakeResponse {
 }
 
 class FakeRequest {
-  constructor(url) {
+  constructor(url, init = {}) {
     this.url = String(url || '');
+    this.method = typeof init?.method === 'string' ? init.method : 'GET';
   }
 }
 
@@ -306,13 +307,18 @@ const createHarness = ({
 } = {}) => {
   const document = new FakeEventTarget();
   const timers = createFakeTimers();
+  const fetchCalls = [];
+  const hitEvents = [];
   const requestEvents = [];
   const sentRequests = [];
   const FakeXMLHttpRequest = createFakeXMLHttpRequestClass(sentRequests);
-  const originalFetch = async input => new FakeResponse(fetchBody, {
-    url: resolveUrl(input),
-    headers: { 'content-type': 'application/json' },
-  });
+  const originalFetch = async (...args) => {
+    fetchCalls.push(args.map(arg => cloneValue(arg)));
+    return new FakeResponse(fetchBody, {
+      url: resolveUrl(args[0]),
+      headers: { 'content-type': 'application/json' },
+    });
+  };
 
   const dispatchConfig = (
     requestId = requestEvents.at(-1)?.requestId || 0,
@@ -331,6 +337,9 @@ const createHarness = ({
     if (autoRespond) {
       dispatchConfig(event.detail.requestId, tactics, event.detail.hostname);
     }
+  });
+  document.addEventListener('td-remote-tactics-hit', event => {
+    hitEvents.push(JSON.parse(JSON.stringify(event.detail || {})));
   });
 
   const context = {
@@ -367,6 +376,8 @@ const createHarness = ({
     context,
     document,
     dispatchConfig,
+    fetchCalls,
+    hitEvents,
     originalFetch,
     requestEvents,
     sentRequests,
@@ -386,6 +397,73 @@ test('remote tactics mutates same-origin fetch JSON responses', async () => {
       keep: true,
     },
   });
+  assert.deepEqual(harness.hitEvents.at(-1), {
+    hostname: 'www.example.com',
+    pathname: '/api/player',
+    phase: 'response',
+    transport: 'fetch',
+  });
+});
+
+test('remote tactics mutates same-origin fetch JSON request bodies without rebuilding Request objects', async () => {
+  const harness = createHarness({
+    tactics: [
+      {
+        id: 'request-prune',
+        kind: 'jsonPrune',
+        phase: 'request',
+        transport: 'fetch',
+        urlPathPrefixes: ['/api/player'],
+        jsonPaths: ['payload.ads'],
+      },
+    ],
+  });
+
+  await harness.context.fetch('https://www.example.com/api/player', {
+    method: 'POST',
+    body: JSON.stringify(DEFAULT_BODY),
+  });
+
+  assert.equal(harness.fetchCalls.length, 1);
+  assert.deepEqual(JSON.parse(harness.fetchCalls[0][1].body), {
+    payload: {
+      keep: true,
+    },
+  });
+  assert.deepEqual(harness.hitEvents.at(-1), {
+    hostname: 'www.example.com',
+    pathname: '/api/player',
+    phase: 'request',
+    transport: 'fetch',
+  });
+});
+
+test('remote tactics leaves cross-origin and unsupported fetch request bodies unchanged', async () => {
+  const harness = createHarness({
+    tactics: [
+      {
+        id: 'request-prune',
+        kind: 'jsonPrune',
+        phase: 'request',
+        transport: 'fetch',
+        urlPathPrefixes: ['/api/player'],
+        jsonPaths: ['payload.ads'],
+      },
+    ],
+  });
+
+  await harness.context.fetch('https://example.org/api/player', {
+    method: 'POST',
+    body: JSON.stringify(DEFAULT_BODY),
+  });
+  await harness.context.fetch('https://www.example.com/api/player', {
+    method: 'GET',
+    body: JSON.stringify(DEFAULT_BODY),
+  });
+
+  assert.equal(harness.fetchCalls.length, 2);
+  assert.deepEqual(JSON.parse(harness.fetchCalls[0][1].body), DEFAULT_BODY);
+  assert.deepEqual(JSON.parse(harness.fetchCalls[1][1].body), DEFAULT_BODY);
 });
 
 test('remote tactics mutates async XHR when responseText is read first', () => {
@@ -402,6 +480,12 @@ test('remote tactics mutates async XHR when responseText is read first', () => {
     },
   }));
   assert.equal(xhr.response, xhr.responseText);
+  assert.deepEqual(harness.hitEvents.at(-1), {
+    hostname: 'www.example.com',
+    pathname: '/api/player',
+    phase: 'response',
+    transport: 'xhr',
+  });
 });
 
 test('remote tactics keeps XHR response and responseText consistent for text-backed responses', () => {
@@ -465,6 +549,38 @@ test('remote tactics delays async same-origin XHR until config is ready but does
       keep: true,
     },
   }));
+});
+
+test('remote tactics mutates same-origin XHR JSON request bodies when config is ready', () => {
+  const harness = createHarness({
+    tactics: [
+      {
+        id: 'request-prune',
+        kind: 'jsonPrune',
+        phase: 'request',
+        transport: 'xhr',
+        urlPathPrefixes: ['/api/player'],
+        jsonPaths: ['payload.ads'],
+      },
+    ],
+  });
+  const xhr = new harness.context.XMLHttpRequest();
+
+  xhr.open('POST', '/api/player');
+  xhr.send(JSON.stringify(DEFAULT_BODY));
+
+  assert.equal(xhr.sendCount, 1);
+  assert.deepEqual(JSON.parse(xhr.sendArgs[0]), {
+    payload: {
+      keep: true,
+    },
+  });
+  assert.deepEqual(harness.hitEvents.at(-1), {
+    hostname: 'www.example.com',
+    pathname: '/api/player',
+    phase: 'request',
+    transport: 'xhr',
+  });
 });
 
 test('remote tactics stop restores native globals and allows a clean reinstall', async () => {

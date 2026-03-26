@@ -3,6 +3,7 @@
     const STORAGE_KEY = 'communityBundlePublicTactics';
     const REQUEST_EVENT = 'td-remote-tactics-request';
     const CONFIG_EVENT = 'td-remote-tactics-config';
+    const HIT_EVENT = 'td-remote-tactics-hit';
     const hostname = (self.location?.hostname || '').trim().toLowerCase();
     const exactHost = hostname === '' ? '' : `=${hostname}`;
     const storage = self.browser?.storage?.local || self.chrome?.storage?.local;
@@ -68,7 +69,7 @@
         return;
     }
 
-    document.addEventListener(REQUEST_EVENT, event => {
+    const requestEventListener = event => {
         const detail = event instanceof CustomEvent ? event.detail : null;
         if ( detail?.hostname && `${detail.hostname}`.trim().toLowerCase() !== hostname ) {
             return;
@@ -76,7 +77,21 @@
         void readAndDispatch({
             requestId: Number(detail?.requestId) || 0,
         });
-    }, true);
+    };
+
+    const hitEventListener = event => {
+        const detail = event instanceof CustomEvent ? event.detail : null;
+        if ( detail instanceof Object === false ) { return; }
+        self.TalonBlockHintsController?.noteNetworkHit?.({
+            source: 'remote-tactics',
+            phase: typeof detail.phase === 'string' ? detail.phase : '',
+            transport: typeof detail.transport === 'string' ? detail.transport : '',
+            pathname: typeof detail.pathname === 'string' ? detail.pathname : '',
+        });
+    };
+
+    document.addEventListener(REQUEST_EVENT, requestEventListener, true);
+    document.addEventListener(HIT_EVENT, hitEventListener, true);
 
     self.TalonRemoteTacticsBootstrapController = {
         refresh(options = {}) {
@@ -85,6 +100,16 @@
             });
         },
         stop() {
+            try {
+                document.removeEventListener(REQUEST_EVENT, requestEventListener, true);
+                document.removeEventListener(HIT_EVENT, hitEventListener, true);
+            } catch {
+            }
+            try {
+                delete self.TalonRemoteTacticsBootstrapController;
+            } catch {
+                self.TalonRemoteTacticsBootstrapController = undefined;
+            }
             return Promise.resolve(true);
         },
     };

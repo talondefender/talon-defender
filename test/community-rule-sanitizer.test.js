@@ -17,6 +17,7 @@ test('community rule schema version normalizes legacy, current, and unsupported 
   assert.equal(normalizeCommunityRuleSchemaVersion(2), 2);
   assert.equal(normalizeCommunityRuleSchemaVersion(3), 3);
   assert.equal(normalizeCommunityRuleSchemaVersion(4), 4);
+  assert.equal(normalizeCommunityRuleSchemaVersion(5), 5);
   assert.equal(normalizeCommunityRuleSchemaVersion('2'), 2);
   assert.equal(normalizeCommunityRuleSchemaVersion(99), 0);
 });

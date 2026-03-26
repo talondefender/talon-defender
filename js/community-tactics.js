@@ -10,6 +10,8 @@ export const COMMUNITY_TACTIC_KIND_SET = 'jsonSet';
 export const COMMUNITY_TACTIC_TRANSPORT_FETCH = 'fetch';
 export const COMMUNITY_TACTIC_TRANSPORT_XHR = 'xhr';
 export const COMMUNITY_TACTIC_TRANSPORT_BOTH = 'both';
+export const COMMUNITY_TACTIC_PHASE_RESPONSE = 'response';
+export const COMMUNITY_TACTIC_PHASE_REQUEST = 'request';
 
 export const COMMUNITY_TACTIC_BASELINE_MAX = 80;
 export const COMMUNITY_TACTIC_OVERLAY_MAX = 20;
@@ -31,6 +33,13 @@ const VALID_TACTIC_TRANSPORTS = new Set([
     COMMUNITY_TACTIC_TRANSPORT_XHR,
     COMMUNITY_TACTIC_TRANSPORT_BOTH,
 ]);
+
+const VALID_TACTIC_PHASES = new Set([
+    COMMUNITY_TACTIC_PHASE_RESPONSE,
+    COMMUNITY_TACTIC_PHASE_REQUEST,
+]);
+
+const COMMUNITY_TACTIC_REQUEST_PHASE_SCHEMA_VERSION = 5;
 
 const JSON_PATH_IDENTIFIER_RE = /^[A-Za-z_$][\w$]*$/;
 
@@ -150,6 +159,7 @@ export const sanitizeCommunityTactics = (
         maxHosts = COMMUNITY_TACTIC_HOSTS_MAX,
         maxUrlPathPrefixes = COMMUNITY_TACTIC_URL_PREFIXES_MAX,
         maxJsonPaths = COMMUNITY_TACTIC_JSON_PATHS_MAX,
+        schemaVersion = 4,
     } = {}
 ) => {
     if ( Array.isArray(input) === false ) { return null; }
@@ -166,11 +176,19 @@ export const sanitizeCommunityTactics = (
         const transport = typeof entry.transport === 'string'
             ? entry.transport.trim()
             : '';
+        const phase = typeof entry.phase === 'string'
+            ? entry.phase.trim()
+            : COMMUNITY_TACTIC_PHASE_RESPONSE;
         if (
             id === '' ||
             seenIds.has(id) ||
             VALID_TACTIC_KINDS.has(kind) === false ||
-            VALID_TACTIC_TRANSPORTS.has(transport) === false
+            VALID_TACTIC_TRANSPORTS.has(transport) === false ||
+            VALID_TACTIC_PHASES.has(phase) === false ||
+            (
+                phase === COMMUNITY_TACTIC_PHASE_REQUEST &&
+                Number(schemaVersion) < COMMUNITY_TACTIC_REQUEST_PHASE_SCHEMA_VERSION
+            )
         ) {
             continue;
         }
@@ -200,6 +218,7 @@ export const sanitizeCommunityTactics = (
             id,
             kind,
             hosts,
+            phase,
             transport,
             urlPathPrefixes,
             jsonPaths,
@@ -366,6 +385,10 @@ const tacticMatchesTransport = (tactic, transport) => (
     tactic?.transport === transport
 );
 
+const tacticMatchesPhase = (tactic, phase) => (
+    (tactic?.phase || COMMUNITY_TACTIC_PHASE_RESPONSE) === phase
+);
+
 const tacticMatchesPathname = (tactic, pathname) => (
     Array.isArray(tactic?.urlPathPrefixes) &&
     tactic.urlPathPrefixes.some(prefix => pathname.startsWith(prefix))
@@ -376,6 +399,7 @@ export const applyCommunityTacticsToJsonValue = (
     tactics,
     {
         hostname = '',
+        phase = COMMUNITY_TACTIC_PHASE_RESPONSE,
         transport = COMMUNITY_TACTIC_TRANSPORT_FETCH,
         pathname = '/',
     } = {}
@@ -397,6 +421,7 @@ export const applyCommunityTacticsToJsonValue = (
                 continue;
             }
         }
+        if ( tacticMatchesPhase(tactic, phase) === false ) { continue; }
         if ( tacticMatchesTransport(tactic, transport) === false ) { continue; }
         if ( tacticMatchesPathname(tactic, pathname) === false ) { continue; }
         applicable.push(tactic);
