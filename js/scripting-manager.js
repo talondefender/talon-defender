@@ -33,6 +33,7 @@ import {
     YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY,
 } from './breakage-policy.js';
 import { canonicalizeCommunityScriptlets } from './community-sync.js';
+import { collectCommunityTacticHostnames } from './community-tactics.js';
 import { fetchJSON } from './fetch.js';
 import {
     isRemoteScriptletDirectiveId,
@@ -287,6 +288,24 @@ const applyCompatibilityHostExclusions = (
     );
     if ( applicableExclusions.length === 0 ) { return hostnames; }
     return ut.subtractHostnameIters(hostnames, applicableExclusions);
+};
+
+const collectRegisteredRemoteTacticHostnames = (
+    filteringModeDetails,
+    remoteTactics,
+) => {
+    const tacticHostnames = collectCommunityTacticHostnames(remoteTactics);
+    if ( tacticHostnames.length === 0 ) { return []; }
+    const hasBroadHostPermission =
+        filteringModeDetails?.optimal?.has?.('all-urls') ||
+        filteringModeDetails?.complete?.has?.('all-urls');
+    if ( hasBroadHostPermission ) { return tacticHostnames; }
+    const permissionGrantedHostnames = [
+        ...(filteringModeDetails?.optimal || []),
+        ...(filteringModeDetails?.complete || []),
+    ];
+    if ( permissionGrantedHostnames.length === 0 ) { return []; }
+    return ut.intersectHostnameIters(tacticHostnames, permissionGrantedHostnames);
 };
 
 /******************************************************************************/
@@ -1141,6 +1160,8 @@ function registerRemoteTactics(context) {
     const registeredMain = before.get('remote-tactics-main');
     before.delete('remote-tactics-main'); // Important!
 
+    context.registeredTacticsHostCount = 0;
+
     if ( Array.isArray(remoteTactics) === false || remoteTactics.length === 0 ) {
         if ( registeredBootstrap !== undefined ) {
             context.toRemove.push('remote-tactics-bootstrap');
@@ -1151,11 +1172,12 @@ function registerRemoteTactics(context) {
         return;
     }
 
-    const { none, basic, optimal, complete } = filteringModeDetails;
-    const matches = [
-        ...ut.matchesFromHostnames(optimal),
-        ...ut.matchesFromHostnames(complete),
-    ];
+    const { none, basic } = filteringModeDetails;
+    const targetHostnames = collectRegisteredRemoteTacticHostnames(
+        filteringModeDetails,
+        remoteTactics
+    );
+    const matches = exactMatchesFromHostnames(targetHostnames);
     if ( matches.length === 0 ) {
         if ( registeredBootstrap !== undefined ) {
             context.toRemove.push('remote-tactics-bootstrap');
@@ -1166,6 +1188,7 @@ function registerRemoteTactics(context) {
         return;
     }
 
+    context.registeredTacticsHostCount = targetHostnames.length;
     normalizeMatches(matches);
 
     const excludeMatches = [];
@@ -1319,6 +1342,10 @@ const writeInjectableSyncDiagnostics = async result => {
         recoveryResetCount: Math.max(0, Number(result.recoveryResetCount) || 0),
         toAddCount: Math.max(0, Number(result.toAddCount) || 0),
         toRemoveCount: Math.max(0, Number(result.toRemoveCount) || 0),
+        registeredTacticsHostCount: Math.max(
+            0,
+            Number(result.registeredTacticsHostCount) || 0
+        ),
     };
     await localWrite(INJECTABLE_SYNC_DIAGNOSTICS_KEY, payload);
 };
@@ -1419,6 +1446,7 @@ const buildInjectablesRegistrationPlan = async () => {
             before: [],
             after: [],
         },
+        registeredTacticsHostCount: 0,
         youtubeWatchOwnerProfile: normalizeYouTubeWatchOwnerProfile(youtubeWatchOwnerProfile),
     };
 
@@ -1447,6 +1475,7 @@ const buildInjectablesRegistrationPlan = async () => {
     return {
         toAdd,
         toRemove,
+        registeredTacticsHostCount: context.registeredTacticsHostCount,
         remoteScriptletReloadHint: normalizeRemoteScriptletReloadHint(
             context.remoteScriptletReloadHint
         ),

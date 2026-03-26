@@ -110,6 +110,53 @@ test('schema v2 accepts safe allow, allowAllRequests, and packaged redirect exce
   assert.equal(redirectRule.condition.domainType, 'thirdParty');
 });
 
+test('schema v2 accepts bounded first-party exact-host redirects with path prefixes', () => {
+  const result = sanitizeCommunityRules([
+    {
+      action: {
+        type: 'redirect',
+        redirect: {
+          extensionPath: 'web_accessible_resources/noop.js',
+        },
+      },
+      condition: {
+        initiatorDomains: ['video.example.com'],
+        requestDomains: ['video.example.com'],
+        resourceTypes: ['script'],
+        domainType: 'firstParty',
+        urlPathPrefix: '/api/player',
+      },
+    },
+  ], {
+    schemaVersion: 2,
+  });
+
+  assert.equal(result.rules.length, 1);
+  assert.equal(result.byAction.redirect, 1);
+  assert.equal(result.exceptionCount, 1);
+  assert.deepEqual(result.rules[0], {
+    action: {
+      type: 'redirect',
+      redirect: {
+        extensionPath: '/web_accessible_resources/noop.js',
+      },
+    },
+    condition: {
+      initiatorDomains: ['video.example.com'],
+      requestDomains: ['video.example.com'],
+      resourceTypes: ['script'],
+      domainType: 'firstParty',
+      urlFilter: '||video.example.com/api/player',
+    },
+    priority: COMMUNITY_RULE_PRIORITY_REDIRECT,
+  });
+
+  const storedShape = sanitizeCommunityRules(result.rules, {
+    schemaVersion: 2,
+  });
+  assert.deepEqual(storedShape.rules, result.rules);
+});
+
 test('schema v2 accepts passive packaged XML and media redirect stubs', () => {
   const result = sanitizeCommunityRules([
     {
@@ -187,6 +234,106 @@ test('schema v2 accepts passive packaged XML and media redirect stubs', () => {
   assert.ok(
     result.rules.every(rule => rule.priority === COMMUNITY_RULE_PRIORITY_REDIRECT)
   );
+});
+
+test('schema v2 rejects unsafe first-party redirect scope and bad redirect/resource pairings', () => {
+  const result = sanitizeCommunityRules([
+    {
+      action: {
+        type: 'redirect',
+        redirect: {
+          extensionPath: 'web_accessible_resources/noop.js',
+        },
+      },
+      condition: {
+        initiatorDomains: ['video.example.com'],
+        requestDomains: ['cdn.example.net'],
+        resourceTypes: ['script'],
+        domainType: 'firstParty',
+        urlPathPrefix: '/api/player',
+      },
+    },
+    {
+      action: {
+        type: 'redirect',
+        redirect: {
+          extensionPath: 'web_accessible_resources/noop.js',
+        },
+      },
+      condition: {
+        initiatorDomains: ['video.example.com'],
+        requestDomains: ['video.example.com'],
+        resourceTypes: ['script'],
+        domainType: 'firstParty',
+      },
+    },
+    {
+      action: {
+        type: 'redirect',
+        redirect: {
+          extensionPath: 'web_accessible_resources/noop.js',
+        },
+      },
+      condition: {
+        initiatorDomains: ['checkout.shopify.com'],
+        requestDomains: ['checkout.shopify.com'],
+        resourceTypes: ['script'],
+        domainType: 'firstParty',
+        urlPathPrefix: '/assets/',
+      },
+    },
+    {
+      action: {
+        type: 'redirect',
+        redirect: {
+          extensionPath: 'web_accessible_resources/noop.css',
+        },
+      },
+      condition: {
+        initiatorDomains: ['video.example.com'],
+        requestDomains: ['video.example.com'],
+        resourceTypes: ['main_frame'],
+        domainType: 'firstParty',
+        urlPathPrefix: '/assets/',
+      },
+    },
+    {
+      action: {
+        type: 'redirect',
+        redirect: {
+          extensionPath: 'web_accessible_resources/noop.js',
+        },
+      },
+      condition: {
+        initiatorDomains: ['video.example.com'],
+        requestDomains: ['video.example.com'],
+        resourceTypes: ['image'],
+        domainType: 'firstParty',
+        urlPathPrefix: '/images/',
+      },
+    },
+    {
+      action: {
+        type: 'redirect',
+        redirect: {
+          extensionPath: 'web_accessible_resources/noop.js',
+        },
+      },
+      condition: {
+        initiatorDomains: ['video.example.com'],
+        requestDomains: ['video.example.com'],
+        resourceTypes: ['script'],
+        domainType: 'firstParty',
+        urlPathPrefix: 'api/player',
+      },
+    },
+  ], {
+    schemaVersion: 2,
+  });
+
+  assert.equal(result.rules.length, 0);
+  assert.equal(result.dropped.unsupportedRedirectPath, 1);
+  assert.equal(result.dropped.unsafeScope, 5);
 });
 
 test('schema v2 rejects unsafe exception scope, unsupported redirect targets, and unsupported actions', () => {

@@ -38,11 +38,20 @@ const cloneValue = value => value === undefined
     ? undefined
     : structuredClone(value);
 
+const isAllowedEmptyObjectValue = value => {
+    if ( value instanceof Object === false || Array.isArray(value) ) { return false; }
+    const prototype = Object.getPrototypeOf(value);
+    if ( prototype !== Object.prototype && prototype !== null ) { return false; }
+    return Object.keys(value).length === 0;
+};
+
 const isAllowedCommunityTacticValue = value => (
     value === null ||
     value === false ||
     value === 0 ||
-    value === ''
+    value === '' ||
+    (Array.isArray(value) && value.length === 0) ||
+    isAllowedEmptyObjectValue(value)
 );
 
 export const normalizeCommunityTacticHostPattern = value => {
@@ -65,6 +74,25 @@ export const normalizeCommunityTacticHostPattern = value => {
     if ( patternCouldMatchInternalUnfilteredDomain(exactHost) ) { return ''; }
     if ( patternCouldMatchProtectedDomain(exactHost) ) { return ''; }
     return exactHost;
+};
+
+export const collectCommunityTacticHostnames = input => {
+    if ( Array.isArray(input) === false ) { return []; }
+    const out = [];
+    const seen = new Set();
+    for ( const entry of input ) {
+        if ( entry instanceof Object === false ) { continue; }
+        const hosts = Array.isArray(entry.hosts) ? entry.hosts : [];
+        for ( const host of hosts ) {
+            const normalized = normalizeCommunityTacticHostPattern(host);
+            if ( normalized.startsWith('=') === false ) { continue; }
+            const hostname = normalized.slice(1);
+            if ( hostname === '' || seen.has(hostname) ) { continue; }
+            seen.add(hostname);
+            out.push(hostname);
+        }
+    }
+    return out;
 };
 
 export const normalizeCommunityTacticUrlPathPrefix = value => {

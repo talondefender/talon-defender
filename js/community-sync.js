@@ -33,6 +33,7 @@ import {
     COMMUNITY_TACTIC_BASELINE_MAX,
     COMMUNITY_TACTIC_COMPILED_MAX,
     COMMUNITY_TACTIC_OVERLAY_MAX,
+    collectCommunityTacticHostnames,
     mergeCommunityTactics,
     sanitizeCommunityTactics,
 } from './community-tactics.js';
@@ -1261,6 +1262,7 @@ const buildCommunityMetaCounts = ({
         protectedDirectivesCount: countProtectedDirectives(compiled?.publicDirectives),
         scriptletsCount: compiled?.publicScriptlets?.length || 0,
         tacticsCount: compiled?.publicTactics?.length || 0,
+        tacticsHostCount: collectCommunityTacticHostnames(compiled?.publicTactics).length,
         publicDirectivesCount: compiled?.publicDirectives?.length || 0,
         publicScriptletsCount: compiled?.publicScriptlets?.length || 0,
         publicTacticsCount: compiled?.publicTactics?.length || 0,

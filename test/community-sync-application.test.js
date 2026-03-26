@@ -789,6 +789,100 @@ test('community sync applies passive packaged XML and media redirect stubs throu
   );
 });
 
+test('community sync applies bounded first-party redirects and empty collection tactics', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  remoteBundle = await createSignedBundle({
+    schemaVersion: 4,
+    rules: [
+      {
+        action: {
+          type: 'redirect',
+          redirect: {
+            extensionPath: 'web_accessible_resources/noop.js',
+          },
+        },
+        condition: {
+          initiatorDomains: ['video.example.com'],
+          requestDomains: ['video.example.com'],
+          resourceTypes: ['script'],
+          domainType: 'firstParty',
+          urlPathPrefix: '/api/player',
+        },
+      },
+    ],
+    tactics: [
+      {
+        id: 'set-empty-array',
+        kind: 'jsonSet',
+        hosts: ['video.example.com'],
+        transport: 'fetch',
+        urlPathPrefixes: ['/api/player'],
+        jsonPaths: ['payload.adPlacements'],
+        value: [],
+      },
+      {
+        id: 'set-empty-object',
+        kind: 'jsonSet',
+        hosts: ['video.example.com'],
+        transport: 'both',
+        urlPathPrefixes: ['/api/player'],
+        jsonPaths: ['payload.adMetadata'],
+        value: {},
+      },
+    ],
+  });
+
+  const result = await syncCommunityRules({ force: true });
+  await finalizeCommunityActivationSuccess(result.activation);
+  const communityRules = dnrState.dynamicRules
+    .filter(rule => rule.id >= 6000000 && rule.id < 7000000);
+
+  assert.equal(result.source, 'remote');
+  assert.equal(result.applied.byAction.redirect, 1);
+  assert.deepEqual(communityRules, [
+    {
+      action: {
+        type: 'redirect',
+        redirect: {
+          extensionPath: '/web_accessible_resources/noop.js',
+        },
+      },
+      condition: {
+        initiatorDomains: ['video.example.com'],
+        requestDomains: ['video.example.com'],
+        resourceTypes: ['script'],
+        domainType: 'firstParty',
+        urlFilter: '||video.example.com/api/player',
+      },
+      id: communityRules[0].id,
+      priority: 1100,
+    },
+  ]);
+  assert.deepEqual(storageData.communityBundlePublicTactics, [
+    {
+      id: 'set-empty-array',
+      kind: 'jsonSet',
+      hosts: ['=video.example.com'],
+      transport: 'fetch',
+      urlPathPrefixes: ['/api/player'],
+      jsonPaths: ['payload.adPlacements'],
+      value: [],
+    },
+    {
+      id: 'set-empty-object',
+      kind: 'jsonSet',
+      hosts: ['=video.example.com'],
+      transport: 'both',
+      urlPathPrefixes: ['/api/player'],
+      jsonPaths: ['payload.adMetadata'],
+      value: {},
+    },
+  ]);
+  assert.equal(storageData.communityBundleMeta.publicTacticsCount, 2);
+  assert.equal(storageData.communityBundleMeta.tacticsHostCount, 1);
+});
+
 test('community sync stores signed public directives and scriptlets without developer mode', { concurrency: false }, async () => {
   resetEnvironment();
 
@@ -956,6 +1050,7 @@ test('community sync stores signed public tactics from schema v4 bundles', { con
   assert.deepEqual(storageData.communityBaselinePublicTacticsV1, storageData.communityBundlePublicTactics);
   assert.equal(storageData.communityBundleMeta.publicTacticsCount, 2);
   assert.equal(storageData.communityBundleMeta.tacticsCount, 2);
+  assert.equal(storageData.communityBundleMeta.tacticsHostCount, 1);
 });
 
 test('community sync drops internal Talon first-party scopes across remote rules and extras', { concurrency: false }, async () => {
@@ -1414,6 +1509,7 @@ test('overlay sync merges baseline and site overlay state into the compiled publ
     },
   ]);
   assert.equal(storageData.communityBundleMeta.publicTacticsCount, 3);
+  assert.equal(storageData.communityBundleMeta.tacticsHostCount, 3);
   assert.equal(storageData.communityBundleMeta.activeOverlayCount, 1);
   assert.equal(storageData.communityBundleMeta.lastOverlaySiteKey, 'video.example');
   assert.equal(storageData.communityBundleMeta.lastOverlayVersion, 'overlay.2026.03.25.1');

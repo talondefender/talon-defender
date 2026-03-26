@@ -2,7 +2,11 @@ import {
     isKnownPublicSuffix,
     normalizeSiteKeyHostname,
 } from './site-key.js';
-import { isInternalUnfilteredHostname } from './breakage-policy.js';
+import {
+    isInternalUnfilteredHostname,
+    patternCouldMatchProtectedDomain,
+} from './breakage-policy.js';
+import { normalizeCommunityTacticUrlPathPrefix } from './community-tactics.js';
 
 export const COMMUNITY_RULE_SCHEMA_VERSION_LEGACY = 1;
 export const COMMUNITY_RULE_SCHEMA_VERSION_ACTIONS = 2;
@@ -51,6 +55,30 @@ const VALID_RESOURCE_TYPES = new Set([
     'webbundle',
     'other',
 ]);
+
+const FIRST_PARTY_REDIRECT_EXTENSION_PATHS_BY_RESOURCE_TYPE = Object.freeze({
+    script: Object.freeze([
+        '/web_accessible_resources/noop.js',
+    ]),
+    stylesheet: Object.freeze([
+        '/web_accessible_resources/noop.css',
+    ]),
+    image: Object.freeze([
+        '/web_accessible_resources/1x1.gif',
+        '/web_accessible_resources/2x2.png',
+        '/web_accessible_resources/32x32.png',
+    ]),
+    media: Object.freeze([
+        '/web_accessible_resources/noop-0.1s.mp3',
+        '/web_accessible_resources/noop-1s.mp4',
+    ]),
+    xmlhttprequest: Object.freeze([
+        '/web_accessible_resources/noop.json',
+        '/web_accessible_resources/noop.txt',
+        '/web_accessible_resources/noop-vast3.xml',
+        '/web_accessible_resources/noop-vmap1.xml',
+    ]),
+});
 
 const EXCEPTION_ACTIONS = new Set([
     'redirect',
@@ -102,10 +130,17 @@ export const normalizeCommunityRuleSchemaVersion = value => {
     return schemaVersion;
 };
 
-const normalizeDomainType = domainType => {
-    if ( domainType === 'thirdParty' ) { return 'thirdParty'; }
+const normalizeDomainType = (
+    domainType,
+    { allowFirstParty = false } = {}
+) => {
+    const allowedTypes = allowFirstParty
+        ? [ 'firstParty', 'thirdParty' ]
+        : [ 'thirdParty' ];
+    if ( allowedTypes.includes(domainType) ) { return domainType; }
     if ( Array.isArray(domainType) ) {
-        return domainType.includes('thirdParty') ? 'thirdParty' : '';
+        const normalized = allowedTypes.filter(type => domainType.includes(type));
+        return normalized.length === 1 ? normalized[0] : '';
     }
     return '';
 };
@@ -153,6 +188,14 @@ const exactHostListTargetsInternalDomain = value => {
     ));
 };
 
+const exactHostListTargetsProtectedDomain = value => {
+    if ( Array.isArray(value) === false ) { return false; }
+    return value.some(entry => (
+        typeof entry === 'string' &&
+        patternCouldMatchProtectedDomain(`=${entry}`)
+    ));
+};
+
 const hasOnlyAllowedConditionKeys = (condition, allowedKeys) => {
     for ( const key of Object.keys(condition) ) {
         if ( allowedKeys.has(key) ) { continue; }
@@ -188,6 +231,27 @@ const normalizeRedirectExtensionPath = value => {
     const trimmed = value.trim();
     if ( trimmed === '' ) { return ''; }
     return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+};
+
+const normalizeRedirectUrlPathPrefix = value =>
+    normalizeCommunityTacticUrlPathPrefix(value);
+
+const normalizeFirstPartyRedirectPathPrefix = (condition, exactHost) => {
+    const urlPathPrefix = normalizeRedirectUrlPathPrefix(condition?.urlPathPrefix);
+    const urlFilter = typeof condition?.urlFilter === 'string'
+        ? condition.urlFilter.trim()
+        : '';
+    if ( urlFilter === '' ) { return urlPathPrefix; }
+    const expectedPrefix = `||${exactHost}`;
+    if ( urlFilter.startsWith(expectedPrefix) === false ) { return ''; }
+    const normalizedFromFilter = normalizeRedirectUrlPathPrefix(
+        urlFilter.slice(expectedPrefix.length)
+    );
+    if ( normalizedFromFilter === '' ) { return ''; }
+    if ( urlPathPrefix !== '' && urlPathPrefix !== normalizedFromFilter ) {
+        return '';
+    }
+    return normalizedFromFilter;
 };
 
 export const classifyCommunityRuleQuotaClass = rule => {
@@ -351,6 +415,89 @@ const sanitizeRedirectRule = rule => {
         return { ok: false, reason: 'unsupportedRedirectPath' };
     }
     const condition = rule.condition;
+    const normalizedDomainType = normalizeDomainType(condition.domainType, {
+        allowFirstParty: true,
+    });
+    if ( condition.domainType !== undefined && normalizedDomainType === '' ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    if ( normalizedDomainType === 'firstParty' ) {
+        const allowedKeys = new Set([
+            'initiatorDomains',
+            'requestDomains',
+            'resourceTypes',
+            'domainType',
+            'urlPathPrefix',
+            'urlFilter',
+        ]);
+        if ( hasOnlyAllowedConditionKeys(condition, allowedKeys) === false ) {
+            return { ok: false, reason: 'unsafeScope' };
+        }
+        const initiatorDomains = sanitizeExactHostnameList(condition.initiatorDomains, {
+            required: true,
+        });
+        const requestDomains = sanitizeExactHostnameList(condition.requestDomains, {
+            required: true,
+        });
+        const resourceTypes = normalizeResourceTypes(condition.resourceTypes);
+        if (
+            initiatorDomains === null ||
+            requestDomains === null ||
+            resourceTypes === null
+        ) {
+            return { ok: false, reason: 'unsafeScope' };
+        }
+        if (
+            initiatorDomains.length !== 1 ||
+            requestDomains.length !== 1 ||
+            initiatorDomains[0] !== requestDomains[0]
+        ) {
+            return { ok: false, reason: 'unsafeScope' };
+        }
+        const exactHost = initiatorDomains[0];
+        const urlPathPrefix = normalizeFirstPartyRedirectPathPrefix(condition, exactHost);
+        if ( urlPathPrefix === '' ) {
+            return { ok: false, reason: 'unsafeScope' };
+        }
+        if (
+            exactHostListTargetsInternalDomain(initiatorDomains) ||
+            exactHostListTargetsProtectedDomain(initiatorDomains)
+        ) {
+            return { ok: false, reason: 'unsafeScope' };
+        }
+        if ( resourceTypes.length !== 1 ) {
+            return { ok: false, reason: 'unsafeScope' };
+        }
+        const resourceType = resourceTypes[0];
+        const allowedExtensionPaths = FIRST_PARTY_REDIRECT_EXTENSION_PATHS_BY_RESOURCE_TYPE[
+            resourceType
+        ];
+        if ( Array.isArray(allowedExtensionPaths) === false ) {
+            return { ok: false, reason: 'unsafeScope' };
+        }
+        if ( allowedExtensionPaths.includes(extensionPath) === false ) {
+            return { ok: false, reason: 'unsupportedRedirectPath' };
+        }
+        return {
+            ok: true,
+            actionType: 'redirect',
+            isException: true,
+            rule: {
+                action: {
+                    type: 'redirect',
+                    redirect: { extensionPath },
+                },
+                condition: {
+                    initiatorDomains,
+                    requestDomains,
+                    resourceTypes,
+                    domainType: 'firstParty',
+                    urlFilter: `||${exactHost}${urlPathPrefix}`,
+                },
+                priority: COMMUNITY_RULE_PRIORITY_REDIRECT,
+            },
+        };
+    }
     const allowedKeys = new Set([
         'initiatorDomains',
         'requestDomains',
@@ -367,10 +514,6 @@ const sanitizeRedirectRule = rule => {
         required: true,
     });
     if ( initiatorDomains === null || requestDomains === null ) {
-        return { ok: false, reason: 'unsafeScope' };
-    }
-    const normalizedDomainType = normalizeDomainType(condition.domainType);
-    if ( condition.domainType !== undefined && normalizedDomainType === '' ) {
         return { ok: false, reason: 'unsafeScope' };
     }
     const outCondition = {

@@ -122,16 +122,19 @@ const AUTO_PROMOTION_ALARM = 'auto-promotion-expire';
 const AUTO_PROMOTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const REMOTE_COSMETICS_RUNTIME_STATS_KEY = 'remoteCosmeticsRuntimeStatsV1';
 const REMOTE_COSMETICS_RUNTIME_STATS_TTL_MS = 24 * 60 * 60 * 1000;
+const REMOTE_TACTICS_STORAGE_KEY = 'communityBundlePublicTactics';
 const ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object.freeze([
     '/shared/public-suffix-data.js',
     '/shared/site-key-resolver.js',
     '/js/scripting/breakage-guard.js',
     '/js/scripting/shadow-dom-helper.js',
     '/js/scripting/remote-cosmetics.js',
-    '/js/scripting/remote-tactics-bootstrap.js',
     '/js/scripting/native-heuristics.js',
     '/js/scripting/automation.js',
     '/js/scripting/post-hide-cleanup.js',
+]);
+const REMOTE_TACTICS_ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object.freeze([
+    '/js/scripting/remote-tactics-bootstrap.js',
 ]);
 const MAIN_WORLD_LIVE_RUNTIME_REFRESH_FILES = Object.freeze([
     '/js/scripting/remote-tactics.js',
@@ -1018,6 +1021,7 @@ import {
     countHostSpecificCommunityCosmeticSelectors,
     normalizeCommunitySyncTtlHours,
 } from './community-sync-logic.js';
+import { collectCommunityTacticHostnames } from './community-tactics.js';
 
 import {
     getConsoleOutput,
@@ -2609,14 +2613,52 @@ async function executeRuntimeStopLane(tabId, func, options = {}) {
     return true;
 }
 
-async function refreshRuntimeStateForTab(tabId, filteringLevel) {
+async function readRegisteredRemoteTacticHostnames() {
+    const storedTactics = await localRead(REMOTE_TACTICS_STORAGE_KEY);
+    return new Set(collectCommunityTacticHostnames(storedTactics));
+}
+
+function stopRemoteTacticsBootstrapController() {
+    const controller = globalThis.TalonRemoteTacticsBootstrapController;
+    if ( controller instanceof Object === false ) { return Promise.resolve(true); }
+    if ( typeof controller.stop !== 'function' ) { return Promise.resolve(true); }
+    try {
+        return Promise.resolve(controller.stop()).then(() => true);
+    } catch {
+    }
+    return Promise.resolve(true);
+}
+
+async function refreshRuntimeStateForTab(
+    tabId,
+    filteringLevel,
+    {
+        hostname = '',
+        remoteTacticHostnames = new Set(),
+    } = {}
+) {
     if ( browser.scripting?.executeScript === undefined ) { return false; }
     try {
         if ( filteringLevel >= MODE_OPTIMAL ) {
             await executeRuntimeRefreshLane(tabId, ISOLATED_LIVE_RUNTIME_REFRESH_FILES);
-            await executeRuntimeRefreshLane(tabId, MAIN_WORLD_LIVE_RUNTIME_REFRESH_FILES, {
-                world: 'MAIN',
-            });
+            const shouldRefreshRemoteTactics =
+                hostname !== '' &&
+                remoteTacticHostnames instanceof Set &&
+                remoteTacticHostnames.has(hostname);
+            if ( shouldRefreshRemoteTactics ) {
+                await executeRuntimeRefreshLane(
+                    tabId,
+                    REMOTE_TACTICS_ISOLATED_LIVE_RUNTIME_REFRESH_FILES
+                );
+                await executeRuntimeRefreshLane(tabId, MAIN_WORLD_LIVE_RUNTIME_REFRESH_FILES, {
+                    world: 'MAIN',
+                });
+            } else {
+                await executeRuntimeStopLane(tabId, stopRemoteTacticsBootstrapController);
+                await executeRuntimeStopLane(tabId, stopMainWorldRuntimeControllers, {
+                    world: 'MAIN',
+                });
+            }
             return true;
         }
         await executeRuntimeStopLane(tabId, stopIsolatedRuntimeControllers);
@@ -2635,6 +2677,9 @@ async function refreshRuntimeStateForTab(tabId, filteringLevel) {
 async function refreshRuntimeStateForOpenTabs() {
     if ( browser.tabs?.query === undefined ) { return false; }
     let tabs = [];
+    const remoteTacticHostnames = await readRegisteredRemoteTacticHostnames().catch(
+        () => new Set()
+    );
     try {
         tabs = await browser.tabs.query({});
     } catch (reason) {
@@ -2649,7 +2694,10 @@ async function refreshRuntimeStateForOpenTabs() {
         if ( hostname === '' ) { continue; }
         jobs.push(
             getFilteringMode(hostname)
-                .then(level => refreshRuntimeStateForTab(tabId, Number(level) || MODE_NONE))
+                .then(level => refreshRuntimeStateForTab(tabId, Number(level) || MODE_NONE, {
+                    hostname,
+                    remoteTacticHostnames,
+                }))
                 .catch(reason => {
                     if ( isIgnorableRuntimeError(reason) === false ) {
                         ubolErr(`refreshRuntimeStateForOpenTabs/${reason}`);

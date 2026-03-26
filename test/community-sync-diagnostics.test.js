@@ -29,6 +29,7 @@ test('community sync diagnostics summary reports schema version, action counts, 
       protectedDirectivesCount: 1,
       scriptletsCount: 3,
       tacticsCount: 2,
+      tacticsHostCount: 1,
       publicDirectivesCount: 3,
       publicScriptletsCount: 2,
       publicTacticsCount: 2,
@@ -94,6 +95,7 @@ test('community sync diagnostics summary reports schema version, action counts, 
   assert.equal(summary.protectedDirectivesCount, 1);
   assert.equal(summary.scriptletsCount, 3);
   assert.equal(summary.tacticsCount, 2);
+  assert.equal(summary.tacticsHostCount, 1);
   assert.equal(summary.publicDirectivesCount, 3);
   assert.equal(summary.publicScriptletsCount, 2);
   assert.equal(summary.publicTacticsCount, 2);

@@ -96,6 +96,10 @@ function buildInjectableSyncSummary(diagnostics) {
     if ( toRemoveCount > 0 ) {
         out.toRemoveCount = toRemoveCount;
     }
+    const registeredTacticsHostCount = Number(diagnostics.registeredTacticsHostCount) || 0;
+    if ( registeredTacticsHostCount > 0 ) {
+        out.registeredTacticsHostCount = registeredTacticsHostCount;
+    }
     return Object.keys(out).length === 0 ? null : out;
 }
 

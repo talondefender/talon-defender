@@ -31,16 +31,29 @@ test('remote tactics stays packaged and bounded instead of executing remote code
   assert.doesNotMatch(mainSource, /import\(/);
 });
 
-test('runtime refresh is split across isolated and MAIN-world lanes for all frames', async () => {
+test('runtime refresh keeps remote tactics on a host-gated isolated and MAIN-world lane', async () => {
   const source = await readSource('js/background.js');
+  const isolatedRefreshBlock = source.slice(
+    source.indexOf('const ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object.freeze(['),
+    source.indexOf('const REMOTE_TACTICS_ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object.freeze([')
+  );
 
   assert.match(source, /const ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object\.freeze\(\[/);
+  assert.match(source, /const REMOTE_TACTICS_ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object\.freeze\(\[[\s\S]*'\/js\/scripting\/remote-tactics-bootstrap\.js'[\s\S]*\]\);/);
   assert.match(source, /const MAIN_WORLD_LIVE_RUNTIME_REFRESH_FILES = Object\.freeze\(\[[\s\S]*'\/js\/scripting\/remote-tactics\.js'[\s\S]*\]\);/);
   assert.match(source, /target: \{ tabId, allFrames: true \}/);
+  assert.match(source, /const shouldRefreshRemoteTactics =[\s\S]*remoteTacticHostnames\.has\(hostname\)/);
+  assert.match(source, /await executeRuntimeRefreshLane\(\s*tabId,\s*REMOTE_TACTICS_ISOLATED_LIVE_RUNTIME_REFRESH_FILES/);
   assert.match(source, /await executeRuntimeRefreshLane\(tabId, MAIN_WORLD_LIVE_RUNTIME_REFRESH_FILES, \{\s*world: 'MAIN',\s*\}\)/);
+  assert.match(source, /await executeRuntimeStopLane\(tabId, stopRemoteTacticsBootstrapController\)/);
   assert.match(source, /await executeRuntimeStopLane\(tabId, stopMainWorldRuntimeControllers, \{\s*world: 'MAIN',\s*\}\)/);
+  assert.match(source, /readRegisteredRemoteTacticHostnames\(\)/);
   assert.match(source, /TalonRemoteTacticsBootstrapController/);
   assert.match(source, /TalonRemoteTacticsController/);
+  assert.equal(
+    isolatedRefreshBlock.includes('/js/scripting/remote-tactics-bootstrap.js'),
+    false
+  );
 });
 
 test('state-changing background entry points use unified injectable sync and expose reload-needed state', async () => {

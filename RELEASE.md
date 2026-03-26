@@ -47,4 +47,4 @@ Phase 2A release gate:
 Phase 2B release gate:
 - schema `4` community payloads with `tactics` are backward-incompatible with older store builds, so do not publish live production tactic payloads until the Chrome and Edge Phase 2B releases are live enough in user hands
 - until both stores are live enough, keep production community publishes on schema `2` or `3` payloads without `tactics`
-- after both store builds are live enough, tactic publishes must still stay inside the bounded public contract: exact-host only, same-origin JSON responses only, and packaged `jsonPrune` / `jsonSet` behavior only
+- after both store builds are live enough, tactic publishes must still stay inside the bounded public contract: exact-host only, same-origin JSON responses only, and packaged `jsonPrune` / `jsonSet` behavior only, with `jsonSet` limited to the approved empty-safe values

@@ -64,6 +64,7 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
     const protectedDirectivesCount = toNonNegativeInteger(meta?.protectedDirectivesCount);
     const scriptletsCount = toNonNegativeInteger(meta?.scriptletsCount);
     const tacticsCount = toNonNegativeInteger(meta?.tacticsCount);
+    const tacticsHostCount = toNonNegativeInteger(meta?.tacticsHostCount);
     const publicDirectivesCount = toNonNegativeInteger(meta?.publicDirectivesCount);
     const publicScriptletsCount = toNonNegativeInteger(meta?.publicScriptletsCount);
     const publicTacticsCount = toNonNegativeInteger(meta?.publicTacticsCount);
@@ -159,6 +160,7 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
         protectedDirectivesCount !== 0 ||
         scriptletsCount !== 0 ||
         tacticsCount !== 0 ||
+        tacticsHostCount !== 0 ||
         publicDirectivesCount !== 0 ||
         publicScriptletsCount !== 0 ||
         publicTacticsCount !== 0 ||
@@ -216,6 +218,7 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
         protectedDirectivesCount,
         scriptletsCount,
         tacticsCount,
+        tacticsHostCount,
         publicDirectivesCount,
         publicScriptletsCount,
         publicTacticsCount,

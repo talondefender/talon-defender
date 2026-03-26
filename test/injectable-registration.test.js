@@ -147,18 +147,24 @@ test('remote scriptlet registration canonicalizes duplicate entries and scopes i
   assert.match(source, /remote-scriptlet\.\$\{world\.toLowerCase\(\)\}\.\$\{baseId\}/);
 });
 
-test('remote tactics registration uses paired bootstrap and MAIN-world lanes with subsystem suppression', async () => {
+test('remote tactics registration uses exact-host matches with paired bootstrap and MAIN-world lanes', async () => {
   const source = await fs.readFile(
     new URL('../js/scripting-manager.js', import.meta.url),
     'utf8'
   );
+  const remoteTacticsStart = source.indexOf('function registerRemoteTactics(context) {');
+  const remoteTacticsEnd = source.indexOf('/******************************************************************************/', remoteTacticsStart);
+  const remoteTacticsSource = source.slice(remoteTacticsStart, remoteTacticsEnd);
 
   assert.match(source, /const PUBLIC_REMOTE_TACTICS_KEY = 'communityBundlePublicTactics';/);
   assert.match(source, /registerRemoteTactics\(context\)/);
+  assert.match(remoteTacticsSource, /collectRegisteredRemoteTacticHostnames\(/);
+  assert.match(remoteTacticsSource, /const matches = exactMatchesFromHostnames\(targetHostnames\);/);
   assert.match(source, /id: 'remote-tactics-bootstrap'/);
   assert.match(source, /id: 'remote-tactics-main'/);
   assert.match(source, /id: 'remote-tactics-bootstrap',[\s\S]*matchOriginAsFallback: true/);
   assert.match(source, /id: 'remote-tactics-main',[\s\S]*matchOriginAsFallback: true/);
   assert.match(source, /world: 'MAIN'/);
-  assert.match(source, /subsystemSuppressionHostnames\?\.remoteTactics/);
+  assert.match(remoteTacticsSource, /subsystemSuppressionHostnames\?\.remoteTactics/);
+  assert.equal(remoteTacticsSource.includes('matchesFromHostnames(optimal)'), false);
 });

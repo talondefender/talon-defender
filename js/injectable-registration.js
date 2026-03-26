@@ -12,6 +12,7 @@ const normalizePlan = plan => ({
     toRemove: Array.isArray(plan?.toRemove)
         ? plan.toRemove.filter(id => typeof id === 'string' && id !== '')
         : [],
+    registeredTacticsHostCount: Math.max(0, Number(plan?.registeredTacticsHostCount) || 0),
     remoteScriptletReloadHint: plan?.remoteScriptletReloadHint ?? null,
 });
 
@@ -30,6 +31,7 @@ const buildFailureResult = ({
     recoveryResetCount = 0,
     toAddCount = 0,
     toRemoveCount = 0,
+    registeredTacticsHostCount = 0,
     remoteScriptletReloadHint = null,
 } = {}) => ({
     ok: false,
@@ -42,6 +44,7 @@ const buildFailureResult = ({
     recoveryResetCount,
     toAddCount,
     toRemoveCount,
+    registeredTacticsHostCount,
     remoteScriptletReloadHint,
 });
 
@@ -52,6 +55,7 @@ const buildSuccessResult = ({
     recoveryResetCount = 0,
     toAddCount = 0,
     toRemoveCount = 0,
+    registeredTacticsHostCount = 0,
     remoteScriptletReloadHint = null,
 } = {}) => ({
     ok: true,
@@ -64,6 +68,7 @@ const buildSuccessResult = ({
     recoveryResetCount,
     toAddCount,
     toRemoveCount,
+    registeredTacticsHostCount,
     remoteScriptletReloadHint,
 });
 
@@ -77,6 +82,7 @@ const applyPlan = async ({
     const {
         toAdd,
         toRemove,
+        registeredTacticsHostCount,
         remoteScriptletReloadHint,
     } = normalizePlan(plan);
     if ( toRemove.length !== 0 ) {
@@ -91,6 +97,7 @@ const applyPlan = async ({
                 ),
                 toAddCount: toAdd.length,
                 toRemoveCount: toRemove.length,
+                registeredTacticsHostCount,
                 remoteScriptletReloadHint,
             });
         }
@@ -107,6 +114,7 @@ const applyPlan = async ({
                 ),
                 toAddCount: toAdd.length,
                 toRemoveCount: toRemove.length,
+                registeredTacticsHostCount,
                 remoteScriptletReloadHint,
             });
         }
@@ -115,6 +123,7 @@ const applyPlan = async ({
         now,
         toAddCount: toAdd.length,
         toRemoveCount: toRemove.length,
+        registeredTacticsHostCount,
         remoteScriptletReloadHint,
     });
 };
@@ -227,6 +236,7 @@ export async function runInjectableRegistrationFlow({
             recoveryResetCount: recoveryIds.length,
             toAddCount: recoveryResult.toAddCount,
             toRemoveCount: recoveryResult.toRemoveCount,
+            registeredTacticsHostCount: recoveryResult.registeredTacticsHostCount,
             remoteScriptletReloadHint: recoveryResult.remoteScriptletReloadHint,
         });
     }
@@ -239,6 +249,7 @@ export async function runInjectableRegistrationFlow({
         recoveryResetCount: recoveryIds.length,
         toAddCount: recoveryResult.toAddCount,
         toRemoveCount: recoveryResult.toRemoveCount,
+        registeredTacticsHostCount: recoveryResult.registeredTacticsHostCount,
         remoteScriptletReloadHint: recoveryResult.remoteScriptletReloadHint,
     });
 }
