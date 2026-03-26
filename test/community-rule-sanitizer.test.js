@@ -15,6 +15,8 @@ import {
 test('community rule schema version normalizes legacy, current, and unsupported values', () => {
   assert.equal(normalizeCommunityRuleSchemaVersion(undefined), 1);
   assert.equal(normalizeCommunityRuleSchemaVersion(2), 2);
+  assert.equal(normalizeCommunityRuleSchemaVersion(3), 3);
+  assert.equal(normalizeCommunityRuleSchemaVersion(4), 4);
   assert.equal(normalizeCommunityRuleSchemaVersion('2'), 2);
   assert.equal(normalizeCommunityRuleSchemaVersion(99), 0);
 });
@@ -166,6 +168,44 @@ test('schema v2 rejects unsafe exception scope, unsupported redirect targets, an
   assert.equal(result.dropped.unsafeScope, 3);
   assert.equal(result.dropped.unsupportedRedirectPath, 1);
   assert.equal(result.dropped.unsupportedAction, 1);
+});
+
+test('schema v2 rejects internal Talon first-party exact host scopes', () => {
+  const result = sanitizeCommunityRules([
+    {
+      action: { type: 'block' },
+      condition: {
+        requestDomains: ['talondefender.com'],
+        resourceTypes: ['script'],
+      },
+    },
+    {
+      action: { type: 'allow' },
+      condition: {
+        initiatorDomains: ['news.example.com'],
+        requestDomains: ['talondefender.com'],
+        resourceTypes: ['script'],
+      },
+    },
+    {
+      action: {
+        type: 'redirect',
+        redirect: {
+          extensionPath: 'web_accessible_resources/noop.js',
+        },
+      },
+      condition: {
+        initiatorDomains: ['news.example.com'],
+        requestDomains: ['talondefender.com'],
+        resourceTypes: ['script'],
+      },
+    },
+  ], {
+    schemaVersion: 2,
+  });
+
+  assert.equal(result.rules.length, 0);
+  assert.equal(result.dropped.unsafeScope, 3);
 });
 
 test('community exception quotas cap total exceptions and allowAllRequests relief separately', () => {

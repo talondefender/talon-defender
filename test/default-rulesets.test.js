@@ -14,7 +14,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
-const PACKAGED_OUT_DIR = path.join(repoRoot, 'dist', 'test-default-rulesets');
+const PACKAGED_OUT_DIR = path.join(repoRoot, 'dist', `test-default-rulesets-${process.pid}`);
 const EXPECTED_DEFAULT_IDS = [
   'ublock-filters',
   'easylist',
@@ -98,7 +98,7 @@ const getPackagedBundle = () => {
   packagedBundlePromise = (async () => {
     await execFileAsync(
       process.execPath,
-      ['scripts/package-extension.mjs', '--out', 'dist/test-default-rulesets'],
+      ['scripts/package-extension.mjs', '--out', `dist/test-default-rulesets-${process.pid}`],
       { cwd: repoRoot }
     );
     const readPackagedJson = async (...parts) => {

@@ -1,5 +1,6 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.IO.Compression
 
 function Remove-PathWithRetry {
   param(
@@ -24,6 +25,57 @@ function Remove-PathWithRetry {
       }
       Start-Sleep -Milliseconds $DelayMilliseconds
     }
+  }
+}
+
+function New-ZipFromDirectoryFilesOnly {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$SourceDir,
+    [Parameter(Mandatory = $true)]
+    [string]$DestinationZip
+  )
+
+  if (Test-Path -LiteralPath $DestinationZip) {
+    Remove-PathWithRetry -LiteralPath $DestinationZip
+  }
+
+  $resolvedSource = (Resolve-Path -LiteralPath $SourceDir).Path
+  $sourcePrefix = $resolvedSource.TrimEnd('\', '/')
+  $files = Get-ChildItem -LiteralPath $resolvedSource -Recurse -File
+  $zipStream = [System.IO.File]::Open($DestinationZip, [System.IO.FileMode]::CreateNew)
+  try {
+    $archive = New-Object System.IO.Compression.ZipArchive(
+      $zipStream,
+      [System.IO.Compression.ZipArchiveMode]::Create,
+      $false
+    )
+    try {
+      foreach ($file in $files) {
+        $relative = $file.FullName.Substring($sourcePrefix.Length).TrimStart('\', '/')
+        $entryName = $relative.Replace('\', '/')
+        $entry = $archive.CreateEntry($entryName, [System.IO.Compression.CompressionLevel]::Optimal)
+        $input = [System.IO.File]::OpenRead($file.FullName)
+        try {
+          $output = $entry.Open()
+          try {
+            $input.CopyTo($output)
+          }
+          finally {
+            $output.Dispose()
+          }
+        }
+        finally {
+          $input.Dispose()
+        }
+      }
+    }
+    finally {
+      $archive.Dispose()
+    }
+  }
+  finally {
+    $zipStream.Dispose()
   }
 }
 
@@ -95,6 +147,7 @@ $sourceItems = @(
   "test/auto-backoff.test.js",
   "test/automation-directives.test.js",
   "test/breakage-policy.test.js",
+  "test/community-tactics.test.js",
   "test/default-rulesets.test.js",
   "test/entitlement-regression.test.js",
   "unpicker-ui.html",
@@ -123,7 +176,7 @@ foreach ($item in $sourceItems) {
   Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Recurse -Force
 }
 
-Compress-Archive -Path $stageDir -DestinationPath $archivePath -Force
+New-ZipFromDirectoryFilesOnly -SourceDir $stageDir -DestinationZip $archivePath
 
 $metadata = [ordered]@{
   generatedAtUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")

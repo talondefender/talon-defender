@@ -50,6 +50,10 @@ import {
     normalizeCommunityRuleSchemaVersion,
     sanitizeCommunityRules,
 } from './community-rule-sanitizer.js';
+import {
+    INTERNAL_UNFILTERED_DOMAINS,
+    isInternalUnfilteredHostname,
+} from './breakage-policy.js';
 
 /******************************************************************************/
 
@@ -59,10 +63,6 @@ const USER_RULES_PRIORITY = 1000000;
 const TRUSTED_DIRECTIVE_BASE_RULE_ID = 8000000;
 const TRUSTED_DIRECTIVE_PRIORITY = USER_RULES_PRIORITY + 1000000;
 const STRICTBLOCK_PRIORITY = 29;
-const INTERNAL_UNFILTERED_DOMAINS = [
-    'talondefender.com',
-];
-
 const COMMUNITY_RULES_BASE_RULE_ID = 6000000;
 const COMMUNITY_RULES_RANGE = 1000000; // 6,000,000–6,999,999
 const COMMUNITY_RULES_MAX = 3500;
@@ -466,18 +466,6 @@ async function getEffectiveSessionRules() {
 
 /******************************************************************************/
 
-const isInternalUnfilteredDomain = hostname => {
-    if ( typeof hostname !== 'string' || hostname === '' ) { return false; }
-    for ( const domain of INTERNAL_UNFILTERED_DOMAINS ) {
-        if ( hostname === domain || hostname.endsWith(`.${domain}`) ) {
-            return true;
-        }
-    }
-    return false;
-};
-
-/******************************************************************************/
-
 async function filteringModesToDNR(modes) {
     const noneHostnames = new Set([ ...modes.none ]);
     const notNoneHostnames = new Set([ ...modes.basic, ...modes.optimal, ...modes.complete ]);
@@ -485,7 +473,7 @@ async function filteringModesToDNR(modes) {
         noneHostnames.add(domain);
     }
     for ( const hostname of Array.from(notNoneHostnames) ) {
-        if ( isInternalUnfilteredDomain(hostname) === false ) { continue; }
+        if ( isInternalUnfilteredHostname(hostname) === false ) { continue; }
         notNoneHostnames.delete(hostname);
     }
     const requestDomains = [];

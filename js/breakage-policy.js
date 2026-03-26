@@ -9,6 +9,10 @@ export const RISK_TIERS = Object.freeze({
     high: 3,
 });
 
+export const INTERNAL_UNFILTERED_DOMAINS = Object.freeze([
+    'talondefender.com',
+]);
+
 export const BREAKAGE_AUDIT_OVERRIDES_KEY = 'breakageAuditOverridesV1';
 export const YOUTUBE_WATCH_PLAYER_RESPONSE_REWRITE_ENABLED = false;
 export const YOUTUBE_WATCH_RUNTIME_LANE_DEFAULT = 'baseline';
@@ -22,6 +26,7 @@ export const AUDITABLE_SUBSYSTEMS = Object.freeze([
     'nativeHeuristics',
     'automation',
     'remoteCosmetics',
+    'remoteTactics',
     'postHideCleanup',
 ]);
 
@@ -108,6 +113,15 @@ export const RISK_MANIFEST = Object.freeze([
         runTiming: 'document_start',
         frameScope: 'frame-dependent',
         mutationType: 'execute bundled scriptlets on remote instructions',
+        protectedExposure: 'high',
+    },
+    {
+        id: 'remote-tactics',
+        tier: RISK_TIERS.high,
+        hostScope: 'community bundle exact hosts',
+        runTiming: 'document_start',
+        frameScope: 'main world',
+        mutationType: 'mutate same-origin JSON fetch and xhr responses with packaged interpreters',
         protectedExposure: 'high',
     },
     {
@@ -251,6 +265,30 @@ export function getYouTubeWatchOwnerProfileConfig(value) {
     return YOUTUBE_WATCH_OWNER_PROFILE_CONFIGS[
         normalizeYouTubeWatchOwnerProfile(value)
     ];
+}
+
+export function isInternalUnfilteredHostname(value) {
+    const normalized = normalizeSiteKeyHostname(value);
+    if ( normalized === '' ) { return false; }
+    return INTERNAL_UNFILTERED_DOMAINS.some(domain => (
+        normalized === domain ||
+        normalized.endsWith(`.${domain}`)
+    ));
+}
+
+export function patternCouldMatchInternalUnfilteredDomain(value) {
+    const normalized = normalizeScopedHostPattern(value);
+    if ( normalized === '' ) { return false; }
+    if ( normalized === '*' || normalized === 'all-urls' ) { return true; }
+    let candidate = normalized;
+    if ( candidate.startsWith('=') ) {
+        candidate = candidate.slice(1);
+    } else if ( candidate.startsWith('*.') ) {
+        candidate = candidate.slice(2);
+    } else if ( candidate.endsWith('.*') ) {
+        candidate = candidate.slice(0, -2);
+    }
+    return isInternalUnfilteredHostname(candidate);
 }
 
 export function getScriptletHostExclusions(scriptletId, options = {}) {

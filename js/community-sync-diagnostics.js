@@ -63,10 +63,14 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
     const directivesCount = toNonNegativeInteger(meta?.directivesCount);
     const protectedDirectivesCount = toNonNegativeInteger(meta?.protectedDirectivesCount);
     const scriptletsCount = toNonNegativeInteger(meta?.scriptletsCount);
+    const tacticsCount = toNonNegativeInteger(meta?.tacticsCount);
     const publicDirectivesCount = toNonNegativeInteger(meta?.publicDirectivesCount);
     const publicScriptletsCount = toNonNegativeInteger(meta?.publicScriptletsCount);
+    const publicTacticsCount = toNonNegativeInteger(meta?.publicTacticsCount);
     const proofDirectivesCount = toNonNegativeInteger(meta?.proofDirectivesCount);
     const proofScriptletsCount = toNonNegativeInteger(meta?.proofScriptletsCount);
+    const protectedTacticsCount = toNonNegativeInteger(meta?.protectedTacticsCount);
+    const tacticsDroppedAtCompile = toNonNegativeInteger(meta?.tacticsDroppedAtCompile);
     const liveRemoteCosmeticChunkCount = toNonNegativeInteger(meta?.liveRemoteCosmeticChunkCount);
     const liveRemoteCosmeticDroppedAtApply =
         toNonNegativeInteger(meta?.liveRemoteCosmeticDroppedAtApply);
@@ -79,6 +83,28 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
         : 0;
     const hotfixLane = typeof meta?.hotfixLane === 'string'
         ? meta.hotfixLane.trim()
+        : '';
+    const baselineVersion = typeof meta?.baselineVersion === 'string'
+        ? meta.baselineVersion.trim()
+        : '';
+    const baselineLastAttempt = toIsoTimestamp(meta?.baselineLastAttempt);
+    const baselineLastSuccess = toIsoTimestamp(meta?.baselineLastSuccess);
+    const baselineLastError = typeof meta?.baselineLastError === 'string'
+        ? meta.baselineLastError.trim()
+        : '';
+    const activeOverlayCount = toNonNegativeInteger(meta?.activeOverlayCount);
+    const overlayNegativeCacheCount = toNonNegativeInteger(meta?.overlayNegativeCacheCount);
+    const lastOverlaySiteKey = typeof meta?.lastOverlaySiteKey === 'string'
+        ? meta.lastOverlaySiteKey.trim()
+        : '';
+    const lastOverlayVersion = typeof meta?.lastOverlayVersion === 'string'
+        ? meta.lastOverlayVersion.trim()
+        : '';
+    const lastOverlayReason = typeof meta?.lastOverlayReason === 'string'
+        ? meta.lastOverlayReason.trim()
+        : '';
+    const lastOverlayStatus = typeof meta?.lastOverlayStatus === 'string'
+        ? meta.lastOverlayStatus.trim()
         : '';
     const activationStatus = typeof meta?.activationStatus === 'string'
         ? meta.activationStatus.trim()
@@ -132,13 +158,19 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
         directivesCount !== 0 ||
         protectedDirectivesCount !== 0 ||
         scriptletsCount !== 0 ||
+        tacticsCount !== 0 ||
         publicDirectivesCount !== 0 ||
         publicScriptletsCount !== 0 ||
+        publicTacticsCount !== 0 ||
         proofDirectivesCount !== 0 ||
         proofScriptletsCount !== 0 ||
+        protectedTacticsCount !== 0 ||
+        tacticsDroppedAtCompile !== 0 ||
         liveRemoteCosmeticChunkCount !== 0 ||
         liveRemoteCosmeticDroppedAtApply !== 0 ||
         liveRemoteCosmeticHostCount !== 0 ||
+        activeOverlayCount !== 0 ||
+        overlayNegativeCacheCount !== 0 ||
         emergencySyncRollingCount !== 0 ||
         partialDnrRepairCount !== 0 ||
         allowAllRollbackCount !== 0 ||
@@ -183,13 +215,27 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
         directivesCount,
         protectedDirectivesCount,
         scriptletsCount,
+        tacticsCount,
         publicDirectivesCount,
         publicScriptletsCount,
+        publicTacticsCount,
         proofDirectivesCount,
         proofScriptletsCount,
+        protectedTacticsCount,
+        tacticsDroppedAtCompile,
         ttlHours,
         retryMinutes,
         hotfixLane: hotfixLane || 'unknown',
+        baselineVersion: baselineVersion || 'unknown',
+        baselineLastAttempt,
+        baselineLastSuccess,
+        baselineLastError: baselineLastError || 'none',
+        activeOverlayCount,
+        overlayNegativeCacheCount,
+        lastOverlaySiteKey: lastOverlaySiteKey || 'none',
+        lastOverlayVersion: lastOverlayVersion || 'none',
+        lastOverlayReason: lastOverlayReason || 'none',
+        lastOverlayStatus: lastOverlayStatus || 'none',
         activationStatus: activationStatus || 'none',
         activationRollbackAt,
         activationRollbackReason: activationRollbackReason || 'none',

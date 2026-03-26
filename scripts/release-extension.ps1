@@ -4,6 +4,48 @@ Param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.IO.Compression
+
+function New-ZipFromDirectoryFilesOnly {
+  Param(
+    [Parameter(Mandatory = $true)][string]$SourceDir,
+    [Parameter(Mandatory = $true)][string]$DestinationZip
+  )
+
+  if (Test-Path $DestinationZip) {
+    Remove-Item $DestinationZip -Force
+  }
+
+  $resolvedSource = (Resolve-Path $SourceDir).Path
+  $sourcePrefix = $resolvedSource.TrimEnd('\', '/')
+  $files = Get-ChildItem -Path $resolvedSource -Recurse -File
+  $zipStream = [System.IO.File]::Open($DestinationZip, [System.IO.FileMode]::CreateNew)
+  try {
+    $archive = New-Object System.IO.Compression.ZipArchive($zipStream, [System.IO.Compression.ZipArchiveMode]::Create, $false)
+    try {
+      foreach ($file in $files) {
+        $relative = $file.FullName.Substring($sourcePrefix.Length).TrimStart('\', '/')
+        $entryName = $relative.Replace('\', '/')
+        $entry = $archive.CreateEntry($entryName, [System.IO.Compression.CompressionLevel]::Optimal)
+        $input = [System.IO.File]::OpenRead($file.FullName)
+        try {
+          $output = $entry.Open()
+          try {
+            $input.CopyTo($output)
+          } finally {
+            $output.Dispose()
+          }
+        } finally {
+          $input.Dispose()
+        }
+      }
+    } finally {
+      $archive.Dispose()
+    }
+  } finally {
+    $zipStream.Dispose()
+  }
+}
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptDir
@@ -118,7 +160,7 @@ if (Test-Path $zipPath) {
 }
 
 Write-Host "Creating extension zip..."
-Compress-Archive -Path (Join-Path $distExtension "*") -DestinationPath $zipPath -Force
+New-ZipFromDirectoryFilesOnly -SourceDir $distExtension -DestinationZip $zipPath
 
 $manifest = Get-Content (Join-Path $distExtension "manifest.json") -Raw | ConvertFrom-Json
 $buildInfo = [ordered]@{

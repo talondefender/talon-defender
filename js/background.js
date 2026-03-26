@@ -123,6 +123,8 @@ const LIVE_RUNTIME_REFRESH_FILES = Object.freeze([
     '/js/scripting/breakage-guard.js',
     '/js/scripting/shadow-dom-helper.js',
     '/js/scripting/remote-cosmetics.js',
+    '/js/scripting/remote-tactics-bootstrap.js',
+    '/js/scripting/remote-tactics.js',
     '/js/scripting/native-heuristics.js',
     '/js/scripting/automation.js',
     '/js/scripting/post-hide-cleanup.js',
@@ -428,13 +430,30 @@ const triggerEmergencyCommunitySync = async (hostname, reason) => {
     });
     communityEmergencySyncState = gate.state;
     if ( gate.allowed !== true ) { return gate.reason; }
-    communityEmergencySyncState = recordCommunityEmergencySync({
+    communityEmergencySyncState = recordCommunityEmergencySyncAttempt({
         state: communityEmergencySyncState,
         domain: gate.domain,
         reason,
     });
     await persistCommunityEmergencySyncState();
-    runCommunitySync({ force: true });
+    runCommunityOverlaySync({
+        siteKey: gate.domain,
+        reason,
+    }).then(result => {
+        if ( result?.rolledBack === true ) { return; }
+        if (
+            result?.source !== 'overlay' &&
+            result?.source !== 'overlay-not-modified'
+        ) {
+            return;
+        }
+        communityEmergencySyncState = recordCommunityEmergencySyncSuccess({
+            state: communityEmergencySyncState,
+            domain: gate.domain,
+            reason,
+        });
+        return persistCommunityEmergencySyncState();
+    }).catch(ubolErr);
     return 'queued';
 };
 
@@ -838,12 +857,14 @@ import {
     rollbackCommunityActivation,
     scrubPrivateCommunityState,
     syncCommunityRules,
+    syncCommunityOverlayRules,
 } from './community-sync.js';
 import {
     COMMUNITY_EMERGENCY_SYNC_STATE_KEY,
     getCommunityEmergencySyncDiagnostics,
     normalizeCommunityEmergencySyncState,
-    recordCommunityEmergencySync,
+    recordCommunityEmergencySyncAttempt,
+    recordCommunityEmergencySyncSuccess,
     shouldTriggerCommunityEmergencySync,
 } from './community-emergency-sync.js';
 import {
@@ -1025,8 +1046,10 @@ const youtubeFollowupArchitecturePrewarmPool = new Map();
 let entitlementStatus = { status: 'trial' };
 let paywallActive = false;
 let lastCommunityCleanupReason = '';
-let communitySyncInFlight;
-let communitySyncForceQueued = false;
+let communityBaselineSyncInFlight;
+let communityBaselineForceQueued = false;
+let communityApplyQueue = Promise.resolve();
+const communityOverlaySyncInFlight = new Map();
 
 const AUTO_GENERIC_HIGH_KEY = 'autoGenericHighHosts';
 const AUTO_GENERIC_HIGH_MAX = 200;
@@ -2491,7 +2514,12 @@ async function handleCommunitySyncResult(result) {
     if (result instanceof Object === false) { return result; }
     if (typeof result.cleanupReason === 'string' && result.cleanupReason !== '') {
         lastCommunityCleanupReason = result.cleanupReason;
-    } else if (result.source === 'remote') {
+    } else if (
+        result.source === 'remote' ||
+        result.source === 'overlay' ||
+        result.source === 'overlay-not-modified' ||
+        result.source === 'overlay-removed'
+    ) {
         lastCommunityCleanupReason = '';
     }
 
@@ -2577,30 +2605,81 @@ async function handleCommunitySyncResult(result) {
 }
 
 function runCommunitySync(options) {
+    return runCommunityBaselineSync(options);
+}
+
+const enqueueCommunityApply = job => {
+    const run = communityApplyQueue
+        .catch(() => {})
+        .then(job);
+    communityApplyQueue = run.catch(() => {});
+    return run;
+};
+
+function runCommunityBaselineSync(options) {
     const normalized = options instanceof Object
         ? { ...options }
         : {};
-    if ( communitySyncInFlight !== undefined ) {
+    if ( communityBaselineSyncInFlight !== undefined ) {
         if ( normalized.force === true ) {
-            communitySyncForceQueued = true;
+            communityBaselineForceQueued = true;
         }
-        return communitySyncInFlight;
+        return communityBaselineSyncInFlight;
     }
-    communitySyncInFlight = (async () => {
+    communityBaselineSyncInFlight = enqueueCommunityApply(async () => {
         try {
             const result = await syncCommunityRules(normalized);
             return await handleCommunitySyncResult(result);
         } catch (reason) {
-            ubolErr(`community-sync/run/${reason}`);
+            ubolErr(`community-sync/baseline/${reason}`);
         } finally {
-            communitySyncInFlight = undefined;
-            if ( communitySyncForceQueued ) {
-                communitySyncForceQueued = false;
-                runCommunitySync({ force: true });
+            communityBaselineSyncInFlight = undefined;
+            if ( communityBaselineForceQueued ) {
+                communityBaselineForceQueued = false;
+                runCommunityBaselineSync({ force: true });
             }
         }
-    })();
-    return communitySyncInFlight;
+    });
+    return communityBaselineSyncInFlight;
+}
+
+function runCommunityOverlaySync(options) {
+    const normalized = options instanceof Object
+        ? { ...options }
+        : {};
+    const siteKey = normalizeAutoPromotedHostname(normalized.siteKey);
+    if ( siteKey === '' ) {
+        return Promise.resolve({ skipped: 'invalid-site-key' });
+    }
+    if ( communityOverlaySyncInFlight.has(siteKey) ) {
+        return communityOverlaySyncInFlight.get(siteKey);
+    }
+    const promise = enqueueCommunityApply(async () => {
+        try {
+            let result = await syncCommunityOverlayRules({
+                siteKey,
+                force: normalized.force === true,
+                reason: normalized.reason,
+            });
+            if ( result?.retryWithForcedBaseline === true ) {
+                await handleCommunitySyncResult(
+                    await syncCommunityRules({ force: true })
+                );
+                result = await syncCommunityOverlayRules({
+                    siteKey,
+                    force: true,
+                    reason: normalized.reason,
+                });
+            }
+            return await handleCommunitySyncResult(result);
+        } catch (reason) {
+            ubolErr(`community-sync/overlay/${reason}`);
+        } finally {
+            communityOverlaySyncInFlight.delete(siteKey);
+        }
+    });
+    communityOverlaySyncInFlight.set(siteKey, promise);
+    return promise;
 }
 
 async function getRegisteredContentScriptsAuditSnapshot() {
@@ -3575,6 +3654,8 @@ function onMessage(request, sender, callback) {
                 localRead('communityBundlePrivateScriptlets'),
                 localRead('communityBundleDirectives'),
                 localRead('communityBundleScriptlets'),
+                localRead('communityBaselineMetaV1'),
+                localRead('communityOverlayIndexV1'),
                 localRead(REMOTE_COSMETICS_RUNTIME_STATS_KEY),
                 localRead(COMMUNITY_EMERGENCY_SYNC_STATE_KEY),
                 localRead(ALLOW_ALL_RULES_DIAGNOSTICS_KEY),
@@ -3591,6 +3672,8 @@ function onMessage(request, sender, callback) {
                 privateScriptlets,
                 legacyDirectives,
                 legacyScriptlets,
+                baselineMeta,
+                overlayIndex,
                 liveRuntimeStats,
                 emergencySyncState,
                 allowAllRulesDiagnostics,
@@ -3608,6 +3691,9 @@ function onMessage(request, sender, callback) {
                 };
                 const stats = liveRuntimeStats instanceof Object
                     ? liveRuntimeStats
+                    : {};
+                const normalizedOverlayIndex = overlayIndex instanceof Object
+                    ? overlayIndex
                     : {};
                 let liveRemoteCosmeticChunkCount = 0;
                 let liveRemoteCosmeticDroppedAtApply = 0;
@@ -3648,6 +3734,20 @@ function onMessage(request, sender, callback) {
                 diagnosticsMeta.liveRemoteCosmeticDroppedAtApply =
                     liveRemoteCosmeticDroppedAtApply;
                 diagnosticsMeta.liveRemoteCosmeticHostCount = liveRemoteCosmeticHostCount;
+                diagnosticsMeta.baselineVersion = typeof baselineMeta?.version === 'string'
+                    ? baselineMeta.version
+                    : 'unknown';
+                diagnosticsMeta.baselineLastAttempt = Number(baselineMeta?.lastAttempt) || 0;
+                diagnosticsMeta.baselineLastSuccess = Number(baselineMeta?.lastSuccess) || 0;
+                diagnosticsMeta.baselineLastError = typeof baselineMeta?.lastError === 'string'
+                    ? baselineMeta.lastError
+                    : '';
+                diagnosticsMeta.activeOverlayCount = Object.values(normalizedOverlayIndex)
+                    .filter(entry => typeof entry?.version === 'string' && entry.version !== '')
+                    .length;
+                diagnosticsMeta.overlayNegativeCacheCount = Object.values(normalizedOverlayIndex)
+                    .filter(entry => (Number(entry?.negativeUntil) || 0) > Date.now())
+                    .length;
                 const emergencyDiagnostics = getCommunityEmergencySyncDiagnostics(
                     emergencySyncState
                 );

@@ -28,10 +28,14 @@ test('community sync diagnostics summary reports schema version, action counts, 
       directivesCount: 4,
       protectedDirectivesCount: 1,
       scriptletsCount: 3,
+      tacticsCount: 2,
       publicDirectivesCount: 3,
       publicScriptletsCount: 2,
+      publicTacticsCount: 2,
       proofDirectivesCount: 1,
       proofScriptletsCount: 1,
+      protectedTacticsCount: 0,
+      tacticsDroppedAtCompile: 1,
       partialDnrRepairCount: 1,
       lastPartialDnrRepair,
       allowAllRollbackCount: 2,
@@ -89,10 +93,14 @@ test('community sync diagnostics summary reports schema version, action counts, 
   assert.equal(summary.directivesCount, 4);
   assert.equal(summary.protectedDirectivesCount, 1);
   assert.equal(summary.scriptletsCount, 3);
+  assert.equal(summary.tacticsCount, 2);
   assert.equal(summary.publicDirectivesCount, 3);
   assert.equal(summary.publicScriptletsCount, 2);
+  assert.equal(summary.publicTacticsCount, 2);
   assert.equal(summary.proofDirectivesCount, 1);
   assert.equal(summary.proofScriptletsCount, 1);
+  assert.equal(summary.protectedTacticsCount, 0);
+  assert.equal(summary.tacticsDroppedAtCompile, 1);
   assert.equal(summary.ttlHours, 24);
   assert.equal(summary.retryMinutes, 15);
   assert.equal(summary.hotfixLane, 'public');

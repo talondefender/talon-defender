@@ -26,6 +26,8 @@ import { ubolErr, ubolLog } from './debug.js';
 
 import {
     getScriptletHostExclusions,
+    INTERNAL_UNFILTERED_DOMAINS,
+    isInternalUnfilteredHostname,
     normalizeYouTubeWatchOwnerProfile,
     YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT,
     YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY,
@@ -43,6 +45,7 @@ import { createSingleFlightRunner } from './single-flight.js';
 
 const resourceDetailPromises = new Map();
 const PUBLIC_REMOTE_SCRIPTLETS_KEY = 'communityBundlePublicScriptlets';
+const PUBLIC_REMOTE_TACTICS_KEY = 'communityBundlePublicTactics';
 const PRIVATE_REMOTE_SCRIPTLETS_KEY = 'communityBundlePrivateScriptlets';
 const LEGACY_REMOTE_SCRIPTLETS_KEY = 'communityBundleScriptlets';
 const AUTO_GENERIC_HIGH_KEY = 'autoGenericHighHosts';
@@ -50,13 +53,11 @@ const AUTO_PROMOTION_STATE_KEY = 'autoPromotionStateV2';
 const AUTO_BACKOFF_SUBSYSTEMS_KEY = 'autoBackoffSubsystemsV1';
 const AUTO_PROMOTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const INJECTABLE_SYNC_DIAGNOSTICS_KEY = 'injectableSyncDiagnosticsV1';
-const INTERNAL_UNFILTERED_DOMAINS = [
-    'talondefender.com',
-];
 const SUPPRESSIBLE_SUBSYSTEMS = Object.freeze([
     'nativeHeuristics',
     'automation',
     'remoteCosmetics',
+    'remoteTactics',
     'postHideCleanup',
 ]);
 const SCRIPTLET_PATH_ALIASES = new Map([
@@ -122,16 +123,6 @@ function getGenericDetails() {
 
 /******************************************************************************/
 
-const isInternalUnfilteredDomain = hostname => {
-    if ( typeof hostname !== 'string' || hostname === '' ) { return false; }
-    for ( const domain of INTERNAL_UNFILTERED_DOMAINS ) {
-        if ( hostname === domain || hostname.endsWith(`.${domain}`) ) {
-            return true;
-        }
-    }
-    return false;
-};
-
 const applyInternalUnfilteredDomains = filteringModeDetails => {
     const { none, basic, optimal, complete } = filteringModeDetails;
     for ( const domain of INTERNAL_UNFILTERED_DOMAINS ) {
@@ -139,7 +130,7 @@ const applyInternalUnfilteredDomains = filteringModeDetails => {
     }
     for ( const modeSet of [ basic, optimal, complete ]) {
         for ( const hostname of Array.from(modeSet) ) {
-            if ( isInternalUnfilteredDomain(hostname) === false ) { continue; }
+            if ( isInternalUnfilteredHostname(hostname) === false ) { continue; }
             modeSet.delete(hostname);
         }
     }
@@ -774,7 +765,12 @@ function registerScriptlet(context, scriptletDetails) {
 /******************************************************************************/
 
 function registerRemoteScriptlets(context, scriptletDetails) {
-    const { before, filteringModeDetails, remoteScriptlets } = context;
+    const {
+        before,
+        filteringModeDetails,
+        remoteScriptlets,
+        youtubeWatchOwnerProfile,
+    } = context;
     const canonicalRemoteScriptlets = canonicalizeCommunityScriptlets(remoteScriptlets);
     if ( Array.isArray(canonicalRemoteScriptlets) === false ||
         canonicalRemoteScriptlets.length === 0 ) {
@@ -830,6 +826,12 @@ function registerRemoteScriptlets(context, scriptletDetails) {
                 );
             }
         }
+        targetHostnames = applyCompatibilityHostExclusions(
+            baseId,
+            targetHostnames,
+            excludeMatches,
+            youtubeWatchOwnerProfile,
+        );
         if ( targetHostnames.length === 0 ) { continue; }
 
         const matches = ut.matchesFromHostnames(targetHostnames);
@@ -1107,6 +1109,105 @@ function registerRemoteCosmetics(context) {
 
 /******************************************************************************/
 
+function registerRemoteTactics(context) {
+    const {
+        before,
+        filteringModeDetails,
+        subsystemSuppressionHostnames,
+        remoteTactics,
+    } = context;
+
+    const registeredBootstrap = before.get('remote-tactics-bootstrap');
+    before.delete('remote-tactics-bootstrap'); // Important!
+    const registeredMain = before.get('remote-tactics-main');
+    before.delete('remote-tactics-main'); // Important!
+
+    if ( Array.isArray(remoteTactics) === false || remoteTactics.length === 0 ) {
+        if ( registeredBootstrap !== undefined ) {
+            context.toRemove.push('remote-tactics-bootstrap');
+        }
+        if ( registeredMain !== undefined ) {
+            context.toRemove.push('remote-tactics-main');
+        }
+        return;
+    }
+
+    const { none, basic, optimal, complete } = filteringModeDetails;
+    const matches = [
+        ...ut.matchesFromHostnames(optimal),
+        ...ut.matchesFromHostnames(complete),
+    ];
+    if ( matches.length === 0 ) {
+        if ( registeredBootstrap !== undefined ) {
+            context.toRemove.push('remote-tactics-bootstrap');
+        }
+        if ( registeredMain !== undefined ) {
+            context.toRemove.push('remote-tactics-main');
+        }
+        return;
+    }
+
+    normalizeMatches(matches);
+
+    const excludeMatches = [];
+    if ( none.has('all-urls') === false ) {
+        excludeMatches.push(...ut.matchesFromHostnames(none));
+    }
+    if ( basic.has('all-urls') === false ) {
+        excludeMatches.push(...ut.matchesFromHostnames(basic));
+    }
+    pushExactExcludeMatches(
+        excludeMatches,
+        subsystemSuppressionHostnames?.remoteTactics
+    );
+
+    const bootstrapDirective = {
+        id: 'remote-tactics-bootstrap',
+        js: ['/js/scripting/remote-tactics-bootstrap.js'],
+        allFrames: true,
+        matches,
+        runAt: 'document_start',
+    };
+    if ( excludeMatches.length !== 0 ) {
+        bootstrapDirective.excludeMatches = excludeMatches;
+    }
+    if ( registeredBootstrap === undefined ) {
+        context.toAdd.push(bootstrapDirective);
+    } else if (
+        ut.strArrayEq(registeredBootstrap.js, bootstrapDirective.js, false) === false ||
+        ut.strArrayEq(registeredBootstrap.matches, matches) === false ||
+        ut.strArrayEq(registeredBootstrap.excludeMatches, excludeMatches) === false
+    ) {
+        context.toRemove.push('remote-tactics-bootstrap');
+        context.toAdd.push(bootstrapDirective);
+    }
+
+    const mainDirective = {
+        id: 'remote-tactics-main',
+        js: ['/js/scripting/remote-tactics.js'],
+        allFrames: true,
+        matches,
+        runAt: 'document_start',
+        world: 'MAIN',
+    };
+    if ( excludeMatches.length !== 0 ) {
+        mainDirective.excludeMatches = excludeMatches;
+    }
+    if ( registeredMain === undefined ) {
+        context.toAdd.push(mainDirective);
+    } else if (
+        ut.strArrayEq(registeredMain.js, mainDirective.js, false) === false ||
+        ut.strArrayEq(registeredMain.matches, matches) === false ||
+        ut.strArrayEq(registeredMain.excludeMatches, excludeMatches) === false ||
+        registeredMain.world !== 'MAIN'
+    ) {
+        context.toRemove.push('remote-tactics-main');
+        context.toAdd.push(mainDirective);
+    }
+}
+
+/******************************************************************************/
+
 function registerPostHideCleanup(context) {
     const { before, filteringModeDetails, subsystemSuppressionHostnames } = context;
 
@@ -1234,6 +1335,7 @@ const buildInjectablesRegistrationPlan = async () => {
         scriptletDetails,
         genericDetails,
         remoteScriptlets,
+        remoteTactics,
         autoGenericHighHosts,
         subsystemSuppressionHostnames,
         youtubeWatchOwnerProfile,
@@ -1250,6 +1352,11 @@ const buildInjectablesRegistrationPlan = async () => {
                 LEGACY_REMOTE_SCRIPTLETS_KEY,
             ],
             'registerInjectables/remote-scriptlets'
+        ),
+        readOptionalLocalValue(
+            PUBLIC_REMOTE_TACTICS_KEY,
+            null,
+            `registerInjectables/${PUBLIC_REMOTE_TACTICS_KEY}`
         ),
         readActiveAutoGenericHighHosts(),
         readActiveSubsystemSuppressionHostnames(),
@@ -1274,6 +1381,7 @@ const buildInjectablesRegistrationPlan = async () => {
         toAdd,
         toRemove,
         remoteScriptlets,
+        remoteTactics: Array.isArray(remoteTactics) ? remoteTactics : null,
         autoGenericHighHosts:
             autoGenericHighHosts instanceof Set
                 ? autoGenericHighHosts
@@ -1291,6 +1399,7 @@ const buildInjectablesRegistrationPlan = async () => {
         registerAutomation(context),
         registerAdShellStyles(context),
         registerRemoteCosmetics(context),
+        registerRemoteTactics(context),
         registerPostHideCleanup(context),
         registerGeneric(context, genericDetails),
         registerHighGeneric(context, genericDetails),

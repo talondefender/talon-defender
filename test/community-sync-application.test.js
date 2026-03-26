@@ -166,6 +166,8 @@ const dnr = {
 
 const runtimeBaseUrl = 'chrome-extension://talon-defender-test/';
 let remoteBundle = null;
+const remoteOverlayResponses = new Map();
+const overlayFetchLog = [];
 
 const browserStub = {
   declarativeNetRequest: dnr,
@@ -235,6 +237,45 @@ globalThis.fetch = async input => {
       },
     };
   }
+  let parsedUrl = null;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    parsedUrl = null;
+  }
+  if (
+    parsedUrl &&
+    parsedUrl.origin === 'https://api.talondefender.com' &&
+    parsedUrl.pathname.startsWith('/v1/community/overlay/') &&
+    parsedUrl.pathname.endsWith('.bundle.json')
+  ) {
+    const siteKey = decodeURIComponent(
+      parsedUrl.pathname.slice(
+        '/v1/community/overlay/'.length,
+        parsedUrl.pathname.length - '.bundle.json'.length
+      )
+    );
+    overlayFetchLog.push({
+      siteKey,
+      baseline: parsedUrl.searchParams.get('baseline') || '',
+      known: parsedUrl.searchParams.get('known') || '',
+    });
+    const response = remoteOverlayResponses.get(siteKey);
+    if (response === undefined) {
+      throw new Error(`missing remote overlay: ${siteKey}`);
+    }
+    if (typeof response.throwMessage === 'string' && response.throwMessage !== '') {
+      throw new Error(response.throwMessage);
+    }
+    const status = Number(response.status) || 200;
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      async json() {
+        return clone(response.body);
+      },
+    };
+  }
   if (url === new URL('automation/community-fallback.json', runtimeBaseUrl).toString()) {
     return {
       ok: true,
@@ -264,6 +305,7 @@ const {
   finalizeCommunityActivationSuccess,
   rollbackCommunityActivation,
   scrubPrivateCommunityState,
+  syncCommunityOverlayRules,
   syncCommunityRules,
 } = await import(new URL('../js/community-sync.js', import.meta.url));
 const {
@@ -289,6 +331,7 @@ const createSignedBundle = async ({
   heuristics,
   directives,
   scriptlets,
+  tactics,
   schemaVersion = 2,
   integrityScope = 'full',
   version = '2026.03.25.1',
@@ -313,6 +356,9 @@ const createSignedBundle = async ({
     bundle.heuristics = heuristics ?? null;
     bundle.directives = directives ?? null;
     bundle.scriptlets = scriptlets ?? null;
+    if (schemaVersion >= 4) {
+      bundle.tactics = tactics ?? null;
+    }
   }
   if (ttlHours !== undefined) {
     bundle.ttlHours = ttlHours;
@@ -324,6 +370,7 @@ const createSignedBundle = async ({
         heuristics: bundle.heuristics ?? null,
         directives: bundle.directives ?? null,
         scriptlets: bundle.scriptlets ?? null,
+        ...(schemaVersion >= 4 ? { tactics: bundle.tactics ?? null } : {}),
         schemaVersion,
       }
     : {
@@ -332,6 +379,77 @@ const createSignedBundle = async ({
       };
   bundle.integrity.value = await sha256Hex(JSON.stringify(payload));
   return bundle;
+};
+
+const createSignedOverlayBundle = async ({
+  siteKey,
+  baselineVersion,
+  rules,
+  cosmetics,
+  heuristics,
+  directives,
+  scriptlets,
+  tactics,
+  schemaVersion = 3,
+  version = 'overlay.2026.03.25.1',
+  ttlMinutes = 30,
+} = {}) => {
+  const bundle = {
+    version,
+    schemaVersion,
+    siteKey,
+    baselineVersion,
+    ttlMinutes,
+    rules: clone(rules),
+    cosmetics: cosmetics ?? null,
+    heuristics: heuristics ?? null,
+    directives: directives ?? null,
+    scriptlets: scriptlets ?? null,
+    ...(schemaVersion >= 4 ? { tactics: tactics ?? null } : {}),
+    integrity: {
+      algorithm: 'sha256',
+      value: '',
+    },
+    signature: {
+      algorithm: 'ed25519',
+      value: signatureBytesB64,
+    },
+  };
+  bundle.integrity.value = await sha256Hex(JSON.stringify({
+      siteKey: bundle.siteKey,
+      baselineVersion: bundle.baselineVersion,
+      ttlMinutes: bundle.ttlMinutes,
+      schemaVersion,
+      rules: bundle.rules,
+      cosmetics: bundle.cosmetics,
+      heuristics: bundle.heuristics,
+      directives: bundle.directives,
+      scriptlets: bundle.scriptlets,
+      ...(schemaVersion >= 4 ? { tactics: bundle.tactics ?? null } : {}),
+    }));
+  return bundle;
+};
+
+const applyBaselineBundle = async bundle => {
+  remoteBundle = bundle;
+  const result = await syncCommunityRules({ force: true });
+  if (result.activation) {
+    await finalizeCommunityActivationSuccess(result.activation);
+  }
+  return result;
+};
+
+const applyOverlayBundle = async (siteKey, options = {}) => {
+  const result = await syncCommunityOverlayRules({
+    siteKey,
+    force: true,
+    reason: 'test-overlay',
+    ...options,
+  });
+  if (result.activation) {
+    await finalizeCommunityActivationSuccess(result.activation);
+  }
+  return result;
 };
 
 const resetEnvironment = () => {
@@ -351,6 +469,8 @@ const resetEnvironment = () => {
   dnr.MAX_NUMBER_OF_DYNAMIC_RULES = DEFAULT_MAX_NUMBER_OF_DYNAMIC_RULES;
   dnr.MAX_NUMBER_OF_REGEX_RULES = DEFAULT_MAX_NUMBER_OF_REGEX_RULES;
   remoteBundle = null;
+  remoteOverlayResponses.clear();
+  overlayFetchLog.length = 0;
   permissionsState.broadHostPermissions = true;
   rulesetConfig.communityRulesEnabled = true;
   rulesetConfig.communityRulesURL = '';
@@ -683,6 +803,900 @@ test('community sync stores signed public directives and scriptlets without deve
   assert.equal(storageData.communityBundlePrivateScriptlets, null);
   assert.equal(Object.hasOwn(storageData, 'communityBundleDirectives'), false);
   assert.equal(Object.hasOwn(storageData, 'communityBundleScriptlets'), false);
+});
+
+test('community sync stores signed public tactics from schema v4 bundles', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  remoteBundle = await createSignedBundle({
+    schemaVersion: 4,
+    rules: [
+      {
+        action: { type: 'block' },
+        condition: { urlFilter: '||remote.example^' },
+      },
+    ],
+    tactics: [
+      {
+        id: 'prune-ads',
+        kind: 'jsonPrune',
+        hosts: ['video.example'],
+        transport: 'fetch',
+        urlPathPrefixes: ['/api/player'],
+        jsonPaths: ['payload.adPlacements'],
+      },
+      {
+        id: 'set-empty',
+        kind: 'jsonSet',
+        hosts: ['video.example'],
+        transport: 'both',
+        urlPathPrefixes: ['/api/player'],
+        jsonPaths: ['payload.adBreakId'],
+        value: '',
+      },
+      {
+        id: 'drop-protected',
+        kind: 'jsonPrune',
+        hosts: ['accounts.google.com'],
+        transport: 'fetch',
+        urlPathPrefixes: ['/api/player'],
+        jsonPaths: ['payload.shouldDrop'],
+      },
+    ],
+  });
+
+  const result = await syncCommunityRules({ force: true });
+  await finalizeCommunityActivationSuccess(result.activation);
+
+  assert.equal(result.source, 'remote');
+  assert.deepEqual(storageData.communityBundlePublicTactics, [
+    {
+      id: 'prune-ads',
+      kind: 'jsonPrune',
+      hosts: ['=video.example'],
+      transport: 'fetch',
+      urlPathPrefixes: ['/api/player'],
+      jsonPaths: ['payload.adPlacements'],
+    },
+    {
+      id: 'set-empty',
+      kind: 'jsonSet',
+      hosts: ['=video.example'],
+      transport: 'both',
+      urlPathPrefixes: ['/api/player'],
+      jsonPaths: ['payload.adBreakId'],
+      value: '',
+    },
+  ]);
+  assert.deepEqual(storageData.communityBaselinePublicTacticsV1, storageData.communityBundlePublicTactics);
+  assert.equal(storageData.communityBundleMeta.publicTacticsCount, 2);
+  assert.equal(storageData.communityBundleMeta.tacticsCount, 2);
+});
+
+test('community sync drops internal Talon first-party scopes across remote rules and extras', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  remoteBundle = await createSignedBundle({
+    schemaVersion: 2,
+    rules: [
+      {
+        action: { type: 'block' },
+        condition: {
+          requestDomains: ['talondefender.com'],
+          resourceTypes: ['script'],
+        },
+      },
+      {
+        action: { type: 'allow' },
+        condition: {
+          initiatorDomains: ['news.example.com'],
+          requestDomains: ['talondefender.com'],
+          resourceTypes: ['script'],
+        },
+      },
+      {
+        action: {
+          type: 'redirect',
+          redirect: {
+            extensionPath: 'web_accessible_resources/noop.js',
+          },
+        },
+        condition: {
+          initiatorDomains: ['news.example.com'],
+          requestDomains: ['talondefender.com'],
+          resourceTypes: ['script'],
+        },
+      },
+      {
+        action: { type: 'block' },
+        condition: {
+          requestDomains: ['cdn.example.net'],
+          resourceTypes: ['script'],
+        },
+      },
+    ],
+    cosmetics: {
+      hosts: {
+        '=talondefender.com': ['.should-drop'],
+        'news.example': ['.inline-promo'],
+      },
+    },
+    heuristics: {
+      disableHosts: ['=talondefender.com', '=news.example'],
+    },
+    directives: [
+      {
+        id: 'drop-internal-host',
+        action: 'hide',
+        hosts: ['=talondefender.com'],
+        selectors: ['.should-drop'],
+      },
+      {
+        id: 'keep-external-host',
+        action: 'hide',
+        hosts: ['news.example'],
+        selectors: ['.keep-me'],
+      },
+    ],
+    scriptlets: [
+      {
+        rulesetId: 'ublock-filters',
+        token: 'abort-on-property-read',
+        hosts: ['=talondefender.com'],
+        world: 'MAIN',
+      },
+      {
+        rulesetId: 'ublock-filters',
+        token: 'abort-on-property-read',
+        hosts: ['news.example'],
+        world: 'MAIN',
+      },
+    ],
+  });
+
+  const result = await syncCommunityRules({ force: true });
+  await finalizeCommunityActivationSuccess(result.activation);
+
+  const communityRules = dnrState.dynamicRules
+    .filter(rule => rule.id >= 6000000 && rule.id < 7000000);
+
+  assert.equal(result.source, 'remote');
+  assert.equal(result.applied.added, 1);
+  assert.equal(result.applied.droppedUnsafe, 3);
+  assert.deepEqual(
+    communityRules.map(rule => rule.condition.requestDomains || []),
+    [['cdn.example.net']]
+  );
+  assert.deepEqual(storageData.communityBundleCosmetics, {
+    all: [],
+    hosts: {
+      'news.example': ['.inline-promo'],
+    },
+  });
+  assert.deepEqual(storageData.communityBundleHeuristics, {
+    disableHosts: ['=news.example'],
+  });
+  assert.deepEqual(storageData.communityBundlePublicDirectives, [
+    {
+      id: 'keep-external-host',
+      category: 'annoyances',
+      hosts: ['news.example'],
+      action: 'hide',
+      selectors: ['.keep-me'],
+      fallbackAction: undefined,
+      fallbackSelectors: [],
+      postActions: [],
+      maxApplies: undefined,
+    },
+  ]);
+  assert.deepEqual(storageData.communityBundlePublicScriptlets, [
+    {
+      rulesetId: 'ublock-filters',
+      token: 'abort-on-property-read',
+      hosts: ['news.example'],
+      world: 'MAIN',
+    },
+  ]);
+});
+
+test('overlay sync migrates existing compiled community state into baseline storage before site fetches', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  storageData.communityBundleMeta = {
+    version: 'legacy-baseline.1',
+    schemaVersion: 2,
+    ttlHours: 6,
+  };
+  storageData.communityBundleRules = [
+    {
+      action: { type: 'block' },
+      condition: {
+        requestDomains: ['legacy.example'],
+        resourceTypes: ['script'],
+      },
+    },
+  ];
+  storageData.communityBundleCosmetics = {
+    all: [],
+    hosts: {
+      'legacy.example': ['.legacy-box'],
+    },
+  };
+  storageData.communityBundleHeuristics = {
+    disableHosts: ['=legacy.example'],
+  };
+  storageData.communityBundlePublicDirectives = [
+    {
+      id: 'legacy-directive',
+      category: 'annoyances',
+      hosts: ['legacy.example'],
+      action: 'hide',
+      selectors: ['.legacy-box'],
+      fallbackAction: undefined,
+      fallbackSelectors: [],
+      postActions: [],
+      maxApplies: undefined,
+    },
+  ];
+  storageData.communityBundlePublicScriptlets = [
+    {
+      rulesetId: 'ublock-filters',
+      token: 'abort-on-property-read',
+      hosts: ['legacy.example'],
+      world: 'MAIN',
+    },
+  ];
+  storageData.communityBundlePublicTactics = [
+    {
+      id: 'legacy-tactic',
+      kind: 'jsonPrune',
+      hosts: ['=legacy.example'],
+      transport: 'fetch',
+      urlPathPrefixes: ['/api/player'],
+      jsonPaths: ['payload.ads'],
+    },
+  ];
+  remoteOverlayResponses.set('video.example', {
+    status: 404,
+    body: null,
+  });
+
+  const result = await syncCommunityOverlayRules({
+    siteKey: 'video.example',
+    force: true,
+    reason: 'migration-check',
+  });
+
+  assert.equal(result.source, 'overlay-miss');
+  assert.deepEqual(storageData.communityBaselineMetaV1, storageData.communityBundleMeta);
+  assert.deepEqual(storageData.communityBaselineRulesV1, storageData.communityBundleRules);
+  assert.deepEqual(storageData.communityBaselineCosmeticsV1, storageData.communityBundleCosmetics);
+  assert.deepEqual(storageData.communityBaselineHeuristicsV1, storageData.communityBundleHeuristics);
+  assert.deepEqual(
+    storageData.communityBaselinePublicDirectivesV1,
+    storageData.communityBundlePublicDirectives
+  );
+  assert.deepEqual(
+    storageData.communityBaselinePublicScriptletsV1,
+    storageData.communityBundlePublicScriptlets
+  );
+  assert.deepEqual(
+    storageData.communityBaselinePublicTacticsV1,
+    storageData.communityBundlePublicTactics
+  );
+  assert.deepEqual(overlayFetchLog, [
+    {
+      siteKey: 'video.example',
+      baseline: 'legacy-baseline.1',
+      known: '',
+    },
+  ]);
+});
+
+test('overlay sync merges baseline and site overlay state into the compiled public hotfix bundle', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  const baselineBundle = await createSignedBundle({
+    version: 'baseline.2026.03.25.1',
+    schemaVersion: 4,
+    rules: [
+      {
+        action: { type: 'block' },
+        condition: {
+          requestDomains: ['baseline.example'],
+          resourceTypes: ['script'],
+        },
+      },
+    ],
+    cosmetics: {
+      hosts: {
+        'news.example': ['.baseline-box'],
+      },
+    },
+    heuristics: {
+      disableHosts: ['=baseline.example'],
+      labelRegexes: ['baseline', 'shared'],
+      labelSelectors: ['.baseline-label'],
+      maxLabelTextLength: 40,
+    },
+    directives: [
+      {
+        id: 'shared-directive',
+        action: 'hide',
+        hosts: ['news.example'],
+        selectors: ['.baseline-hide'],
+      },
+      {
+        id: 'baseline-only',
+        action: 'hide',
+        hosts: ['news.example'],
+        selectors: ['.baseline-only'],
+      },
+    ],
+    scriptlets: [
+      {
+        rulesetId: 'ublock-filters',
+        token: 'abort-on-property-read',
+        hosts: ['baseline.example'],
+        world: 'MAIN',
+      },
+    ],
+    tactics: [
+      {
+        id: 'shared-tactic',
+        kind: 'jsonSet',
+        hosts: ['video.example'],
+        transport: 'both',
+        urlPathPrefixes: ['/api/player'],
+        jsonPaths: ['payload.adBreakId'],
+        value: '',
+      },
+      {
+        id: 'baseline-only-tactic',
+        kind: 'jsonPrune',
+        hosts: ['baseline.example'],
+        transport: 'fetch',
+        urlPathPrefixes: ['/api/player'],
+        jsonPaths: ['payload.baselineAds'],
+      },
+    ],
+  });
+  await applyBaselineBundle(baselineBundle);
+
+  remoteOverlayResponses.set('video.example', {
+    status: 200,
+    body: await createSignedOverlayBundle({
+      siteKey: 'video.example',
+      baselineVersion: baselineBundle.version,
+      version: 'overlay.2026.03.25.1',
+      rules: [
+        {
+          action: { type: 'block' },
+          condition: {
+            requestDomains: ['overlay.example'],
+            resourceTypes: ['script'],
+          },
+        },
+      ],
+      cosmetics: {
+        hosts: {
+          'news.example': ['.baseline-box', '.overlay-box'],
+        },
+      },
+      heuristics: {
+        disableHosts: ['=overlay.example', '=baseline.example'],
+        labelRegexes: ['overlay', 'shared'],
+        labelSelectors: ['.overlay-label', '.baseline-label'],
+        maxLabelTextLength: 70,
+      },
+      directives: [
+        {
+          id: 'shared-directive',
+          action: 'hide',
+          hosts: ['news.example'],
+          selectors: ['.overlay-hide'],
+        },
+        {
+          id: 'overlay-only',
+          action: 'hide',
+          hosts: ['news.example'],
+          selectors: ['.overlay-only'],
+        },
+      ],
+      scriptlets: [
+        {
+          rulesetId: 'ublock-filters',
+          token: 'abort-on-property-read',
+          hosts: ['overlay.example'],
+          world: 'MAIN',
+        },
+      ],
+      tactics: [
+        {
+          id: 'shared-tactic',
+          kind: 'jsonSet',
+          hosts: ['video.example'],
+          transport: 'both',
+          urlPathPrefixes: ['/api/player'],
+          jsonPaths: ['payload.adBreakId'],
+          value: false,
+        },
+        {
+          id: 'overlay-only-tactic',
+          kind: 'jsonPrune',
+          hosts: ['overlay.example'],
+          transport: 'xhr',
+          urlPathPrefixes: ['/api/player'],
+          jsonPaths: ['payload.overlayAds'],
+        },
+      ],
+      schemaVersion: 4,
+    }),
+  });
+
+  const result = await applyOverlayBundle('video.example', {
+    reason: 'breakage-trigger',
+  });
+  const communityRules = dnrState.dynamicRules
+    .filter(rule => rule.id >= 6000000 && rule.id < 7000000);
+
+  assert.equal(result.source, 'overlay');
+  assert.equal(result.applied.added, 2);
+  assert.deepEqual(
+    communityRules.map(rule => rule.condition.requestDomains || []),
+    [['overlay.example'], ['baseline.example']]
+  );
+  assert.deepEqual(storageData.communityBundleCosmetics, {
+    all: [],
+    hosts: {
+      'news.example': ['.baseline-box', '.overlay-box'],
+    },
+  });
+  assert.deepEqual(storageData.communityBundleHeuristics, {
+    disableHosts: ['=overlay.example', '=baseline.example'],
+    labelRegexes: ['overlay', 'shared', 'baseline'],
+    labelSelectors: ['.overlay-label', '.baseline-label'],
+    maxLabelTextLength: 70,
+  });
+  assert.deepEqual(storageData.communityBundlePublicDirectives, [
+    {
+      id: 'shared-directive',
+      category: 'annoyances',
+      hosts: ['news.example'],
+      action: 'hide',
+      selectors: ['.overlay-hide'],
+      fallbackAction: undefined,
+      fallbackSelectors: [],
+      postActions: [],
+      maxApplies: undefined,
+    },
+    {
+      id: 'overlay-only',
+      category: 'annoyances',
+      hosts: ['news.example'],
+      action: 'hide',
+      selectors: ['.overlay-only'],
+      fallbackAction: undefined,
+      fallbackSelectors: [],
+      postActions: [],
+      maxApplies: undefined,
+    },
+    {
+      id: 'baseline-only',
+      category: 'annoyances',
+      hosts: ['news.example'],
+      action: 'hide',
+      selectors: ['.baseline-only'],
+      fallbackAction: undefined,
+      fallbackSelectors: [],
+      postActions: [],
+      maxApplies: undefined,
+    },
+  ]);
+  assert.deepEqual(storageData.communityBundlePublicScriptlets, [
+    {
+      rulesetId: 'ublock-filters',
+      token: 'abort-on-property-read',
+      hosts: ['baseline.example', 'overlay.example'],
+      world: 'MAIN',
+    },
+  ]);
+  assert.deepEqual(storageData.communityBundlePublicTactics, [
+    {
+      id: 'shared-tactic',
+      kind: 'jsonSet',
+      hosts: ['=video.example'],
+      transport: 'both',
+      urlPathPrefixes: ['/api/player'],
+      jsonPaths: ['payload.adBreakId'],
+      value: false,
+    },
+    {
+      id: 'overlay-only-tactic',
+      kind: 'jsonPrune',
+      hosts: ['=overlay.example'],
+      transport: 'xhr',
+      urlPathPrefixes: ['/api/player'],
+      jsonPaths: ['payload.overlayAds'],
+    },
+    {
+      id: 'baseline-only-tactic',
+      kind: 'jsonPrune',
+      hosts: ['=baseline.example'],
+      transport: 'fetch',
+      urlPathPrefixes: ['/api/player'],
+      jsonPaths: ['payload.baselineAds'],
+    },
+  ]);
+  assert.equal(storageData.communityBundleMeta.publicTacticsCount, 3);
+  assert.equal(storageData.communityBundleMeta.activeOverlayCount, 1);
+  assert.equal(storageData.communityBundleMeta.lastOverlaySiteKey, 'video.example');
+  assert.equal(storageData.communityBundleMeta.lastOverlayVersion, 'overlay.2026.03.25.1');
+  assert.equal(storageData.communityBundleMeta.lastOverlayStatus, 'updated');
+  assert.equal(storageData.communityOverlayIndexV1['video.example'].version, 'overlay.2026.03.25.1');
+  assert.deepEqual(overlayFetchLog.at(-1), {
+    siteKey: 'video.example',
+    baseline: baselineBundle.version,
+    known: '',
+  });
+});
+
+test('overlay sync keeps the stored overlay on 204 and refreshes the per-site sync state', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  const baselineBundle = await createSignedBundle({
+    version: 'baseline.204.1',
+    schemaVersion: 2,
+    rules: [
+      {
+        action: { type: 'block' },
+        condition: {
+          requestDomains: ['baseline.example'],
+          resourceTypes: ['script'],
+        },
+      },
+    ],
+  });
+  await applyBaselineBundle(baselineBundle);
+
+  remoteOverlayResponses.set('video.example', {
+    status: 200,
+    body: await createSignedOverlayBundle({
+      siteKey: 'video.example',
+      baselineVersion: baselineBundle.version,
+      version: 'overlay.204.1',
+      rules: [
+        {
+          action: { type: 'block' },
+          condition: {
+            requestDomains: ['overlay.example'],
+            resourceTypes: ['script'],
+          },
+        },
+      ],
+    }),
+  });
+  await applyOverlayBundle('video.example');
+
+  const previousPayload = clone(storageData.communityOverlayPayloadsV1['video.example']);
+  const previousCompiledRules = clone(storageData.communityBundleRules);
+  remoteOverlayResponses.set('video.example', {
+    status: 204,
+    body: null,
+  });
+
+  const result = await syncCommunityOverlayRules({
+    siteKey: 'video.example',
+    force: true,
+    reason: 'refresh-overlay',
+  });
+
+  assert.equal(result.source, 'overlay-not-modified');
+  assert.deepEqual(storageData.communityOverlayPayloadsV1['video.example'], previousPayload);
+  assert.deepEqual(storageData.communityBundleRules, previousCompiledRules);
+  assert.equal(storageData.communityOverlayIndexV1['video.example'].version, 'overlay.204.1');
+  assert.equal(storageData.communityOverlayIndexV1['video.example'].lastStatus, 'not-modified');
+  assert.equal(storageData.communityOverlayIndexV1['video.example'].lastReason, 'refresh-overlay');
+  assert.equal(storageData.communityOverlayIndexV1['video.example'].lastError, '');
+  assert.deepEqual(overlayFetchLog.at(-1), {
+    siteKey: 'video.example',
+    baseline: baselineBundle.version,
+    known: 'overlay.204.1',
+  });
+});
+
+test('overlay sync removes revoked site overlays and recompiles the effective community bundle from baseline only', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  const baselineBundle = await createSignedBundle({
+    version: 'baseline.remove.1',
+    schemaVersion: 2,
+    rules: [
+      {
+        action: { type: 'block' },
+        condition: {
+          requestDomains: ['baseline.example'],
+          resourceTypes: ['script'],
+        },
+      },
+    ],
+    directives: [
+      {
+        id: 'baseline-directive',
+        action: 'hide',
+        hosts: ['news.example'],
+        selectors: ['.baseline'],
+      },
+    ],
+    tactics: [
+      {
+        id: 'baseline-tactic',
+        kind: 'jsonPrune',
+        hosts: ['baseline.example'],
+        transport: 'fetch',
+        urlPathPrefixes: ['/api/player'],
+        jsonPaths: ['payload.baselineAds'],
+      },
+    ],
+    schemaVersion: 4,
+  });
+  await applyBaselineBundle(baselineBundle);
+
+  remoteOverlayResponses.set('video.example', {
+    status: 200,
+    body: await createSignedOverlayBundle({
+      siteKey: 'video.example',
+      baselineVersion: baselineBundle.version,
+      version: 'overlay.remove.1',
+      rules: [
+        {
+          action: { type: 'block' },
+          condition: {
+            requestDomains: ['overlay.example'],
+            resourceTypes: ['script'],
+          },
+        },
+      ],
+      directives: [
+        {
+          id: 'overlay-directive',
+          action: 'hide',
+          hosts: ['news.example'],
+          selectors: ['.overlay'],
+        },
+      ],
+      tactics: [
+        {
+          id: 'overlay-tactic',
+          kind: 'jsonPrune',
+          hosts: ['overlay.example'],
+          transport: 'fetch',
+          urlPathPrefixes: ['/api/player'],
+          jsonPaths: ['payload.overlayAds'],
+        },
+      ],
+      schemaVersion: 4,
+    }),
+  });
+  await applyOverlayBundle('video.example');
+
+  remoteOverlayResponses.set('video.example', {
+    status: 404,
+    body: null,
+  });
+  const result = await applyOverlayBundle('video.example', {
+    reason: 'overlay-revoked',
+  });
+  const communityRules = dnrState.dynamicRules
+    .filter(rule => rule.id >= 6000000 && rule.id < 7000000);
+
+  assert.equal(result.source, 'overlay-removed');
+  assert.equal(result.overlayStatus, 'missing');
+  assert.deepEqual(
+    communityRules.map(rule => rule.condition.requestDomains || []),
+    [['baseline.example']]
+  );
+  assert.equal(Object.hasOwn(storageData.communityOverlayPayloadsV1, 'video.example'), false);
+  assert.equal(storageData.communityBundleMeta.activeOverlayCount, 0);
+  assert.deepEqual(storageData.communityBundlePublicDirectives, [
+    {
+      id: 'baseline-directive',
+      category: 'annoyances',
+      hosts: ['news.example'],
+      action: 'hide',
+      selectors: ['.baseline'],
+      fallbackAction: undefined,
+      fallbackSelectors: [],
+      postActions: [],
+      maxApplies: undefined,
+    },
+  ]);
+  assert.deepEqual(storageData.communityBundlePublicTactics, [
+    {
+      id: 'baseline-tactic',
+      kind: 'jsonPrune',
+      hosts: ['=baseline.example'],
+      transport: 'fetch',
+      urlPathPrefixes: ['/api/player'],
+      jsonPaths: ['payload.baselineAds'],
+    },
+  ]);
+  assert.equal(storageData.communityOverlayIndexV1['video.example'].version, '');
+  assert.equal(storageData.communityOverlayIndexV1['video.example'].lastStatus, 'missing');
+  assert.ok(storageData.communityOverlayIndexV1['video.example'].negativeUntil > 0);
+});
+
+test('overlay sync keeps the previous overlay active after a fetch failure and enforces retry backoff', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  const baselineBundle = await createSignedBundle({
+    version: 'baseline.retry.1',
+    schemaVersion: 2,
+    rules: [
+      {
+        action: { type: 'block' },
+        condition: {
+          requestDomains: ['baseline.example'],
+          resourceTypes: ['script'],
+        },
+      },
+    ],
+  });
+  await applyBaselineBundle(baselineBundle);
+
+  remoteOverlayResponses.set('video.example', {
+    status: 200,
+    body: await createSignedOverlayBundle({
+      siteKey: 'video.example',
+      baselineVersion: baselineBundle.version,
+      version: 'overlay.retry.1',
+      rules: [
+        {
+          action: { type: 'block' },
+          condition: {
+            requestDomains: ['overlay.example'],
+            resourceTypes: ['script'],
+          },
+        },
+      ],
+    }),
+  });
+  await applyOverlayBundle('video.example');
+  const previousPayload = clone(storageData.communityOverlayPayloadsV1['video.example']);
+  const previousCompiledRules = clone(storageData.communityBundleRules);
+
+  remoteOverlayResponses.set('video.example', {
+    throwMessage: 'network down',
+  });
+  const errorResult = await syncCommunityOverlayRules({
+    siteKey: 'video.example',
+    force: true,
+    reason: 'network-retry',
+  });
+  const skippedResult = await syncCommunityOverlayRules({
+    siteKey: 'video.example',
+    force: false,
+    reason: 'network-retry',
+  });
+
+  assert.equal(errorResult.source, 'overlay-error');
+  assert.match(errorResult.error, /network down/);
+  assert.deepEqual(storageData.communityOverlayPayloadsV1['video.example'], previousPayload);
+  assert.deepEqual(storageData.communityBundleRules, previousCompiledRules);
+  assert.equal(storageData.communityOverlayIndexV1['video.example'].lastStatus, 'error');
+  assert.match(storageData.communityOverlayIndexV1['video.example'].lastError, /network down/);
+  assert.equal(skippedResult.skipped, 'retry-backoff');
+});
+
+test('overlay sync reports baseline mismatches without replacing the active compiled state', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  const baselineBundle = await createSignedBundle({
+    version: 'baseline.mismatch.1',
+    schemaVersion: 2,
+    rules: [
+      {
+        action: { type: 'block' },
+        condition: {
+          requestDomains: ['baseline.example'],
+          resourceTypes: ['script'],
+        },
+      },
+    ],
+  });
+  await applyBaselineBundle(baselineBundle);
+  const previousCompiledRules = clone(storageData.communityBundleRules);
+
+  remoteOverlayResponses.set('video.example', {
+    status: 200,
+    body: await createSignedOverlayBundle({
+      siteKey: 'video.example',
+      baselineVersion: 'baseline.other.1',
+      version: 'overlay.mismatch.1',
+      rules: [
+        {
+          action: { type: 'block' },
+          condition: {
+            requestDomains: ['overlay.example'],
+            resourceTypes: ['script'],
+          },
+        },
+      ],
+    }),
+  });
+
+  const result = await syncCommunityOverlayRules({
+    siteKey: 'video.example',
+    force: true,
+    reason: 'baseline-mismatch',
+  });
+
+  assert.equal(result.source, 'overlay-baseline-mismatch');
+  assert.equal(result.retryWithForcedBaseline, true);
+  assert.equal(Object.hasOwn(storageData.communityOverlayPayloadsV1 || {}, 'video.example'), false);
+  assert.deepEqual(storageData.communityBundleRules, previousCompiledRules);
+  assert.equal(storageData.communityOverlayIndexV1['video.example'].version, 'overlay.mismatch.1');
+  assert.equal(storageData.communityOverlayIndexV1['video.example'].baselineVersion, 'baseline.other.1');
+  assert.equal(storageData.communityOverlayIndexV1['video.example'].lastStatus, 'baseline-mismatch');
+});
+
+test('overlay rules stay ahead of baseline rules under community quota pressure', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  dnr.MAX_NUMBER_OF_DYNAMIC_RULES = 251;
+  const baselineBundle = await createSignedBundle({
+    version: 'baseline.quota.1',
+    schemaVersion: 2,
+    rules: [
+      {
+        action: { type: 'block' },
+        condition: {
+          requestDomains: ['baseline.example'],
+          resourceTypes: ['script'],
+        },
+      },
+    ],
+  });
+  await applyBaselineBundle(baselineBundle);
+
+  remoteOverlayResponses.set('video.example', {
+    status: 200,
+    body: await createSignedOverlayBundle({
+      siteKey: 'video.example',
+      baselineVersion: baselineBundle.version,
+      version: 'overlay.quota.1',
+      rules: [
+        {
+          action: { type: 'block' },
+          condition: {
+            requestDomains: ['overlay.example'],
+            resourceTypes: ['script'],
+          },
+        },
+      ],
+    }),
+  });
+
+  const result = await applyOverlayBundle('video.example', {
+    reason: 'quota-pressure',
+  });
+  const communityRules = dnrState.dynamicRules
+    .filter(rule => rule.id >= 6000000 && rule.id < 7000000);
+
+  assert.equal(result.source, 'overlay');
+  assert.equal(result.applied.added, 1);
+  assert.equal(result.applied.droppedQuota, 1);
+  assert.deepEqual(result.applied.dropped.quotaByClass, {
+    exactExceptions: 0,
+    exactRedirects: 0,
+    exactBlocks: 1,
+    broadBlocks: 0,
+    regexBlocks: 0,
+  });
+  assert.deepEqual(
+    communityRules.map(rule => rule.condition.requestDomains || []),
+    [['overlay.example']]
+  );
 });
 
 test('community scriptlet canonicalization merges duplicate hosts and keeps worlds separate', () => {

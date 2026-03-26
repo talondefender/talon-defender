@@ -90,15 +90,32 @@ const writeJson = async (absPath, payload) => {
 
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+const isRetryableFsError = (error) => {
+  const code = error?.code || '';
+  return code === 'EPERM' || code === 'EBUSY' || code === 'ENOTEMPTY';
+};
+
 const removeDirWithRetries = async (target, attempts = 6) => {
   for (let i = 0; i < attempts; i += 1) {
     try {
       await fs.rm(target, { recursive: true, force: true });
       return;
     } catch (error) {
-      const code = error?.code || '';
-      const retryable = code === 'EPERM' || code === 'EBUSY' || code === 'ENOTEMPTY';
-      if (retryable === false || i === attempts - 1) {
+      if (isRetryableFsError(error) === false || i === attempts - 1) {
+        throw error;
+      }
+      await wait(150 * (i + 1));
+    }
+  }
+};
+
+const copyWithRetries = async (src, dest, attempts = 6) => {
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      await fs.cp(src, dest, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (isRetryableFsError(error) === false || i === attempts - 1) {
         throw error;
       }
       await wait(150 * (i + 1));
@@ -275,7 +292,7 @@ for (const entry of INCLUDE) {
   if (await pathExists(src) === false) continue;
   const dest = path.join(absOutDir, entry);
   await fs.mkdir(path.dirname(dest), { recursive: true });
-  await fs.cp(src, dest, { recursive: true, force: true });
+  await copyWithRetries(src, dest);
 }
 
 for (const entry of EXCLUDE) {

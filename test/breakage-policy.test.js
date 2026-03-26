@@ -827,6 +827,7 @@ test('audit overrides keep only known subsystems and resolve by host', () => {
 
   assert.deepEqual(Object.keys(overrides.global), ['nativeHeuristics']);
   assert.equal(AUDITABLE_SUBSYSTEMS.includes('remoteCosmetics'), true);
+  assert.equal(AUDITABLE_SUBSYSTEMS.includes('remoteTactics'), true);
   assert.equal(resolveAuditOverride(overrides, 'news.example.com', 'remoteCosmetics'), false);
   assert.equal(resolveAuditOverride(overrides, 'shop.example.com', 'nativeHeuristics'), false);
   assert.equal(resolveAuditOverride(overrides, 'shop.example.com', 'automation'), undefined);

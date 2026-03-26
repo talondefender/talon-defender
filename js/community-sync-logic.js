@@ -231,6 +231,9 @@ export const buildCommunityInjectableStateFingerprint = (input = {}) => {
         scriptlets: Array.isArray(source.scriptlets) && source.scriptlets.length !== 0
             ? source.scriptlets
             : null,
+        tactics: Array.isArray(source.tactics) && source.tactics.length !== 0
+            ? source.tactics
+            : null,
     };
     return JSON.stringify(normalized);
 };

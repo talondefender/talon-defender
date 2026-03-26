@@ -2,9 +2,13 @@ import {
     isKnownPublicSuffix,
     normalizeSiteKeyHostname,
 } from './site-key.js';
+import { isInternalUnfilteredHostname } from './breakage-policy.js';
 
 export const COMMUNITY_RULE_SCHEMA_VERSION_LEGACY = 1;
-export const COMMUNITY_RULE_SCHEMA_VERSION_CURRENT = 2;
+export const COMMUNITY_RULE_SCHEMA_VERSION_ACTIONS = 2;
+export const COMMUNITY_RULE_SCHEMA_VERSION_FULL_EXTRAS = 3;
+export const COMMUNITY_RULE_SCHEMA_VERSION_TACTICS = 4;
+export const COMMUNITY_RULE_SCHEMA_VERSION_CURRENT = COMMUNITY_RULE_SCHEMA_VERSION_TACTICS;
 
 export const COMMUNITY_RULE_PRIORITY_BLOCK = 1000;
 export const COMMUNITY_RULE_PRIORITY_REDIRECT = 1100;
@@ -85,7 +89,9 @@ export const normalizeCommunityRuleSchemaVersion = value => {
     if ( Number.isInteger(schemaVersion) === false ) { return 0; }
     if (
         schemaVersion !== COMMUNITY_RULE_SCHEMA_VERSION_LEGACY &&
-        schemaVersion !== COMMUNITY_RULE_SCHEMA_VERSION_CURRENT
+        schemaVersion !== COMMUNITY_RULE_SCHEMA_VERSION_ACTIONS &&
+        schemaVersion !== COMMUNITY_RULE_SCHEMA_VERSION_FULL_EXTRAS &&
+        schemaVersion !== COMMUNITY_RULE_SCHEMA_VERSION_TACTICS
     ) {
         return 0;
     }
@@ -127,11 +133,20 @@ const sanitizeExactHostnameList = (value, { required = false } = {}) => {
         if ( normalized === '' ) { return null; }
         if ( normalized.includes('*') || normalized === 'all-urls' ) { return null; }
         if ( isKnownPublicSuffix(normalized) ) { return null; }
+        if ( isInternalUnfilteredHostname(normalized) ) { return null; }
         if ( seen.has(normalized) ) { continue; }
         seen.add(normalized);
         out.push(normalized);
     }
     return out.length === 0 ? null : out;
+};
+
+const exactHostListTargetsInternalDomain = value => {
+    if ( Array.isArray(value) === false ) { return false; }
+    return value.some(entry => (
+        typeof entry === 'string' &&
+        isInternalUnfilteredHostname(entry)
+    ));
 };
 
 const hasOnlyAllowedConditionKeys = (condition, allowedKeys) => {
@@ -200,6 +215,12 @@ const sanitizeBlockRule = rule => {
         return { ok: false, reason: 'unsafeScope' };
     }
     const condition = Object.assign({}, rule.condition);
+    if (
+        exactHostListTargetsInternalDomain(condition.requestDomains) ||
+        exactHostListTargetsInternalDomain(condition.initiatorDomains)
+    ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
     const nonMainFrameCondition = withNonMainFrameCondition(condition);
     if ( nonMainFrameCondition === null ) {
         return { ok: false, reason: 'unsafeScope' };
@@ -240,7 +261,11 @@ const sanitizeAllowRule = rule => {
     });
     const requestDomains = sanitizeExactHostnameList(condition.requestDomains);
     const resourceTypes = normalizeResourceTypes(condition.resourceTypes);
-    if ( initiatorDomains === null || resourceTypes === null ) {
+    if (
+        initiatorDomains === null ||
+        requestDomains === null ||
+        resourceTypes === null
+    ) {
         return { ok: false, reason: 'unsafeScope' };
     }
     const outCondition = {
@@ -382,7 +407,7 @@ export const sanitizeCommunityRule = (
     if ( actionType === 'block' ) {
         return sanitizeBlockRule(rule);
     }
-    if ( schemaVersion < COMMUNITY_RULE_SCHEMA_VERSION_CURRENT ) {
+    if ( schemaVersion < COMMUNITY_RULE_SCHEMA_VERSION_ACTIONS ) {
         return { ok: false, reason: 'unsupportedAction' };
     }
     if ( actionType === 'allow' ) {

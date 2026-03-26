@@ -37,3 +37,14 @@ Public GitHub rule:
 - this workspace is the source of truth for that repo
 - do not create or use a separate GitHub-only working folder
 - use `GITHUB_PUBLISHING.md` when updating `main` or the `v<version>` tag
+
+Phase 2A release gate:
+- the production API overlay route is additive, so backend rollout may happen first without breaking older store builds
+- the next required release step after backend rollout is `npm run release:extension` so the Chrome Web Store package actually contains the overlay-capable extension runtime
+- submit the Chrome upload zip from `../Talon Defender Latest/chrome/`
+- until that Chrome store rollout is live enough, treat the signed baseline bundle as the required hotfix lane and do not depend on overlay-only fixes for production users
+
+Phase 2B release gate:
+- schema `4` community payloads with `tactics` are backward-incompatible with older store builds, so do not publish live production tactic payloads until the Chrome and Edge Phase 2B releases are live enough in user hands
+- until both stores are live enough, keep production community publishes on schema `2` or `3` payloads without `tactics`
+- after both store builds are live enough, tactic publishes must still stay inside the bounded public contract: exact-host only, same-origin JSON responses only, and packaged `jsonPrune` / `jsonSet` behavior only

@@ -98,5 +98,20 @@ test('remote scriptlet registration canonicalizes duplicate entries and scopes i
   );
 
   assert.match(source, /canonicalizeCommunityScriptlets\(remoteScriptlets\)/);
+  assert.match(source, /targetHostnames = applyCompatibilityHostExclusions\(/);
   assert.match(source, /remote-scriptlet\.\$\{world\.toLowerCase\(\)\}\.\$\{baseId\}/);
+});
+
+test('remote tactics registration uses paired bootstrap and MAIN-world lanes with subsystem suppression', async () => {
+  const source = await fs.readFile(
+    new URL('../js/scripting-manager.js', import.meta.url),
+    'utf8'
+  );
+
+  assert.match(source, /const PUBLIC_REMOTE_TACTICS_KEY = 'communityBundlePublicTactics';/);
+  assert.match(source, /registerRemoteTactics\(context\)/);
+  assert.match(source, /id: 'remote-tactics-bootstrap'/);
+  assert.match(source, /id: 'remote-tactics-main'/);
+  assert.match(source, /world: 'MAIN'/);
+  assert.match(source, /subsystemSuppressionHostnames\?\.remoteTactics/);
 });

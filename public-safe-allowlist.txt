@@ -334,6 +334,7 @@ js/backup-restore.js
 js/breakage-policy.js
 js/click2load.js
 js/community-rule-sanitizer.js
+js/community-tactics.js
 js/community-emergency-sync.js
 js/community-sync-diagnostics.js
 js/community-sync-logic.js
@@ -386,6 +387,8 @@ js/scripting/native-heuristics.js
 js/scripting/picker.js
 js/scripting/post-hide-cleanup.js
 js/scripting/remote-cosmetics.js
+js/scripting/remote-tactics-bootstrap.js
+js/scripting/remote-tactics.js
 js/scripting/shadow-dom-helper.js
 js/scripting/toolbar-icon.js
 js/scripting/tool-overlay.js
@@ -1298,6 +1301,7 @@ test/breakage-guard.test.js
 test/breakage-policy.test.js
 test/community-emergency-sync.test.js
 test/community-rule-sanitizer.test.js
+test/community-tactics.test.js
 test/community-sync-application.test.js
 test/community-sync-diagnostics.test.js
 test/community-sync-logic.test.js

@@ -15,6 +15,20 @@ test('adaptive subsystems register the shared shadow DOM helper before their run
   assert.match(source, /TALON_SHADOW_DOM_HELPER_PATH,\s*'\/js\/scripting\/post-hide-cleanup\.js'/);
 });
 
+test('remote tactics stays packaged and bounded instead of executing remote code', async () => {
+  const bootstrapSource = await readSource('js/scripting/remote-tactics-bootstrap.js');
+  const mainSource = await readSource('js/scripting/remote-tactics.js');
+
+  assert.match(bootstrapSource, /communityBundlePublicTactics/);
+  assert.match(bootstrapSource, /td-remote-tactics-config/);
+  assert.match(mainSource, /self\.fetch = new Proxy\(self\.fetch/);
+  assert.match(mainSource, /self\.XMLHttpRequest = class extends NativeXMLHttpRequest/);
+  assert.match(mainSource, /td-remote-tactics-request/);
+  assert.doesNotMatch(mainSource, /\beval\s*\(/);
+  assert.doesNotMatch(mainSource, /Function\s*\(/);
+  assert.doesNotMatch(mainSource, /import\(/);
+});
+
 test('remote cosmetics uses local style ownership instead of background CSS messaging', async () => {
   const source = await readSource('js/scripting/remote-cosmetics.js');
 
