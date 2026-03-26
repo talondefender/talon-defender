@@ -95,6 +95,15 @@ import {
     normalizeAutoPromotedHostname,
     normalizeSiteKeyHostname,
 } from './site-key.js';
+import {
+    AUTO_REGIONAL_RULESET_IDS_STORAGE_KEY,
+    REGIONAL_RULESET_OPT_OUT_STORAGE_KEY,
+    getAutoRegionalRulesetIds,
+    getPreferredLanguageTags,
+    getPublicSafeRegionalRulesetIds,
+    reconcileAutoRegionalRulesetPatch,
+    reconcileRegionalRulesetOptOutPatch,
+} from './regional-rulesets.js';
 
 const AUTO_BACKOFF_STORAGE_KEY = 'autoBackoffHostsV1';
 const AUTO_BACKOFF_EVIDENCE_STORAGE_KEY = 'autoBackoffEvidenceV1';
@@ -112,11 +121,13 @@ const REMOTE_COSMETICS_RUNTIME_STATS_TTL_MS = 24 * 60 * 60 * 1000;
 const LIVE_RUNTIME_REFRESH_FILES = Object.freeze([
     '/shared/site-key-resolver.js',
     '/js/scripting/breakage-guard.js',
+    '/js/scripting/shadow-dom-helper.js',
     '/js/scripting/remote-cosmetics.js',
     '/js/scripting/native-heuristics.js',
     '/js/scripting/automation.js',
     '/js/scripting/post-hide-cleanup.js',
 ]);
+const PUBLIC_SAFE_REGIONAL_RULESET_ID_SET = new Set(getPublicSafeRegionalRulesetIds());
 
 const autoBackoffCounts = new Map();
 const autoBackoffSignalCounts = new Map();
@@ -2292,6 +2303,86 @@ async function syncToolbarIconsForAllTabs() {
     await Promise.all(jobs);
 }
 
+const getBundledRegionalRulesetIds = ( ) => {
+    const entries = runtime.getManifest()?.declarative_net_request?.rule_resources;
+    if ( Array.isArray(entries) === false ) { return []; }
+    const out = [];
+    const seen = new Set();
+    for ( const entry of entries ) {
+        const id = typeof entry?.id === 'string' ? entry.id.trim() : '';
+        if ( id === '' || seen.has(id) ) { continue; }
+        if ( PUBLIC_SAFE_REGIONAL_RULESET_ID_SET.has(id) === false ) { continue; }
+        seen.add(id);
+        out.push(id);
+    }
+    return out;
+};
+
+async function patchAutoRegionalRulesets() {
+    const bundledRegionalRuleIds = getBundledRegionalRulesetIds();
+    if ( bundledRegionalRuleIds.length === 0 ) {
+        return {
+            changed: false,
+            customized: false,
+            storageChanged: false,
+        };
+    }
+    const [
+        storedAutoRegionalRulesetIds = [],
+        storedRegionalOptOutIds = [],
+        acceptLanguages,
+    ] = await Promise.all([
+        localRead(AUTO_REGIONAL_RULESET_IDS_STORAGE_KEY),
+        localRead(REGIONAL_RULESET_OPT_OUT_STORAGE_KEY),
+        getPreferredLanguageTags(),
+    ]);
+    const nextAutoRegionalRulesetIds = getAutoRegionalRulesetIds({
+        acceptLanguages,
+        availableRulesetIds: bundledRegionalRuleIds,
+    });
+    const patch = reconcileAutoRegionalRulesetPatch({
+        currentEnabledRulesets: rulesetConfig.enabledRulesets,
+        storedAutoRegionalRulesetIds,
+        storedRegionalOptOutIds,
+        nextAutoRegionalRulesetIds,
+        regionalRulesetFamilyIds: bundledRegionalRuleIds,
+    });
+    if ( patch.changed ) {
+        rulesetConfig.enabledRulesets = patch.patchedEnabledRulesets;
+    }
+    if ( patch.storageChanged ) {
+        await Promise.all([
+            localWrite(AUTO_REGIONAL_RULESET_IDS_STORAGE_KEY, patch.autoRegionalRulesetIds),
+            localWrite(
+                REGIONAL_RULESET_OPT_OUT_STORAGE_KEY,
+                patch.regionalRulesetOptOutIds
+            ),
+        ]);
+    }
+    return patch;
+}
+
+async function syncRegionalRulesetOptOutState(enabledRulesets) {
+    const [
+        storedAutoRegionalRulesetIds = [],
+        storedRegionalOptOutIds = [],
+    ] = await Promise.all([
+        localRead(AUTO_REGIONAL_RULESET_IDS_STORAGE_KEY),
+        localRead(REGIONAL_RULESET_OPT_OUT_STORAGE_KEY),
+    ]);
+    const patch = reconcileRegionalRulesetOptOutPatch({
+        enabledRulesets,
+        storedAutoRegionalRulesetIds,
+        storedRegionalOptOutIds,
+    });
+    if ( patch.changed === false ) { return false; }
+    await localWrite(
+        REGIONAL_RULESET_OPT_OUT_STORAGE_KEY,
+        patch.regionalRulesetOptOutIds
+    );
+    return true;
+}
+
 function stopLiveRuntimeControllers() {
     const controllerTargets = [
         [ 'TalonRemoteCosmeticsController', [ 'stop', 'clear' ] ],
@@ -3707,7 +3798,9 @@ function onMessage(request, sender, callback) {
                     return;
                 }
                 rulesetConfig.enabledRulesets = result.enabledRulesets;
-                return saveRulesetConfig().then(() => {
+                return syncRegionalRulesetOptOutState(result.enabledRulesets).then(() =>
+                    saveRulesetConfig()
+                ).then(() => {
                     return registerInjectablesIfEntitled();
                 }).then(() => {
                     callback(result);
@@ -4180,6 +4273,11 @@ async function startSession() {
     const currentVersion = getCurrentVersion();
     const isNewVersion = currentVersion !== rulesetConfig.version;
     let defaultsPatched = false;
+    let regionalPatchResult = {
+        changed: false,
+        customized: false,
+        storageChanged: false,
+    };
 
     // Admin settings override user settings
     await loadAdminConfig();
@@ -4191,7 +4289,8 @@ async function startSession() {
         rulesetConfig.version = currentVersion;
     }
     defaultsPatched = await patchDefaultRulesets();
-    if (isNewVersion || defaultsPatched) {
+    regionalPatchResult = await patchAutoRegionalRulesets();
+    if (isNewVersion || defaultsPatched || regionalPatchResult.changed) {
         saveRulesetConfig();
     }
 

@@ -13,6 +13,8 @@ const getURL = runtime?.getURL?.bind(runtime) || (p => p);
 const storage = self.browser?.storage?.local || self.chrome?.storage?.local;
 const guard = self.TalonBreakageGuard;
 const AUTOMATION_MARK_ATTR = 'data-ubol-automation';
+const shadowController = self.TalonShadowRootController;
+const shadowRootsChangedEvent = shadowController?.ROOTS_CHANGED_EVENT || 'talon-shadow-roots-changed';
 
 if ( self.TalonAutomationController ) {
     self.TalonAutomationController.refresh().catch(( ) => {});
@@ -165,51 +167,35 @@ const isVisible = el => {
     return rect.width > 0 && rect.height > 0;
 };
 
-const queryTargetsInRoot = (root, selectors) => {
+const queryTargetsInRoot = (root, selector) => {
     const out = [];
-    for ( const sel of selectors ) {
-        if ( typeof sel !== 'string' || sel === '' ) { continue; }
-        let nodes;
-        try {
-            nodes = (root === document ? document : root).querySelectorAll(sel);
-        } catch {
-            continue;
-        }
-        for ( const node of nodes ) {
-            if ( isVisible(node) === false ) { continue; }
-            out.push(node);
-        }
-        if ( out.length !== 0 ) { break; }
+    if ( typeof selector !== 'string' || selector === '' ) { return out; }
+    let nodes;
+    try {
+        nodes = (root === document ? document : root).querySelectorAll(selector);
+    } catch {
+        return out;
+    }
+    for ( const node of nodes ) {
+        if ( isVisible(node) === false ) { continue; }
+        out.push(node);
     }
     return out;
 };
 
-const queryTargets = selectors => {
-    const lightDomHits = queryTargetsInRoot(document, selectors);
-    if ( lightDomHits.length !== 0 ) { return lightDomHits; }
-
-    const roots = [];
-    try {
-        const walker = document.createTreeWalker(
-            document.body,
-            self.NodeFilter?.SHOW_ELEMENT || 1
-        );
-        let scanned = 0;
-        while ( walker.nextNode() ) {
-            const el = walker.currentNode;
-            if ( el.shadowRoot instanceof DocumentFragment ) {
-                roots.push(el.shadowRoot);
-            }
-            if ( ++scanned >= 800 ) { break; }
+const queryTargets = selector => {
+    const out = [];
+    const seen = new Set();
+    const roots = [ document, ...(shadowController?.enumerateRoots?.() || []) ];
+    for ( const root of roots ) {
+        const hits = queryTargetsInRoot(root, selector);
+        for ( const hit of hits ) {
+            if ( seen.has(hit) ) { continue; }
+            seen.add(hit);
+            out.push(hit);
         }
-    } catch {
     }
-    for ( const sr of roots ) {
-        const hits = queryTargetsInRoot(sr, selectors);
-        if ( hits.length !== 0 ) { return hits; }
-    }
-
-    return [];
+    return out;
 };
 
 const markApplied = (el, id) => {
@@ -219,21 +205,15 @@ const markApplied = (el, id) => {
     }
 };
 
-const selectorListToText = selectors => selectors
-    .filter(sel => typeof sel === 'string' && sel.trim() !== '')
-    .join(',');
-
 const styleIdForDirective = id =>
     `ubol-automation-style-${String(id || 'directive').replace(/[^a-z0-9_-]/gi, '_')}`;
 
 const escapeAttrValue = value => String(value || '').replace(/["\\]/g, '\\$&');
 
-const ensureHideStyle = (id, selectors) => {
-    const selectorText = selectorListToText(selectors);
-    if ( selectorText === '' ) { return; }
+const ensureHideStyle = id => {
     const attrSelector = `[${AUTOMATION_MARK_ATTR}="${escapeAttrValue(id)}"]`;
     const styleId = styleIdForDirective(id);
-    const styleText = `${selectorText},${attrSelector}{display:none!important;visibility:hidden!important;}`;
+    const styleText = `${attrSelector}{display:none!important;visibility:hidden!important;}`;
     try {
         const existing = document.getElementById(styleId);
         if ( existing instanceof HTMLStyleElement ) {
@@ -268,13 +248,22 @@ const resolveMutationRiskTier = context => {
 };
 
 const applyClick = (id, selectors) => {
-    const targets = queryTargets(selectors);
-    for ( const el of targets ) {
-        if ( el.getAttribute?.(AUTOMATION_MARK_ATTR) ) { continue; }
-        try { el.click(); } catch { continue; }
-        markApplied(el, id);
-        guard?.auditAfterMutation?.('automation-click');
-        return true;
+    const riskTier = resolveMutationRiskTier(null);
+    for ( const selector of selectors ) {
+        const targets = queryTargets(selector);
+        if ( targets.length === 0 ) { continue; }
+        for ( const el of targets ) {
+            if ( el.getAttribute?.(AUTOMATION_MARK_ATTR) ) { continue; }
+            const decision = guard?.canMutateElement?.(el, {
+                riskTier,
+                source: 'automation-click',
+            });
+            if ( decision?.allowed === false ) { continue; }
+            try { el.click(); } catch { continue; }
+            markApplied(el, id);
+            guard?.auditAfterMutation?.('automation-click');
+            return true;
+        }
     }
     return false;
 };
@@ -282,18 +271,26 @@ const applyClick = (id, selectors) => {
 const applyHide = (id, selectors, context) => {
     let changed = false;
     const riskTier = resolveMutationRiskTier(context);
-    ensureHideStyle(id, selectors);
-    const targets = queryTargets(selectors);
-    for ( const el of targets ) {
-        if ( el === document.body || el === document.documentElement ) { continue; }
-        if ( el.getAttribute?.(AUTOMATION_MARK_ATTR) && isVisible(el) === false ) { continue; }
-        const decision = guard?.canMutateElement?.(el, {
-            riskTier,
-            source: 'automation-hide',
-        });
-        if ( decision?.allowed === false ) { continue; }
-        markApplied(el, id);
-        changed = true;
+    ensureHideStyle(id);
+    for ( const selector of selectors ) {
+        const targets = queryTargets(selector);
+        if ( targets.length === 0 ) { continue; }
+        let groupChanged = false;
+        for ( const el of targets ) {
+            if ( el === document.body || el === document.documentElement ) { continue; }
+            if ( el.getAttribute?.(AUTOMATION_MARK_ATTR) && isVisible(el) === false ) { continue; }
+            const decision = guard?.canMutateElement?.(el, {
+                riskTier,
+                source: 'automation-hide',
+            });
+            if ( decision?.allowed === false ) { continue; }
+            markApplied(el, id);
+            groupChanged = true;
+        }
+        if ( groupChanged ) {
+            changed = true;
+            break;
+        }
     }
     if ( changed ) {
         guard?.auditAfterMutation?.('automation-hide');
@@ -304,17 +301,25 @@ const applyHide = (id, selectors, context) => {
 const applyRemove = (id, selectors, context) => {
     let changed = false;
     const riskTier = resolveMutationRiskTier(context);
-    const targets = queryTargets(selectors);
-    for ( const el of targets ) {
-        if ( el === document.body || el === document.documentElement ) { continue; }
-        if ( el.getAttribute?.(AUTOMATION_MARK_ATTR) ) { continue; }
-        const decision = guard?.canMutateElement?.(el, {
-            riskTier,
-            source: 'automation-remove',
-        });
-        if ( decision?.allowed === false ) { continue; }
-        try { el.remove(); } catch { continue; }
-        changed = true;
+    for ( const selector of selectors ) {
+        const targets = queryTargets(selector);
+        if ( targets.length === 0 ) { continue; }
+        let groupChanged = false;
+        for ( const el of targets ) {
+            if ( el === document.body || el === document.documentElement ) { continue; }
+            if ( el.getAttribute?.(AUTOMATION_MARK_ATTR) ) { continue; }
+            const decision = guard?.canMutateElement?.(el, {
+                riskTier,
+                source: 'automation-remove',
+            });
+            if ( decision?.allowed === false ) { continue; }
+            try { el.remove(); } catch { continue; }
+            groupChanged = true;
+        }
+        if ( groupChanged ) {
+            changed = true;
+            break;
+        }
     }
     if ( changed ) {
         guard?.auditAfterMutation?.('automation-remove');
@@ -430,7 +435,12 @@ const scheduleSweep = (delay = 250) => {
 };
 
 const domObserver = new MutationObserver(( ) => {
+    shadowController?.scheduleRescan?.();
     scheduleSweep();
+});
+
+self.addEventListener?.(shadowRootsChangedEvent, ( ) => {
+    scheduleSweep(0);
 });
 
 const stop = async ( ) => {
@@ -479,13 +489,14 @@ const refresh = async ( ) => {
 
     for ( const directive of activeDirectives ) {
         if ( directive.action === 'hide' ) {
-            ensureHideStyle(directive.id || '(unknown)', directive.selectors);
+            ensureHideStyle(directive.id || '(unknown)');
         }
         if ( directive.fallbackAction === 'hide' ) {
-            ensureHideStyle(directive.id || '(unknown)', directive.fallbackSelectors);
+            ensureHideStyle(directive.id || '(unknown)');
         }
     }
 
+    shadowController?.rescanNow?.();
     scheduleSweep(0);
     if ( observerConnected === false ) {
         domObserver.observe(document, {

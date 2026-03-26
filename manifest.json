@@ -98,6 +98,146 @@
         "id": "urlhaus-full",
         "enabled": true,
         "path": "/rulesets/main/urlhaus-full.json"
+      },
+      {
+        "id": "deu-0",
+        "enabled": false,
+        "path": "/rulesets/main/deu-0.json"
+      },
+      {
+        "id": "fra-0",
+        "enabled": false,
+        "path": "/rulesets/main/fra-0.json"
+      },
+      {
+        "id": "spa-0",
+        "enabled": false,
+        "path": "/rulesets/main/spa-0.json"
+      },
+      {
+        "id": "spa-1",
+        "enabled": false,
+        "path": "/rulesets/main/spa-1.json"
+      },
+      {
+        "id": "ita-0",
+        "enabled": false,
+        "path": "/rulesets/main/ita-0.json"
+      },
+      {
+        "id": "nld-0",
+        "enabled": false,
+        "path": "/rulesets/main/nld-0.json"
+      },
+      {
+        "id": "jpn-1",
+        "enabled": false,
+        "path": "/rulesets/main/jpn-1.json"
+      },
+      {
+        "id": "kor-1",
+        "enabled": false,
+        "path": "/rulesets/main/kor-1.json"
+      },
+      {
+        "id": "swe-1",
+        "enabled": false,
+        "path": "/rulesets/main/swe-1.json"
+      },
+      {
+        "id": "fin-0",
+        "enabled": false,
+        "path": "/rulesets/main/fin-0.json"
+      },
+      {
+        "id": "tur-0",
+        "enabled": false,
+        "path": "/rulesets/main/tur-0.json"
+      },
+      {
+        "id": "vie-1",
+        "enabled": false,
+        "path": "/rulesets/main/vie-1.json"
+      },
+      {
+        "id": "ukr-0",
+        "enabled": false,
+        "path": "/rulesets/main/ukr-0.json"
+      },
+      {
+        "id": "rus-0",
+        "enabled": false,
+        "path": "/rulesets/main/rus-0.json"
+      },
+      {
+        "id": "rus-1",
+        "enabled": false,
+        "path": "/rulesets/main/rus-1.json"
+      },
+      {
+        "id": "rou-1",
+        "enabled": false,
+        "path": "/rulesets/main/rou-1.json"
+      },
+      {
+        "id": "cze-0",
+        "enabled": false,
+        "path": "/rulesets/main/cze-0.json"
+      },
+      {
+        "id": "grc-0",
+        "enabled": false,
+        "path": "/rulesets/main/grc-0.json"
+      },
+      {
+        "id": "hun-0",
+        "enabled": false,
+        "path": "/rulesets/main/hun-0.json"
+      },
+      {
+        "id": "idn-0",
+        "enabled": false,
+        "path": "/rulesets/main/idn-0.json"
+      },
+      {
+        "id": "mkd-0",
+        "enabled": false,
+        "path": "/rulesets/main/mkd-0.json"
+      },
+      {
+        "id": "lva-0",
+        "enabled": false,
+        "path": "/rulesets/main/lva-0.json"
+      },
+      {
+        "id": "ltu-0",
+        "enabled": false,
+        "path": "/rulesets/main/ltu-0.json"
+      },
+      {
+        "id": "svn-0",
+        "enabled": false,
+        "path": "/rulesets/main/svn-0.json"
+      },
+      {
+        "id": "tha-0",
+        "enabled": false,
+        "path": "/rulesets/main/tha-0.json"
+      },
+      {
+        "id": "chn-0",
+        "enabled": false,
+        "path": "/rulesets/main/chn-0.json"
+      },
+      {
+        "id": "irn-0",
+        "enabled": false,
+        "path": "/rulesets/main/irn-0.json"
+      },
+      {
+        "id": "isr-0",
+        "enabled": false,
+        "path": "/rulesets/main/isr-0.json"
       }
     ]
   },

@@ -10,6 +10,8 @@ const CSS_RULE_SUFFIX = '{display:none!important;visibility:hidden!important;}';
 const runtime = self.browser?.runtime || self.chrome?.runtime;
 const storage = self.browser?.storage?.local || self.chrome?.storage?.local;
 const guard = self.TalonBreakageGuard;
+const shadowController = self.TalonShadowRootController;
+const shadowRootsChangedEvent = shadowController?.ROOTS_CHANGED_EVENT || 'talon-shadow-roots-changed';
 if ( runtime?.sendMessage === undefined || storage?.get === undefined ) { return; }
 
 if ( self.TalonRemoteCosmeticsController ) {
@@ -101,9 +103,6 @@ const sendMessage = message => {
     return Promise.resolve();
 };
 
-const insertCSS = css => sendMessage({ what: 'insertCSS', css });
-const removeCSS = css => sendMessage({ what: 'removeCSS', css });
-
 const getCosmetics = ( ) => {
     try {
         const maybePromise = storage.get(STORAGE_KEY);
@@ -165,16 +164,123 @@ const buildCssChunks = selectors => {
 
     flush();
 
-    return { chunks, droppedAtApply };
+    return {
+        chunks,
+        cssText: chunks.join('\n'),
+        droppedAtApply,
+    };
 };
 
-let currentCssChunks = [];
+const STYLE_MARKER_ATTR = 'data-talon-remote-cosmetics';
+const DOCUMENT_STYLE_ID = 'talon-remote-cosmetics-style';
+
+let documentStyle;
+let currentCssText = '';
+const shadowStyleMap = new Map();
+
+const getDocumentStyleParent = ( ) =>
+    document.head || document.documentElement || document;
+
+const upsertStyleText = (style, cssText) => {
+    if ( style instanceof HTMLStyleElement === false ) { return false; }
+    if ( style.textContent === cssText ) { return true; }
+    style.textContent = cssText;
+    return true;
+};
+
+const ensureDocumentStyle = cssText => {
+    if ( cssText === '' ) { return null; }
+    let style = documentStyle;
+    if ( style instanceof HTMLStyleElement === false ) {
+        try {
+            style = document.getElementById(DOCUMENT_STYLE_ID);
+        } catch {
+            style = null;
+        }
+    }
+    if ( style instanceof HTMLStyleElement === false ) {
+        try {
+            style = document.createElement('style');
+            style.id = DOCUMENT_STYLE_ID;
+            style.setAttribute(STYLE_MARKER_ATTR, '1');
+            const parent = getDocumentStyleParent();
+            parent?.append?.(style);
+        } catch {
+            style = null;
+        }
+    }
+    if ( style instanceof HTMLStyleElement === false ) { return null; }
+    documentStyle = style;
+    upsertStyleText(style, cssText);
+    return style;
+};
+
+const ensureShadowRootStyle = (root, cssText) => {
+    if ( root instanceof DocumentFragment === false ) { return null; }
+    let style = shadowStyleMap.get(root) || null;
+    if ( style instanceof HTMLStyleElement === false ) {
+        try {
+            style = root.querySelector?.(`style[${STYLE_MARKER_ATTR}="1"]`) || null;
+        } catch {
+            style = null;
+        }
+    }
+    if ( style instanceof HTMLStyleElement === false ) {
+        try {
+            style = document.createElement('style');
+            style.setAttribute(STYLE_MARKER_ATTR, '1');
+            root.append?.(style);
+        } catch {
+            style = null;
+        }
+    }
+    if ( style instanceof HTMLStyleElement === false ) { return null; }
+    shadowStyleMap.set(root, style);
+    upsertStyleText(style, cssText);
+    return style;
+};
+
+const removeDocumentStyle = ( ) => {
+    if ( documentStyle instanceof HTMLStyleElement ) {
+        try { documentStyle.remove(); } catch {
+        }
+    }
+    documentStyle = undefined;
+};
+
+const removeShadowStyle = root => {
+    const style = shadowStyleMap.get(root);
+    if ( style instanceof HTMLStyleElement ) {
+        try { style.remove(); } catch {
+        }
+    }
+    shadowStyleMap.delete(root);
+};
+
+const syncShadowStyles = ( ) => {
+    if ( currentCssText === '' ) {
+        for ( const root of Array.from(shadowStyleMap.keys()) ) {
+            removeShadowStyle(root);
+        }
+        return;
+    }
+    const roots = shadowController?.enumerateRoots?.() || [];
+    const activeRoots = new Set();
+    for ( const root of roots ) {
+        if ( root instanceof DocumentFragment === false ) { continue; }
+        activeRoots.add(root);
+        ensureShadowRootStyle(root, currentCssText);
+    }
+    for ( const root of Array.from(shadowStyleMap.keys()) ) {
+        if ( activeRoots.has(root) ) { continue; }
+        removeShadowStyle(root);
+    }
+};
 
 const clearAppliedCss = async ( ) => {
-    if ( currentCssChunks.length === 0 ) { return; }
-    const removeChunks = currentCssChunks.slice();
-    currentCssChunks = [];
-    await Promise.all(removeChunks.map(css => removeCSS(css)));
+    currentCssText = '';
+    removeDocumentStyle();
+    syncShadowStyles();
 };
 
 const applyCurrentCosmetics = async ( ) => {
@@ -253,14 +359,17 @@ const applyCurrentCosmetics = async ( ) => {
             hostSpecific: hostSpecific.has(selector),
         }) !== false
     );
-    const { chunks, droppedAtApply } = buildCssChunks(normalized);
+    const { cssText, chunks, droppedAtApply } = buildCssChunks(normalized);
 
-    if ( JSON.stringify(currentCssChunks) !== JSON.stringify(chunks) ) {
-        await clearAppliedCss();
-        if ( chunks.length !== 0 ) {
-            await Promise.all(chunks.map(css => insertCSS(css)));
+    if ( currentCssText !== cssText ) {
+        currentCssText = cssText;
+        if ( cssText === '' ) {
+            await clearAppliedCss();
+        } else {
+            ensureDocumentStyle(cssText);
+            shadowController?.rescanNow?.();
+            syncShadowStyles();
         }
-        currentCssChunks = chunks.slice();
     }
 
     const hostSpecificNormalized = normalized.filter(selector => hostSpecific.has(selector));
@@ -300,6 +409,11 @@ self.TalonRemoteCosmeticsController = {
         return clearAppliedCss();
     },
 };
+
+self.addEventListener?.(shadowRootsChangedEvent, ( ) => {
+    if ( currentCssText === '' ) { return; }
+    syncShadowStyles();
+});
 
 self.TalonRemoteCosmeticsController.refresh().catch(( ) => {});
 

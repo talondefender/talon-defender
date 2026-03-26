@@ -23,6 +23,43 @@ const EXPECTED_DEFAULT_IDS = [
   'ublock-badware',
   'urlhaus-full',
 ];
+const EXPECTED_REGIONAL_IDS = [
+  'deu-0',
+  'fra-0',
+  'spa-0',
+  'spa-1',
+  'ita-0',
+  'nld-0',
+  'jpn-1',
+  'kor-1',
+  'swe-1',
+  'fin-0',
+  'tur-0',
+  'vie-1',
+  'ukr-0',
+  'rus-0',
+  'rus-1',
+  'rou-1',
+  'cze-0',
+  'grc-0',
+  'hun-0',
+  'idn-0',
+  'mkd-0',
+  'lva-0',
+  'ltu-0',
+  'svn-0',
+  'tha-0',
+  'chn-0',
+  'irn-0',
+  'isr-0',
+];
+const EXPECTED_BLOCKED_REGIONAL_IDS = [
+  'bgr-0',
+  'hrv-0',
+  'isl-0',
+  'nor-0',
+  'pol-0',
+];
 const EXPECTED_BUNDLED_IDS = [
   'ublock-filters',
   'easylist',
@@ -35,6 +72,7 @@ const EXPECTED_BUNDLED_IDS = [
   'annoyances-widgets',
   'ublock-badware',
   'urlhaus-full',
+  ...EXPECTED_REGIONAL_IDS,
 ];
 const EXPECTED_EXTRA_PROTECTION_IDS = [
   'annoyances-cookies',
@@ -189,7 +227,7 @@ test('source ruleset metadata matches manifest defaults for bundled rulesets', a
   }
 });
 
-test('source manifest bundles the full annoyance family while keeping the same defaults', async () => {
+test('source manifest bundles the full annoyance family and public-safe regional lists while keeping the same defaults', async () => {
   const manifest = await readJson('../manifest.json');
   const bundledIds = (manifest?.declarative_net_request?.rule_resources || [])
     .map(entry => entry?.id)
@@ -200,9 +238,13 @@ test('source manifest bundles the full annoyance family while keeping the same d
 
   assert.deepEqual(bundledIds, EXPECTED_BUNDLED_IDS);
   assert.deepEqual(defaultIds, EXPECTED_DEFAULT_IDS);
+  assert.equal(
+    EXPECTED_BLOCKED_REGIONAL_IDS.every(id => bundledIds.includes(id) === false),
+    true
+  );
 });
 
-test('packaged build preserves bundled annoyance coverage, defaults, and metadata parity', async () => {
+test('packaged build preserves bundled annoyance coverage, regional coverage, defaults, and metadata parity', async () => {
   const { manifest, details, licensePolicy } = await getPackagedBundle();
   const bundledIds = (manifest?.declarative_net_request?.rule_resources || [])
     .map(entry => entry?.id)
@@ -221,6 +263,10 @@ test('packaged build preserves bundled annoyance coverage, defaults, and metadat
   assert.deepEqual(defaultIds, EXPECTED_DEFAULT_IDS);
   assert.deepEqual(detailIds.slice().sort(), expectedSortedIds);
   assert.deepEqual(licenseIds, expectedSortedIds);
+  assert.equal(
+    EXPECTED_BLOCKED_REGIONAL_IDS.every(id => bundledIds.includes(id) === false),
+    true
+  );
 
   for (const entry of details) {
     assert.equal(

@@ -5,6 +5,9 @@
 
 const runtime = self.browser?.runtime || self.chrome?.runtime;
 const guard = self.TalonBreakageGuard;
+const shadowController = self.TalonShadowRootController;
+const shadowRootsChangedEvent =
+    shadowController?.ROOTS_CHANGED_EVENT || 'talon-shadow-roots-changed';
 if ( runtime === undefined ) { return; }
 
 if ( self.TalonPostHideCleanupController ) {
@@ -338,62 +341,13 @@ const scheduleProcess = ( ) => {
     processTimer = self.requestAnimationFrame(processPending);
 };
 
-// Shadow DOM support (open roots only), scanned conservatively.
-let shadowScanTimer;
-const MAX_SHADOW_SCAN_NODES = 1000;
-
-const collectShadowRootsFrom = node => {
-    if ( node instanceof Element === false ) { return; }
-    const roots = [];
-    if ( node.shadowRoot instanceof DocumentFragment ) {
-        roots.push(node.shadowRoot);
+const collectKnownShadowRoots = roots => {
+    const knownRoots = Array.isArray(roots)
+        ? roots
+        : (shadowController?.enumerateRoots?.() || []);
+    for ( const root of knownRoots ) {
+        collect(root);
     }
-    try {
-        const walker = document.createTreeWalker(
-            node,
-            self.NodeFilter?.SHOW_ELEMENT || 1
-        );
-        let scanned = 0;
-        while ( walker.nextNode() ) {
-            const el = walker.currentNode;
-            if ( el.shadowRoot instanceof DocumentFragment ) {
-                roots.push(el.shadowRoot);
-            }
-            if ( ++scanned >= 150 ) { break; }
-        }
-    } catch {
-    }
-    for ( const sr of roots ) {
-        collect(sr);
-    }
-};
-
-const scanOpenShadowRoots = root => {
-    if ( root instanceof Element === false ) { return; }
-    try {
-        const walker = document.createTreeWalker(
-            root,
-            self.NodeFilter?.SHOW_ELEMENT || 1
-        );
-        let scanned = 0;
-        while ( walker.nextNode() ) {
-            const el = walker.currentNode;
-            if ( el.shadowRoot instanceof DocumentFragment ) {
-                collect(el.shadowRoot);
-            }
-            if ( ++scanned >= MAX_SHADOW_SCAN_NODES ) { break; }
-        }
-    } catch {
-    }
-};
-
-const scheduleShadowScan = (delay = 1500) => {
-    if ( shadowScanTimer !== undefined ) { return; }
-    shadowScanTimer = self.setTimeout(( ) => {
-        shadowScanTimer = undefined;
-        scanOpenShadowRoots(document.body);
-        scheduleProcess();
-    }, delay);
 };
 
 const observer = new MutationObserver(mutations => {
@@ -401,10 +355,17 @@ const observer = new MutationObserver(mutations => {
         for ( const n of m.addedNodes ) {
             if ( n.nodeType !== 1 ) { continue; }
             collect(n);
-            collectShadowRootsFrom(n);
         }
     }
-    scheduleShadowScan();
+    shadowController?.scheduleRescan?.();
+    scheduleProcess();
+});
+
+self.addEventListener?.(shadowRootsChangedEvent, event => {
+    const roots = Array.isArray(event?.detail?.roots)
+        ? event.detail.roots
+        : undefined;
+    collectKnownShadowRoots(roots);
     scheduleProcess();
 });
 
@@ -425,10 +386,6 @@ const stop = async ( ) => {
         try { self.cancelAnimationFrame(processTimer); } catch { }
         processTimer = undefined;
     }
-    if ( shadowScanTimer !== undefined ) {
-        try { clearTimeout(shadowScanTimer); } catch { }
-        shadowScanTimer = undefined;
-    }
     resetState();
 };
 
@@ -440,7 +397,8 @@ const refresh = async ( ) => {
     }
     await stop();
     collect(document);
-    scheduleShadowScan(0);
+    shadowController?.rescanNow?.();
+    collectKnownShadowRoots();
     scheduleProcess();
     observer.observe(document, { childList: true, subtree: true });
     observerConnected = true;

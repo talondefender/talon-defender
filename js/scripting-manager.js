@@ -68,6 +68,7 @@ const SCRIPTLET_PATH_ALIASES = new Map([
         '/rulesets/scripting/scriptlet/ublock-experimental.trusted-json-edit-xhr-request.js',
     ],
 ]);
+const TALON_SHADOW_DOM_HELPER_PATH = '/js/scripting/shadow-dom-helper.js';
 
 const readOptionalLocalValue = async (key, fallbackValue, context) => {
     if ( browser.storage?.local?.get === undefined ) { return fallbackValue; }
@@ -878,6 +879,7 @@ function registerNativeHeuristics(context) {
     const js = [
         '/shared/site-key-resolver.js',
         '/js/scripting/breakage-guard.js',
+        TALON_SHADOW_DOM_HELPER_PATH,
         '/js/scripting/native-heuristics.js',
     ];
 
@@ -934,7 +936,11 @@ function registerNativeHeuristics(context) {
 function registerAutomation(context) {
     const { before, filteringModeDetails, subsystemSuppressionHostnames } = context;
 
-    const js = [ '/js/scripting/breakage-guard.js', '/js/scripting/automation.js' ];
+    const js = [
+        '/js/scripting/breakage-guard.js',
+        TALON_SHADOW_DOM_HELPER_PATH,
+        '/js/scripting/automation.js',
+    ];
 
     const { none, basic, optimal, complete } = filteringModeDetails;
     const matches = [
@@ -1045,6 +1051,7 @@ function registerRemoteCosmetics(context) {
     const js = [
         '/shared/site-key-resolver.js',
         '/js/scripting/breakage-guard.js',
+        TALON_SHADOW_DOM_HELPER_PATH,
         '/js/scripting/remote-cosmetics.js',
     ];
 
@@ -1103,7 +1110,11 @@ function registerRemoteCosmetics(context) {
 function registerPostHideCleanup(context) {
     const { before, filteringModeDetails, subsystemSuppressionHostnames } = context;
 
-    const js = [ '/js/scripting/breakage-guard.js', '/js/scripting/post-hide-cleanup.js' ];
+    const js = [
+        '/js/scripting/breakage-guard.js',
+        TALON_SHADOW_DOM_HELPER_PATH,
+        '/js/scripting/post-hide-cleanup.js',
+    ];
 
     const { none, basic, optimal, complete } = filteringModeDetails;
     const matches = [

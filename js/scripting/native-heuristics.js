@@ -19,6 +19,9 @@
     const getURL = runtime?.getURL?.bind(runtime) || (p => p);
     const storage = self.browser?.storage?.local || self.chrome?.storage?.local;
     const guard = self.TalonBreakageGuard;
+    const shadowController = self.TalonShadowRootController;
+    const shadowRootsChangedEvent =
+        shadowController?.ROOTS_CHANGED_EVENT || 'talon-shadow-roots-changed';
     const registrableDomain = hostname => {
         const resolved = guard?.registrableDomain?.(hostname);
         if ( typeof resolved === 'string' && resolved !== '' ) { return resolved; }
@@ -905,62 +908,13 @@
         processTimer = self.requestAnimationFrame(processPending);
     };
 
-    // Shadow DOM support (open roots only). We scan conservatively to avoid overhead.
-    let shadowScanTimer;
-    const MAX_SHADOW_SCAN_NODES = 1500;
-
-    const collectShadowRootsFrom = node => {
-        if (node instanceof Element === false) { return; }
-        const roots = [];
-        if (node.shadowRoot instanceof DocumentFragment) {
-            roots.push(node.shadowRoot);
+    const collectKnownShadowRootCandidates = roots => {
+        const knownRoots = Array.isArray(roots)
+            ? roots
+            : (shadowController?.enumerateRoots?.() || []);
+        for ( const root of knownRoots ) {
+            collectCandidates(root);
         }
-        try {
-            const walker = document.createTreeWalker(
-                node,
-                self.NodeFilter?.SHOW_ELEMENT || 1
-            );
-            let scanned = 0;
-            while (walker.nextNode()) {
-                const el = walker.currentNode;
-                if (el.shadowRoot instanceof DocumentFragment) {
-                    roots.push(el.shadowRoot);
-                }
-                if (++scanned >= 200) { break; }
-            }
-        } catch {
-        }
-        for (const sr of roots) {
-            collectCandidates(sr);
-        }
-    };
-
-    const scanOpenShadowRoots = root => {
-        if (root instanceof Element === false) { return; }
-        try {
-            const walker = document.createTreeWalker(
-                root,
-                self.NodeFilter?.SHOW_ELEMENT || 1
-            );
-            let scanned = 0;
-            while (walker.nextNode()) {
-                const el = walker.currentNode;
-                if (el.shadowRoot instanceof DocumentFragment) {
-                    collectCandidates(el.shadowRoot);
-                }
-                if (++scanned >= MAX_SHADOW_SCAN_NODES) { break; }
-            }
-        } catch {
-        }
-    };
-
-    const scheduleShadowScan = (delay = 1200) => {
-        if (shadowScanTimer !== undefined) { return; }
-        shadowScanTimer = self.setTimeout(() => {
-            shadowScanTimer = undefined;
-            scanOpenShadowRoots(document.body);
-            scheduleProcess();
-        }, delay);
     };
 
     const observer = new MutationObserver(mutations => {
@@ -968,10 +922,17 @@
             for (const n of m.addedNodes) {
                 if (n.nodeType !== 1) { continue; }
                 collectCandidates(n);
-                collectShadowRootsFrom(n);
             }
         }
-        scheduleShadowScan();
+        shadowController?.scheduleRescan?.();
+        scheduleProcess();
+    });
+
+    self.addEventListener?.(shadowRootsChangedEvent, event => {
+        const roots = Array.isArray(event?.detail?.roots)
+            ? event.detail.roots
+            : undefined;
+        collectKnownShadowRootCandidates(roots);
         scheduleProcess();
     });
 
@@ -1006,10 +967,6 @@
         if (processTimer !== undefined) {
             try { self.cancelAnimationFrame(processTimer); } catch { }
             processTimer = undefined;
-        }
-        if (shadowScanTimer !== undefined) {
-            try { clearTimeout(shadowScanTimer); } catch { }
-            shadowScanTimer = undefined;
         }
         if (persistTimer !== undefined) {
             try { clearTimeout(persistTimer); } catch { }
@@ -1122,7 +1079,8 @@
         );
 
         collectCandidates(document);
-        scheduleShadowScan(0);
+        shadowController?.rescanNow?.();
+        collectKnownShadowRootCandidates();
         scheduleProcess();
 
         observer.observe(document, { childList: true, subtree: true });

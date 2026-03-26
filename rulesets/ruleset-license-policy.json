@@ -76,6 +76,202 @@
       "sourceUrl": "https://gitlab.com/malware-filter/urlhaus-filter",
       "proof": "https://gitlab.com/malware-filter/urlhaus-filter/-/raw/main/LICENSE",
       "attributionRequired": true
+    },
+    "deu-0": {
+      "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://easylist.to/",
+      "proof": "https://easylist.to/pages/licence.html",
+      "attributionRequired": true
+    },
+    "fra-0": {
+      "license": "GPL-3.0-only",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/AdguardTeam/AdguardFilters",
+      "proof": "https://raw.githubusercontent.com/AdguardTeam/AdguardFilters/master/LICENSE",
+      "attributionRequired": true
+    },
+    "spa-0": {
+      "license": "GPL-3.0-only",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/AdguardTeam/AdguardFilters",
+      "proof": "https://raw.githubusercontent.com/AdguardTeam/AdguardFilters/master/LICENSE",
+      "attributionRequired": true
+    },
+    "spa-1": {
+      "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://easylist.to/",
+      "proof": "https://easylist.to/pages/licence.html",
+      "attributionRequired": true
+    },
+    "ita-0": {
+      "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://easylist.to/",
+      "proof": "https://easylist.to/pages/licence.html",
+      "attributionRequired": true
+    },
+    "nld-0": {
+      "license": "GPL-3.0-only",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://easylist-downloads.adblockplus.org/easylistdutch.txt",
+      "proof": "https://www.gnu.org/licenses/gpl-3.0.en.html",
+      "attributionRequired": true
+    },
+    "jpn-1": {
+      "license": "GPL-3.0-only",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/AdguardTeam/AdguardFilters",
+      "proof": "https://raw.githubusercontent.com/AdguardTeam/AdguardFilters/master/LICENSE",
+      "attributionRequired": true
+    },
+    "kor-1": {
+      "license": "GPL-3.0-only",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/List-KR/List-KR",
+      "proof": "https://raw.githubusercontent.com/List-KR/List-KR/master/LICENSE",
+      "attributionRequired": true
+    },
+    "swe-1": {
+      "license": "GPL-3.0-only",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/frellwits-filter/frellwits-filter",
+      "proof": "https://raw.githubusercontent.com/frellwits-filter/frellwits-filter/master/LICENSE",
+      "attributionRequired": true
+    },
+    "fin-0": {
+      "license": "Unlicense",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/finnish-easylist-addition/finnish-easylist-addition",
+      "proof": "https://unlicense.org/",
+      "attributionRequired": true
+    },
+    "tur-0": {
+      "license": "GPL-3.0-only",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/AdguardTeam/AdguardFilters",
+      "proof": "https://raw.githubusercontent.com/AdguardTeam/AdguardFilters/master/LICENSE",
+      "attributionRequired": true
+    },
+    "vie-1": {
+      "license": "GPL-3.0-only",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/abpvn/abpvn",
+      "proof": "https://raw.githubusercontent.com/abpvn/abpvn/master/LICENSE",
+      "attributionRequired": true
+    },
+    "ukr-0": {
+      "license": "GPL-3.0-only",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/AdguardTeam/AdguardFilters",
+      "proof": "https://raw.githubusercontent.com/AdguardTeam/AdguardFilters/master/LICENSE",
+      "attributionRequired": true
+    },
+    "rus-0": {
+      "license": "CC-BY-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://easylist-downloads.adblockplus.org/ruadlist+easylist.txt",
+      "proof": "https://creativecommons.org/licenses/by/3.0/",
+      "attributionRequired": true
+    },
+    "rus-1": {
+      "license": "CC-BY-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://easylist-downloads.adblockplus.org/bitblock.txt",
+      "proof": "https://creativecommons.org/licenses/by/3.0/",
+      "attributionRequired": true
+    },
+    "rou-1": {
+      "license": "MIT",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://www.zoso.ro/pages/roadblock/",
+      "proof": "https://mit-license.org/",
+      "attributionRequired": true
+    },
+    "cze-0": {
+      "license": "CC-BY-SA-4.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/tomasko126/easylistczechandslovak",
+      "proof": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "attributionRequired": true
+    },
+    "grc-0": {
+      "license": "CC-BY-SA-4.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/kargig/greek-adblock-filter",
+      "proof": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "attributionRequired": true
+    },
+    "hun-0": {
+      "license": "CC-BY-4.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/hufilter/hufilter",
+      "proof": "https://creativecommons.org/licenses/by/4.0/",
+      "attributionRequired": true
+    },
+    "idn-0": {
+      "license": "GPL-3.0-only OR CC-BY-SA-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/ABPindo/indonesianadblockrules",
+      "proof": "https://creativecommons.org/licenses/by-sa/3.0/",
+      "attributionRequired": true
+    },
+    "mkd-0": {
+      "license": "MIT",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/DeepSpaceHarbor/Macedonian-adBlock-Filters",
+      "proof": "https://mit-license.org/",
+      "attributionRequired": true
+    },
+    "lva-0": {
+      "license": "CC-BY-SA-4.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://notabug.org/latvian-list/adblock-latvian",
+      "proof": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "attributionRequired": true
+    },
+    "ltu-0": {
+      "license": "GPL-3.0-only",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/easylist/easylistlithuania",
+      "proof": "https://www.gnu.org/licenses/gpl-3.0.en.html",
+      "attributionRequired": true
+    },
+    "svn-0": {
+      "license": "Unlicense",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/nomoreslovenia/slovenian-list",
+      "proof": "https://unlicense.org/",
+      "attributionRequired": true
+    },
+    "tha-0": {
+      "license": "Apache-2.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/easylist-thailand/easylist-thailand",
+      "proof": "https://www.apache.org/licenses/LICENSE-2.0",
+      "attributionRequired": true
+    },
+    "chn-0": {
+      "license": "GPL-3.0-only",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/AdguardTeam/AdguardFilters",
+      "proof": "https://raw.githubusercontent.com/AdguardTeam/AdguardFilters/master/LICENSE",
+      "attributionRequired": true
+    },
+    "irn-0": {
+      "license": "AGPL-3.0-only",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/MasterKia/PersianBlocker",
+      "proof": "https://raw.githubusercontent.com/MasterKia/PersianBlocker/master/LICENSE",
+      "attributionRequired": true
+    },
+    "isr-0": {
+      "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://easylist.to/",
+      "proof": "https://easylist.to/pages/licence.html",
+      "attributionRequired": true
     }
   },
   "allowlistedUnknown": {}

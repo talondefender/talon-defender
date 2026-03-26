@@ -14,16 +14,12 @@ Upstream copyright and license notices are retained in relevant files.
 
 Bundled filter-list sources in distributed extension packages:
 
-- `ublock-filters` - https://github.com/uBlockOrigin/uAssets
-- `easylist` - https://easylist.to/
-- `easyprivacy` - https://easylist.to/
-- `annoyances-overlays` - https://github.com/easylist/easylist#fanboy-lists
-- `ublock-badware` - https://github.com/uBlockOrigin/uAssets
-- `urlhaus-full` - https://gitlab.com/malware-filter/urlhaus-filter
+- core defaults and annoyance/security packs declared in `manifest.json`
+- public-safe regional language lists declared in `manifest.json`
+- authoritative upstream source, license, and proof data in `rulesets/ruleset-license-policy.json`
 
 License details and policy gating:
 
 - `THIRD_PARTY_NOTICES.md`
 - `rulesets/ruleset-license-policy.json`
 - `LICENSE.txt`
-

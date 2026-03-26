@@ -1,6 +1,6 @@
 ## Third-Party Notices
 
-Last updated: 2026-02-26
+Last updated: 2026-03-25
 
 Talon Defender is distributed under `GPL-3.0-or-later` and includes third-party code and data.
 
@@ -32,16 +32,13 @@ Talon Defender is distributed under `GPL-3.0-or-later` and includes third-party 
 
 ## Bundled Filter Lists In Distributed Extension Packages
 
-Only the following compiled rulesets are bundled in release packages:
+Compiled rulesets bundled in release packages are the manifest-backed set in `manifest.json`:
+- the six default public rulesets
+- the five additional annoyance rulesets
+- the public-safe regional language rulesets declared for locale auto-enable
 
-| Ruleset ID | Upstream Source | License |
-| --- | --- | --- |
-| `ublock-filters` | https://github.com/uBlockOrigin/uAssets | GPL-3.0-or-later |
-| `easylist` | https://easylist.to/ | GPL-3.0-or-later OR CC-BY-SA-3.0 |
-| `easyprivacy` | https://easylist.to/ | GPL-3.0-or-later OR CC-BY-SA-3.0 |
-| `annoyances-overlays` | https://github.com/easylist/easylist#fanboy-lists | GPL-3.0-or-later OR CC-BY-SA-3.0 |
-| `ublock-badware` | https://github.com/uBlockOrigin/uAssets | GPL-3.0-or-later |
-| `urlhaus-full` | https://gitlab.com/malware-filter/urlhaus-filter | MIT |
+The authoritative upstream source and license map for every bundled ruleset is:
+- `rulesets/ruleset-license-policy.json`
 
 License-policy gate file: `rulesets/ruleset-license-policy.json`
 
@@ -50,4 +47,3 @@ License-policy gate file: `rulesets/ruleset-license-policy.json`
 For every released extension version `X.Y.Z`, corresponding source is published at:
 - `https://github.com/talondefender/talon-defender/tree/vX.Y.Z`
 - `https://github.com/talondefender/talon-defender/archive/refs/tags/vX.Y.Z.tar.gz`
-

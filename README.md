@@ -24,6 +24,7 @@ Current product summary:
 - the extension starts a 7-day trial on first use
 - it ships six default DNR rulesets enabled by default
 - it also bundles five additional annoyance rulesets disabled by default and auto-enables that full annoyance family in complete mode
+- it also bundles a public-safe regional language ruleset family disabled by default and auto-enables locale-matched entries on untouched profiles
 - it now exposes a plain-language `Extra protection` toggle in Settings for the stronger non-default annoyance packs
 - it verifies paid licenses against the API
 - it falls into paywall mode when entitlement expires
