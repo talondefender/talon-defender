@@ -922,6 +922,7 @@ function registerNativeHeuristics(context) {
         id: 'native-heuristics',
         js,
         allFrames: true,
+        matchOriginAsFallback: true,
         matches,
         runAt: 'document_idle',
     };
@@ -937,7 +938,9 @@ function registerNativeHeuristics(context) {
     if (
         ut.strArrayEq(registered.js, js, false) === false ||
         ut.strArrayEq(registered.matches, matches) === false ||
-        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false
+        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false ||
+        Boolean(registered.matchOriginAsFallback) !==
+            Boolean(directive.matchOriginAsFallback)
     ) {
         context.toRemove.push('native-heuristics');
         context.toAdd.push(directive);
@@ -981,6 +984,7 @@ function registerAutomation(context) {
         id: 'automation',
         js,
         allFrames: true,
+        matchOriginAsFallback: true,
         matches,
         runAt: 'document_idle',
     };
@@ -996,7 +1000,9 @@ function registerAutomation(context) {
     if (
         ut.strArrayEq(registered.js, js, false) === false ||
         ut.strArrayEq(registered.matches, matches) === false ||
-        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false
+        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false ||
+        Boolean(registered.matchOriginAsFallback) !==
+            Boolean(directive.matchOriginAsFallback)
     ) {
         context.toRemove.push('automation');
         context.toAdd.push(directive);
@@ -1095,6 +1101,7 @@ function registerRemoteCosmetics(context) {
         id: 'remote-cosmetics',
         js,
         allFrames: true,
+        matchOriginAsFallback: true,
         matches,
         runAt: 'document_start',
     };
@@ -1110,7 +1117,9 @@ function registerRemoteCosmetics(context) {
     if (
         ut.strArrayEq(registered.js, js, false) === false ||
         ut.strArrayEq(registered.matches, matches) === false ||
-        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false
+        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false ||
+        Boolean(registered.matchOriginAsFallback) !==
+            Boolean(directive.matchOriginAsFallback)
     ) {
         context.toRemove.push('remote-cosmetics');
         context.toAdd.push(directive);
@@ -1175,6 +1184,7 @@ function registerRemoteTactics(context) {
         id: 'remote-tactics-bootstrap',
         js: ['/js/scripting/remote-tactics-bootstrap.js'],
         allFrames: true,
+        matchOriginAsFallback: true,
         matches,
         runAt: 'document_start',
     };
@@ -1186,7 +1196,9 @@ function registerRemoteTactics(context) {
     } else if (
         ut.strArrayEq(registeredBootstrap.js, bootstrapDirective.js, false) === false ||
         ut.strArrayEq(registeredBootstrap.matches, matches) === false ||
-        ut.strArrayEq(registeredBootstrap.excludeMatches, excludeMatches) === false
+        ut.strArrayEq(registeredBootstrap.excludeMatches, excludeMatches) === false ||
+        Boolean(registeredBootstrap.matchOriginAsFallback) !==
+            Boolean(bootstrapDirective.matchOriginAsFallback)
     ) {
         context.toRemove.push('remote-tactics-bootstrap');
         context.toAdd.push(bootstrapDirective);
@@ -1196,6 +1208,7 @@ function registerRemoteTactics(context) {
         id: 'remote-tactics-main',
         js: ['/js/scripting/remote-tactics.js'],
         allFrames: true,
+        matchOriginAsFallback: true,
         matches,
         runAt: 'document_start',
         world: 'MAIN',
@@ -1209,6 +1222,8 @@ function registerRemoteTactics(context) {
         ut.strArrayEq(registeredMain.js, mainDirective.js, false) === false ||
         ut.strArrayEq(registeredMain.matches, matches) === false ||
         ut.strArrayEq(registeredMain.excludeMatches, excludeMatches) === false ||
+        Boolean(registeredMain.matchOriginAsFallback) !==
+            Boolean(mainDirective.matchOriginAsFallback) ||
         registeredMain.world !== 'MAIN'
     ) {
         context.toRemove.push('remote-tactics-main');
@@ -1255,6 +1270,7 @@ function registerPostHideCleanup(context) {
         id: 'post-hide-cleanup',
         js,
         allFrames: true,
+        matchOriginAsFallback: true,
         matches,
         runAt: 'document_idle',
     };
@@ -1270,7 +1286,9 @@ function registerPostHideCleanup(context) {
     if (
         ut.strArrayEq(registered.js, js, false) === false ||
         ut.strArrayEq(registered.matches, matches) === false ||
-        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false
+        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false ||
+        Boolean(registered.matchOriginAsFallback) !==
+            Boolean(directive.matchOriginAsFallback)
     ) {
         context.toRemove.push('post-hide-cleanup');
         context.toAdd.push(directive);

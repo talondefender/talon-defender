@@ -80,6 +80,29 @@ test('automation queries shadow roots and applies hide styling only to marked no
   const source = await readSource('js/scripting/automation.js');
 
   assert.match(source, /shadowController\?\.enumerateRoots\?\.\(\)/);
-  assert.match(source, /const styleText = `\$\{attrSelector\}\{display:none!important;visibility:hidden!important;\}`;/);
+  assert.match(source, /const buildHideStyleText = id => \{/);
+  assert.match(source, /ensureShadowRootHideStyle\(root, styleId, cssText\)/);
+  assert.match(source, /syncHideStyles\(activeDirectives\)/);
   assert.match(source, /for \( const selector of selectors \) \{/);
+});
+
+test('adaptive lanes opt into related fallback frames beyond scriptlets', async () => {
+  const source = await readSource('js/scripting-manager.js');
+
+  assert.match(
+    source,
+    /id: 'native-heuristics',[\s\S]*matchOriginAsFallback: true/
+  );
+  assert.match(
+    source,
+    /id: 'automation',[\s\S]*matchOriginAsFallback: true/
+  );
+  assert.match(
+    source,
+    /id: 'remote-cosmetics',[\s\S]*matchOriginAsFallback: true/
+  );
+  assert.match(
+    source,
+    /id: 'post-hide-cleanup',[\s\S]*matchOriginAsFallback: true/
+  );
 });

@@ -157,6 +157,8 @@ test('remote tactics registration uses paired bootstrap and MAIN-world lanes wit
   assert.match(source, /registerRemoteTactics\(context\)/);
   assert.match(source, /id: 'remote-tactics-bootstrap'/);
   assert.match(source, /id: 'remote-tactics-main'/);
+  assert.match(source, /id: 'remote-tactics-bootstrap',[\s\S]*matchOriginAsFallback: true/);
+  assert.match(source, /id: 'remote-tactics-main',[\s\S]*matchOriginAsFallback: true/);
   assert.match(source, /world: 'MAIN'/);
   assert.match(source, /subsystemSuppressionHostnames\?\.remoteTactics/);
 });
