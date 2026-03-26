@@ -42,7 +42,11 @@ test('runtime refresh keeps remote tactics on a host-gated isolated and MAIN-wor
   assert.match(source, /const REMOTE_TACTICS_ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object\.freeze\(\[[\s\S]*'\/js\/scripting\/remote-tactics-bootstrap\.js'[\s\S]*\]\);/);
   assert.match(source, /const MAIN_WORLD_LIVE_RUNTIME_REFRESH_FILES = Object\.freeze\(\[[\s\S]*'\/js\/scripting\/remote-tactics\.js'[\s\S]*\]\);/);
   assert.match(source, /target: \{ tabId, allFrames: true \}/);
-  assert.match(source, /const shouldRefreshRemoteTactics =[\s\S]*remoteTacticHostnames\.has\(hostname\)/);
+  assert.match(source, /const tabMatchesRemoteTacticHosts = async \(/);
+  assert.match(source, /if \( hostname !== '' && remoteTacticHostnames\.has\(hostname\) \) \{/);
+  assert.match(source, /const frameUrls = await listTabFrameUrls\(tabId, fallbackUrl\)/);
+  assert.match(source, /frameUrls\.some\(url => remoteTacticHostnames\.has\(normalizeHttpHostname\(url\)\)\)/);
+  assert.match(source, /const shouldRefreshRemoteTactics = await tabMatchesRemoteTacticHosts\(tabId, \{/);
   assert.match(source, /await executeRuntimeRefreshLane\(\s*tabId,\s*REMOTE_TACTICS_ISOLATED_LIVE_RUNTIME_REFRESH_FILES/);
   assert.match(source, /await executeRuntimeRefreshLane\(tabId, MAIN_WORLD_LIVE_RUNTIME_REFRESH_FILES, \{\s*world: 'MAIN',\s*\}\)/);
   assert.match(source, /await executeRuntimeStopLane\(tabId, stopRemoteTacticsBootstrapController\)/);

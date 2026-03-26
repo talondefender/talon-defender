@@ -4,6 +4,13 @@
     const CONFIG_EVENT = 'td-remote-tactics-config';
     const CONFIG_WAIT_TIMEOUT_MS = 250;
     const hostname = (self.location?.hostname || '').trim().toLowerCase();
+    const nativeFetch = typeof self.fetch === 'function' ? self.fetch : undefined;
+    const NativeXMLHttpRequest = typeof self.XMLHttpRequest === 'function'
+        ? self.XMLHttpRequest
+        : undefined;
+    const nativeXhrSend = typeof NativeXMLHttpRequest?.prototype?.send === 'function'
+        ? NativeXMLHttpRequest.prototype.send
+        : undefined;
 
     const VALID_KIND_SET = 'jsonSet';
     const VALID_KIND_PRUNE = 'jsonPrune';
@@ -109,38 +116,6 @@
     };
 
     const refreshConfig = () => requestConfig(beginConfigRefresh());
-
-    const stopController = () => {
-        clearConfigTimeout();
-        state.tactics = [];
-        state.expectConfig = false;
-        if ( state.configResolved === false ) {
-            finalizeConfig(state.activeRequestId, []);
-        }
-        state.configReady = Promise.resolve([]);
-        return Promise.resolve(true);
-    };
-
-    if ( self.TalonRemoteTacticsController ) {
-        self.TalonRemoteTacticsController.refresh().catch(() => {});
-        return;
-    }
-
-    document.addEventListener(CONFIG_EVENT, event => {
-        const detail = event instanceof CustomEvent ? event.detail : null;
-        if ( detail?.hostname && `${detail.hostname}`.trim().toLowerCase() !== hostname ) {
-            return;
-        }
-        const requestId = Number(detail?.requestId) || 0;
-        if (
-            requestId !== state.activeRequestId &&
-            (requestId !== 0 || state.expectConfig !== true)
-        ) {
-            return;
-        }
-        state.tactics = normalizeIncomingTactics(detail?.tactics);
-        finalizeConfig(state.activeRequestId, state.tactics);
-    }, true);
 
     const parseUrl = value => {
         if ( typeof value !== 'string' || value === '' ) { return null; }
@@ -321,18 +296,6 @@
         return response;
     };
 
-    if ( typeof self.fetch === 'function' ) {
-        self.fetch = new Proxy(self.fetch, {
-            apply(target, thisArg, args) {
-                const fetchPromise = Reflect.apply(target, thisArg, args);
-                return Promise.resolve(fetchPromise).then(
-                    response => rewriteFetchResponse(response, args),
-                    () => fetchPromise
-                );
-            },
-        });
-    }
-
     const safeGetResponseText = getter => {
         try {
             return getter();
@@ -397,82 +360,228 @@
         return { ok: false };
     };
 
+    if ( typeof self.fetch === 'function' ) {
+        self.fetch = new Proxy(self.fetch, {
+            apply(target, thisArg, args) {
+                const fetchPromise = Reflect.apply(target, thisArg, args);
+                return Promise.resolve(fetchPromise).then(
+                    response => rewriteFetchResponse(response, args),
+                    () => fetchPromise
+                );
+            },
+        });
+    }
+
+    const pendingXhrSends = new Set();
+
+    const resetCachedXhrResponse = xhr => {
+        xhr.signature = '';
+        xhr.hasCachedResponse = false;
+        xhr.response = undefined;
+        xhr.responseText = undefined;
+    };
+
+    const clearPendingXhrSend = xhr => {
+        if ( xhr?.pendingSend !== true ) { return false; }
+        xhr.pendingSend = false;
+        xhr.pendingArgs = undefined;
+        pendingXhrSends.delete(xhr);
+        return true;
+    };
+
+    const flushPendingXhrSend = xhr => {
+        if ( xhr?.pendingSend !== true ) { return false; }
+        const sendArgs = Array.isArray(xhr.pendingArgs) ? xhr.pendingArgs : [];
+        clearPendingXhrSend(xhr);
+        if ( typeof nativeXhrSend !== 'function' ) { return false; }
+        try {
+            Reflect.apply(nativeXhrSend, xhr.instance, sendArgs);
+            return true;
+        } catch {
+        }
+        return false;
+    };
+
+    const resolvePatchedXhrResponse = (
+        xhr,
+        innerResponse,
+        readRawText,
+        getHeader,
+        responseType
+    ) => {
+        if ( xhr === undefined || state.tactics.length === 0 ) {
+            return innerResponse;
+        }
+        const requestUrl = parseUrl(xhr.url);
+        if ( isInspectableUrl(requestUrl) === false ) {
+            return innerResponse;
+        }
+        const matchingTactics = applicableTactics('xhr', requestUrl.pathname);
+        if ( matchingTactics.length === 0 ) {
+            return innerResponse;
+        }
+        const resolvedResponseType = typeof responseType === 'string'
+            ? responseType
+            : '';
+        const rawText = (
+            typeof innerResponse === 'string'
+                ? innerResponse
+                : safeGetResponseText(readRawText)
+        );
+        const carrier = resolveXhrJsonCarrier({
+            innerResponse,
+            responseType: resolvedResponseType,
+            rawText,
+            contentType: safeGetHeader(getHeader, 'content-type'),
+        });
+        if ( carrier.ok !== true ) {
+            return innerResponse;
+        }
+        const signature = `${carrier.outputKind}\n${carrier.rawSignature}`;
+        if ( xhr.signature === signature && xhr.hasCachedResponse === true ) {
+            return xhr.response;
+        }
+        try {
+            const result = applyTacticsToJson(carrier.value, matchingTactics);
+            xhr.signature = signature;
+            xhr.hasCachedResponse = true;
+            if ( result.applied === false ) {
+                xhr.response = innerResponse;
+                xhr.responseText = carrier.outputKind === 'text' ? rawText : undefined;
+                return innerResponse;
+            }
+            xhr.response = carrier.outputKind === 'text'
+                ? JSON.stringify(result.value)
+                : result.value;
+            xhr.responseText = carrier.outputKind === 'text' ? xhr.response : undefined;
+            return xhr.response;
+        } catch {
+        }
+        resetCachedXhrResponse(xhr);
+        return innerResponse;
+    };
+
+    const configEventListener = event => {
+        const detail = event instanceof CustomEvent ? event.detail : null;
+        if ( detail?.hostname && `${detail.hostname}`.trim().toLowerCase() !== hostname ) {
+            return;
+        }
+        const requestId = Number(detail?.requestId) || 0;
+        if (
+            requestId !== state.activeRequestId &&
+            (requestId !== 0 || state.expectConfig !== true)
+        ) {
+            return;
+        }
+        state.tactics = normalizeIncomingTactics(detail?.tactics);
+        finalizeConfig(state.activeRequestId, state.tactics);
+    };
+
+    const stopController = () => {
+        clearConfigTimeout();
+        state.tactics = [];
+        state.expectConfig = false;
+        if ( state.configResolved === false ) {
+            finalizeConfig(state.activeRequestId, []);
+        }
+        state.configReady = Promise.resolve([]);
+        for ( const xhr of Array.from(pendingXhrSends) ) {
+            flushPendingXhrSend(xhr);
+        }
+        try {
+            document.removeEventListener(CONFIG_EVENT, configEventListener, true);
+        } catch {
+        }
+        if ( typeof nativeFetch === 'function' ) {
+            self.fetch = nativeFetch;
+        }
+        if ( typeof NativeXMLHttpRequest === 'function' ) {
+            self.XMLHttpRequest = NativeXMLHttpRequest;
+        }
+        try {
+            delete self.TalonRemoteTacticsController;
+        } catch {
+            self.TalonRemoteTacticsController = undefined;
+        }
+        return Promise.resolve(true);
+    };
+
+    if ( self.TalonRemoteTacticsController ) {
+        self.TalonRemoteTacticsController.refresh().catch(() => {});
+        return;
+    }
+
+    document.addEventListener(CONFIG_EVENT, configEventListener, true);
+
     if ( typeof self.XMLHttpRequest === 'function' ) {
-        const NativeXMLHttpRequest = self.XMLHttpRequest;
         const xhrState = new WeakMap();
 
         self.XMLHttpRequest = class extends NativeXMLHttpRequest {
             open(method, url, ...args) {
                 xhrState.set(this, {
+                    instance: this,
                     url: parseUrl(String(url || ''))?.toString() || '',
+                    async: args.length === 0 || args[0] !== false,
+                    signature: '',
+                    hasCachedResponse: false,
                     response: undefined,
                     responseText: undefined,
-                    signature: '',
+                    pendingSend: false,
+                    pendingArgs: undefined,
                 });
                 return super.open(method, url, ...args);
             }
+            send(...args) {
+                const xhr = xhrState.get(this);
+                if (
+                    xhr === undefined ||
+                    xhr.async !== true ||
+                    state.configResolved === true ||
+                    isInspectableUrl(parseUrl(xhr.url)) === false ||
+                    typeof nativeXhrSend !== 'function'
+                ) {
+                    return super.send(...args);
+                }
+                if ( xhr.pendingSend === true ) { return; }
+                xhr.pendingSend = true;
+                xhr.pendingArgs = args;
+                pendingXhrSends.add(xhr);
+                Promise.resolve(state.configReady)
+                    .catch(() => {})
+                    .then(() => {
+                        const currentXhr = xhrState.get(this);
+                        if ( currentXhr !== xhr ) { return; }
+                        flushPendingXhrSend(xhr);
+                    });
+            }
+            abort(...args) {
+                const xhr = xhrState.get(this);
+                if ( xhr !== undefined ) {
+                    clearPendingXhrSend(xhr);
+                }
+                return super.abort(...args);
+            }
             get response() {
                 const xhr = xhrState.get(this);
-                const innerResponse = super.response;
-                if ( xhr === undefined || state.tactics.length === 0 ) {
-                    return innerResponse;
-                }
-                const requestUrl = parseUrl(xhr.url);
-                if ( isInspectableUrl(requestUrl) === false ) {
-                    return innerResponse;
-                }
-                const matchingTactics = applicableTactics('xhr', requestUrl.pathname);
-                if ( matchingTactics.length === 0 ) {
-                    return innerResponse;
-                }
-                const responseType = typeof super.responseType === 'string'
-                    ? super.responseType
-                    : '';
-                const rawText = (
-                    typeof innerResponse === 'string'
-                        ? innerResponse
-                        : safeGetResponseText(() => super.responseText)
+                return resolvePatchedXhrResponse(
+                    xhr,
+                    super.response,
+                    () => super.responseText,
+                    name => super.getResponseHeader(name),
+                    super.responseType
                 );
-                const carrier = resolveXhrJsonCarrier({
-                    innerResponse,
-                    responseType,
-                    rawText,
-                    contentType: safeGetHeader(
-                        name => super.getResponseHeader(name),
-                        'content-type'
-                    ),
-                });
-                if ( carrier.ok !== true ) {
-                    return innerResponse;
-                }
-                const signature = `${carrier.outputKind}\n${carrier.rawSignature}`;
-                if ( xhr.signature === signature && xhr.response !== undefined ) {
-                    return xhr.response;
-                }
-                try {
-                    const result = applyTacticsToJson(carrier.value, matchingTactics);
-                    if ( result.applied === false ) {
-                        xhr.signature = signature;
-                        xhr.response = innerResponse;
-                        xhr.responseText = carrier.outputKind === 'text' ? rawText : undefined;
-                        return innerResponse;
-                    }
-                    xhr.signature = signature;
-                    xhr.response = carrier.outputKind === 'text'
-                        ? JSON.stringify(result.value)
-                        : result.value;
-                    xhr.responseText = JSON.stringify(result.value);
-                    return xhr.response;
-                } catch {
-                }
-                return innerResponse;
             }
             get responseText() {
-                const xhr = xhrState.get(this);
-                if ( typeof xhr?.responseText === 'string' ) {
-                    return xhr.responseText;
-                }
-                return super.responseText;
+                const response = resolvePatchedXhrResponse(
+                    xhrState.get(this),
+                    super.response,
+                    () => super.responseText,
+                    name => super.getResponseHeader(name),
+                    super.responseType
+                );
+                return typeof response === 'string'
+                    ? response
+                    : super.responseText;
             }
         };
     }

@@ -265,6 +265,24 @@ const listTabFrameUrls = async (tabId, fallbackUrl = '') => {
     return Array.from(urls);
 };
 
+const tabMatchesRemoteTacticHosts = async (
+    tabId,
+    {
+        fallbackUrl = '',
+        hostname = '',
+        remoteTacticHostnames = new Set(),
+    } = {}
+) => {
+    if ( remoteTacticHostnames instanceof Set === false || remoteTacticHostnames.size === 0 ) {
+        return false;
+    }
+    if ( hostname !== '' && remoteTacticHostnames.has(hostname) ) {
+        return true;
+    }
+    const frameUrls = await listTabFrameUrls(tabId, fallbackUrl);
+    return frameUrls.some(url => remoteTacticHostnames.has(normalizeHttpHostname(url)));
+};
+
 const markTabsForRemoteScriptletReload = async reloadHint => {
     if ( reloadHint instanceof Object === false || browser.tabs?.query === undefined ) {
         return [];
@@ -2633,6 +2651,7 @@ async function refreshRuntimeStateForTab(
     tabId,
     filteringLevel,
     {
+        url = '',
         hostname = '',
         remoteTacticHostnames = new Set(),
     } = {}
@@ -2641,10 +2660,11 @@ async function refreshRuntimeStateForTab(
     try {
         if ( filteringLevel >= MODE_OPTIMAL ) {
             await executeRuntimeRefreshLane(tabId, ISOLATED_LIVE_RUNTIME_REFRESH_FILES);
-            const shouldRefreshRemoteTactics =
-                hostname !== '' &&
-                remoteTacticHostnames instanceof Set &&
-                remoteTacticHostnames.has(hostname);
+            const shouldRefreshRemoteTactics = await tabMatchesRemoteTacticHosts(tabId, {
+                fallbackUrl: url,
+                hostname,
+                remoteTacticHostnames,
+            });
             if ( shouldRefreshRemoteTactics ) {
                 await executeRuntimeRefreshLane(
                     tabId,
@@ -2695,6 +2715,7 @@ async function refreshRuntimeStateForOpenTabs() {
         jobs.push(
             getFilteringMode(hostname)
                 .then(level => refreshRuntimeStateForTab(tabId, Number(level) || MODE_NONE, {
+                    url: tab?.url || '',
                     hostname,
                     remoteTacticHostnames,
                 }))
