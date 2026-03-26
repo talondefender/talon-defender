@@ -20,6 +20,9 @@ const dynamicHostLabelEl = document.getElementById("dynamicHostLabel");
 const dynamicStatusEl = document.getElementById("dynamicStatus");
 const blockDomainButton = document.getElementById("blockDomain");
 const allowDomainButton = document.getElementById("allowDomain");
+const runtimeNoticeEl = document.getElementById("runtimeNotice");
+const runtimeNoticeTextEl = document.getElementById("runtimeNoticeText");
+const runtimeNoticeReloadButton = document.getElementById("runtimeNoticeReload");
 
 const subscriptionCardEl = document.getElementById("subscriptionCard");
 const subscriptionStatusEl = document.getElementById("subscriptionStatus");
@@ -61,6 +64,7 @@ let entitlementStatus = null;
 let paywalled = false;
 let licenseEntryVisible = false;
 let expiredKeyEntryVisible = false;
+let currentReloadNeededReason = "";
 
 const GLOBAL_PAUSE_SNAPSHOT_KEY = "globalPauseFilteringModesSnapshot";
 const ENTITLEMENT_LOCAL_STORAGE_KEY = "talonEntitlement";
@@ -102,6 +106,7 @@ async function init() {
     await hydrateFromLocalCache();
     await refreshEntitlement();
     await resolveActiveHost();
+    await refreshRuntimeNoticeState();
     if (!paywalled) {
       await Promise.all([refreshFilteringState(), refreshFilterCatalog()]);
     }
@@ -450,6 +455,25 @@ function wireEvents() {
     });
   }
 
+  if (runtimeNoticeReloadButton) {
+    runtimeNoticeReloadButton.addEventListener("click", async () => {
+      if (!currentTabId) {
+        return;
+      }
+      runtimeNoticeReloadButton.disabled = true;
+      try {
+        await chrome.tabs.reload(currentTabId);
+        currentReloadNeededReason = "";
+        renderRuntimeNotice();
+        window.close();
+      } catch (error) {
+        console.error("Failed to reload tab for hotfix", error);
+      } finally {
+        runtimeNoticeReloadButton.disabled = false;
+      }
+    });
+  }
+
   if (licenseFormEl) {
     licenseFormEl.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -568,6 +592,43 @@ async function resolveActiveHost() {
   if (dynamicHostLabelEl) {
     dynamicHostLabelEl.textContent = currentHost || t("popupNoActiveTab");
   }
+  renderRuntimeNotice();
+}
+
+function renderRuntimeNotice() {
+  if (!runtimeNoticeEl || !runtimeNoticeTextEl || !runtimeNoticeReloadButton) {
+    return;
+  }
+  const visible = Boolean(currentTabId) &&
+    !paywalled &&
+    currentReloadNeededReason === "remoteScriptletHotfix";
+  runtimeNoticeEl.hidden = !visible;
+  if (!visible) {
+    return;
+  }
+  runtimeNoticeTextEl.textContent = "Reload this tab to apply the latest Talon Defender hotfix.";
+  runtimeNoticeReloadButton.textContent = "Reload tab";
+}
+
+async function refreshRuntimeNoticeState() {
+  if (!currentTabId) {
+    currentReloadNeededReason = "";
+    renderRuntimeNotice();
+    return;
+  }
+  try {
+    const state = await chrome.runtime.sendMessage({
+      what: "getTabReloadNeededState",
+      tabId: currentTabId
+    });
+    currentReloadNeededReason = typeof state?.reason === "string"
+      ? state.reason
+      : "";
+  } catch (error) {
+    console.warn("Failed to read tab reload-needed state", error);
+    currentReloadNeededReason = "";
+  }
+  renderRuntimeNotice();
 }
 
 function formatRemaining(ms) {
@@ -870,6 +931,7 @@ function applyEntitlementStatus(status) {
   renderEntitlementStatus(entitlementStatus);
   setPaywalledUI(paywalled);
   renderExpiredOverlay(entitlementStatus, { canReplaceDevice });
+  renderRuntimeNotice();
 
   if (subscribeNowButton) {
     subscribeNowButton.style.display = isPaid ? "none" : "";

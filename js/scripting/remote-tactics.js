@@ -1,8 +1,5 @@
 // MAIN-world packaged interpreter for bounded remote JSON response tactics.
 (function talonRemoteTactics() {
-    if ( self.__talonRemoteTactics === true ) { return; }
-    self.__talonRemoteTactics = true;
-
     const REQUEST_EVENT = 'td-remote-tactics-request';
     const CONFIG_EVENT = 'td-remote-tactics-config';
     const CONFIG_WAIT_TIMEOUT_MS = 250;
@@ -12,17 +9,31 @@
     const VALID_KIND_PRUNE = 'jsonPrune';
     const VALID_TRANSPORT_BOTH = 'both';
 
-    let tactics = [];
-    let configResolved = false;
-    let resolveConfig;
-    const configReady = new Promise(resolve => {
-        resolveConfig = resolve;
-    });
+    const state = {
+        tactics: [],
+        configResolved: true,
+        expectConfig: false,
+        activeRequestId: 0,
+        nextRequestId: 0,
+        configReady: Promise.resolve([]),
+        resolveConfig: undefined,
+        configTimeout: 0,
+    };
 
-    const finalizeInitialConfig = () => {
-        if ( configResolved ) { return; }
-        configResolved = true;
-        resolveConfig(tactics);
+    const clearConfigTimeout = () => {
+        if ( state.configTimeout === 0 ) { return; }
+        self.clearTimeout(state.configTimeout);
+        state.configTimeout = 0;
+    };
+
+    const finalizeConfig = (requestId, nextTactics = state.tactics) => {
+        if ( requestId !== state.activeRequestId ) { return; }
+        if ( state.configResolved ) { return; }
+        state.configResolved = true;
+        state.expectConfig = false;
+        clearConfigTimeout();
+        state.resolveConfig?.(nextTactics);
+        state.resolveConfig = undefined;
     };
 
     const cloneJsonValue = value => (
@@ -71,23 +82,65 @@
         return out;
     };
 
+    const beginConfigRefresh = () => {
+        clearConfigTimeout();
+        state.activeRequestId = ++state.nextRequestId;
+        state.configResolved = false;
+        state.expectConfig = true;
+        state.configReady = new Promise(resolve => {
+            state.resolveConfig = resolve;
+        });
+        const requestId = state.activeRequestId;
+        state.configTimeout = self.setTimeout(() => {
+            finalizeConfig(requestId, state.tactics);
+        }, CONFIG_WAIT_TIMEOUT_MS);
+        return requestId;
+    };
+
+    const requestConfig = requestId => {
+        try {
+            document.dispatchEvent(new CustomEvent(REQUEST_EVENT, {
+                detail: { hostname, requestId },
+            }));
+        } catch {
+            finalizeConfig(requestId, state.tactics);
+        }
+        return state.configReady;
+    };
+
+    const refreshConfig = () => requestConfig(beginConfigRefresh());
+
+    const stopController = () => {
+        clearConfigTimeout();
+        state.tactics = [];
+        state.expectConfig = false;
+        if ( state.configResolved === false ) {
+            finalizeConfig(state.activeRequestId, []);
+        }
+        state.configReady = Promise.resolve([]);
+        return Promise.resolve(true);
+    };
+
+    if ( self.TalonRemoteTacticsController ) {
+        self.TalonRemoteTacticsController.refresh().catch(() => {});
+        return;
+    }
+
     document.addEventListener(CONFIG_EVENT, event => {
         const detail = event instanceof CustomEvent ? event.detail : null;
         if ( detail?.hostname && `${detail.hostname}`.trim().toLowerCase() !== hostname ) {
             return;
         }
-        tactics = normalizeIncomingTactics(detail?.tactics);
-        finalizeInitialConfig();
+        const requestId = Number(detail?.requestId) || 0;
+        if (
+            requestId !== state.activeRequestId &&
+            (requestId !== 0 || state.expectConfig !== true)
+        ) {
+            return;
+        }
+        state.tactics = normalizeIncomingTactics(detail?.tactics);
+        finalizeConfig(state.activeRequestId, state.tactics);
     }, true);
-
-    self.setTimeout(finalizeInitialConfig, CONFIG_WAIT_TIMEOUT_MS);
-    try {
-        document.dispatchEvent(new CustomEvent(REQUEST_EVENT, {
-            detail: { hostname },
-        }));
-    } catch {
-        finalizeInitialConfig();
-    }
 
     const parseUrl = value => {
         if ( typeof value !== 'string' || value === '' ) { return null; }
@@ -104,7 +157,7 @@
         url.hostname.toLowerCase() === hostname
     );
 
-    const applicableTactics = (transport, pathname) => tactics.filter(entry => (
+    const applicableTactics = (transport, pathname) => state.tactics.filter(entry => (
         entry.transport === transport ||
         entry.transport === VALID_TRANSPORT_BOTH
     )).filter(entry => (
@@ -239,8 +292,8 @@
 
     const rewriteFetchResponse = async (response, args) => {
         if ( response instanceof Response === false ) { return response; }
-        await configReady.catch(() => {});
-        if ( tactics.length === 0 ) { return response; }
+        await state.configReady.catch(() => {});
+        if ( state.tactics.length === 0 ) { return response; }
         const candidateUrl = parseUrl(response.url) || parseUrl(
             args?.[0] instanceof Request
                 ? args[0].url
@@ -359,12 +412,12 @@
                 return super.open(method, url, ...args);
             }
             get response() {
-                const state = xhrState.get(this);
+                const xhr = xhrState.get(this);
                 const innerResponse = super.response;
-                if ( state === undefined || tactics.length === 0 ) {
+                if ( xhr === undefined || state.tactics.length === 0 ) {
                     return innerResponse;
                 }
-                const requestUrl = parseUrl(state.url);
+                const requestUrl = parseUrl(xhr.url);
                 if ( isInspectableUrl(requestUrl) === false ) {
                     return innerResponse;
                 }
@@ -393,34 +446,45 @@
                     return innerResponse;
                 }
                 const signature = `${carrier.outputKind}\n${carrier.rawSignature}`;
-                if ( state.signature === signature && state.response !== undefined ) {
-                    return state.response;
+                if ( xhr.signature === signature && xhr.response !== undefined ) {
+                    return xhr.response;
                 }
                 try {
                     const result = applyTacticsToJson(carrier.value, matchingTactics);
                     if ( result.applied === false ) {
-                        state.signature = signature;
-                        state.response = innerResponse;
-                        state.responseText = carrier.outputKind === 'text' ? rawText : undefined;
+                        xhr.signature = signature;
+                        xhr.response = innerResponse;
+                        xhr.responseText = carrier.outputKind === 'text' ? rawText : undefined;
                         return innerResponse;
                     }
-                    state.signature = signature;
-                    state.response = carrier.outputKind === 'text'
+                    xhr.signature = signature;
+                    xhr.response = carrier.outputKind === 'text'
                         ? JSON.stringify(result.value)
                         : result.value;
-                    state.responseText = JSON.stringify(result.value);
-                    return state.response;
+                    xhr.responseText = JSON.stringify(result.value);
+                    return xhr.response;
                 } catch {
                 }
                 return innerResponse;
             }
             get responseText() {
-                const state = xhrState.get(this);
-                if ( typeof state?.responseText === 'string' ) {
-                    return state.responseText;
+                const xhr = xhrState.get(this);
+                if ( typeof xhr?.responseText === 'string' ) {
+                    return xhr.responseText;
                 }
                 return super.responseText;
             }
         };
     }
+
+    self.TalonRemoteTacticsController = {
+        refresh() {
+            return refreshConfig();
+        },
+        stop() {
+            return stopController();
+        },
+    };
+
+    self.TalonRemoteTacticsController.refresh().catch(() => {});
 })();

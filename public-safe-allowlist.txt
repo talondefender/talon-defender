@@ -368,6 +368,7 @@ js/popup.js
 js/punycode.js
 js/regional-rulesets.js
 js/redirect-resources.js
+js/remote-scriptlet-hotfix.js
 js/report.js
 js/ro-dnr-editor.js
 js/ruleset-manager.js
@@ -1287,9 +1288,11 @@ scripts/package-public-source.ps1
 scripts/release-edge-extension.ps1
 scripts/release-extension.ps1
 scripts/sync-latest-artifacts.ps1
+scripts/update-public-suffix-data.mjs
 scripts/validate-mv3-package.mjs
 shared/i18n.js
 shared/links.js
+shared/public-suffix-data.js
 shared/site-key-resolver.js
 shared/source-code.js
 strictblock.html

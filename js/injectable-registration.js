@@ -12,6 +12,7 @@ const normalizePlan = plan => ({
     toRemove: Array.isArray(plan?.toRemove)
         ? plan.toRemove.filter(id => typeof id === 'string' && id !== '')
         : [],
+    remoteScriptletReloadHint: plan?.remoteScriptletReloadHint ?? null,
 });
 
 const errorMessageFrom = (stage, reason) => {
@@ -29,6 +30,7 @@ const buildFailureResult = ({
     recoveryResetCount = 0,
     toAddCount = 0,
     toRemoveCount = 0,
+    remoteScriptletReloadHint = null,
 } = {}) => ({
     ok: false,
     updatedAt: now(),
@@ -40,6 +42,7 @@ const buildFailureResult = ({
     recoveryResetCount,
     toAddCount,
     toRemoveCount,
+    remoteScriptletReloadHint,
 });
 
 const buildSuccessResult = ({
@@ -49,6 +52,7 @@ const buildSuccessResult = ({
     recoveryResetCount = 0,
     toAddCount = 0,
     toRemoveCount = 0,
+    remoteScriptletReloadHint = null,
 } = {}) => ({
     ok: true,
     updatedAt: now(),
@@ -60,6 +64,7 @@ const buildSuccessResult = ({
     recoveryResetCount,
     toAddCount,
     toRemoveCount,
+    remoteScriptletReloadHint,
 });
 
 const applyPlan = async ({
@@ -69,7 +74,11 @@ const applyPlan = async ({
     registerContentScripts,
     now,
 }) => {
-    const { toAdd, toRemove } = normalizePlan(plan);
+    const {
+        toAdd,
+        toRemove,
+        remoteScriptletReloadHint,
+    } = normalizePlan(plan);
     if ( toRemove.length !== 0 ) {
         try {
             await unregisterContentScripts(toRemove);
@@ -82,6 +91,7 @@ const applyPlan = async ({
                 ),
                 toAddCount: toAdd.length,
                 toRemoveCount: toRemove.length,
+                remoteScriptletReloadHint,
             });
         }
     }
@@ -97,6 +107,7 @@ const applyPlan = async ({
                 ),
                 toAddCount: toAdd.length,
                 toRemoveCount: toRemove.length,
+                remoteScriptletReloadHint,
             });
         }
     }
@@ -104,6 +115,7 @@ const applyPlan = async ({
         now,
         toAddCount: toAdd.length,
         toRemoveCount: toRemove.length,
+        remoteScriptletReloadHint,
     });
 };
 
@@ -215,6 +227,7 @@ export async function runInjectableRegistrationFlow({
             recoveryResetCount: recoveryIds.length,
             toAddCount: recoveryResult.toAddCount,
             toRemoveCount: recoveryResult.toRemoveCount,
+            remoteScriptletReloadHint: recoveryResult.remoteScriptletReloadHint,
         });
     }
 
@@ -226,5 +239,6 @@ export async function runInjectableRegistrationFlow({
         recoveryResetCount: recoveryIds.length,
         toAddCount: recoveryResult.toAddCount,
         toRemoveCount: recoveryResult.toRemoveCount,
+        remoteScriptletReloadHint: recoveryResult.remoteScriptletReloadHint,
     });
 }

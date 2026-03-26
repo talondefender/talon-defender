@@ -34,6 +34,10 @@ import {
 } from './breakage-policy.js';
 import { canonicalizeCommunityScriptlets } from './community-sync.js';
 import { fetchJSON } from './fetch.js';
+import {
+    isRemoteScriptletDirectiveId,
+    normalizeRemoteScriptletReloadHint,
+} from './remote-scriptlet-hotfix.js';
 import { getEnabledRulesetsDetails } from './ruleset-manager.js';
 import { getFilteringModeDetails } from './mode-manager.js';
 import { registerCustomFilters } from './filter-manager.js';
@@ -69,6 +73,7 @@ const SCRIPTLET_PATH_ALIASES = new Map([
         '/rulesets/scripting/scriptlet/ublock-experimental.trusted-json-edit-xhr-request.js',
     ],
 ]);
+const TALON_PUBLIC_SUFFIX_DATA_PATH = '/shared/public-suffix-data.js';
 const TALON_SHADOW_DOM_HELPER_PATH = '/js/scripting/shadow-dom-helper.js';
 
 const readOptionalLocalValue = async (key, fallbackValue, context) => {
@@ -855,6 +860,7 @@ function registerRemoteScriptlets(context, scriptletDetails) {
 
         if ( registered === undefined ) {
             context.toAdd.push(directive);
+            context.remoteScriptletReloadHint.after.push(directive);
             continue;
         }
 
@@ -869,6 +875,8 @@ function registerRemoteScriptlets(context, scriptletDetails) {
         ) {
             context.toRemove.push(id);
             context.toAdd.push(directive);
+            context.remoteScriptletReloadHint.before.push(registered);
+            context.remoteScriptletReloadHint.after.push(directive);
         }
     }
 }
@@ -879,6 +887,7 @@ function registerNativeHeuristics(context) {
     const { before, filteringModeDetails, subsystemSuppressionHostnames } = context;
 
     const js = [
+        TALON_PUBLIC_SUFFIX_DATA_PATH,
         '/shared/site-key-resolver.js',
         '/js/scripting/breakage-guard.js',
         TALON_SHADOW_DOM_HELPER_PATH,
@@ -1051,6 +1060,7 @@ function registerRemoteCosmetics(context) {
     const { before, filteringModeDetails, subsystemSuppressionHostnames } = context;
 
     const js = [
+        TALON_PUBLIC_SUFFIX_DATA_PATH,
         '/shared/site-key-resolver.js',
         '/js/scripting/breakage-guard.js',
         TALON_SHADOW_DOM_HELPER_PATH,
@@ -1387,6 +1397,10 @@ const buildInjectablesRegistrationPlan = async () => {
                 ? autoGenericHighHosts
                 : new Set(),
         subsystemSuppressionHostnames,
+        remoteScriptletReloadHint: {
+            before: [],
+            after: [],
+        },
         youtubeWatchOwnerProfile: normalizeYouTubeWatchOwnerProfile(youtubeWatchOwnerProfile),
     };
 
@@ -1407,8 +1421,18 @@ const buildInjectablesRegistrationPlan = async () => {
         registerToolbarIconToggler(context),
     ]);
 
+    for ( const [id, entry] of before ) {
+        if ( isRemoteScriptletDirectiveId(id) === false ) { continue; }
+        context.remoteScriptletReloadHint.before.push(entry);
+    }
     toRemove.push(...Array.from(before.keys()));
-    return { toAdd, toRemove };
+    return {
+        toAdd,
+        toRemove,
+        remoteScriptletReloadHint: normalizeRemoteScriptletReloadHint(
+            context.remoteScriptletReloadHint
+        ),
+    };
 };
 
 const registerInjectablesImpl = async () => {

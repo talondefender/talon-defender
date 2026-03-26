@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 
 import { runInjectableRegistrationFlow } from '../js/injectable-registration.js';
+import { shouldReloadForFrameUrls } from '../js/remote-scriptlet-hotfix.js';
 
 test('injectable registration retries once after a failed register and reports recovery', async () => {
   let buildPlanCalls = 0;
@@ -17,6 +18,16 @@ test('injectable registration retries once after a failed register and reports r
           { id: 'remote-cosmetics', js: ['/js/scripting/remote-cosmetics.js'] },
         ],
         toRemove: buildPlanCalls === 1 ? ['stale-plan-entry'] : [],
+        remoteScriptletReloadHint: {
+          before: [],
+          after: [
+            {
+              id: 'remote-scriptlet.isolated.test-scriptlet',
+              matches: ['*://*.example.com/*'],
+              excludeMatches: [],
+            },
+          ],
+        },
       };
     },
     listRegistered: async () => [
@@ -43,6 +54,16 @@ test('injectable registration retries once after a failed register and reports r
   assert.match(result.initialError, /initial\.registerContentScripts: first register failed/);
   assert.equal(result.lastError, '');
   assert.equal(result.recoveryResetCount, 2);
+  assert.deepEqual(result.remoteScriptletReloadHint, {
+    before: [],
+    after: [
+      {
+        id: 'remote-scriptlet.isolated.test-scriptlet',
+        matches: ['*://*.example.com/*'],
+        excludeMatches: [],
+      },
+    ],
+  });
   assert.equal(buildPlanCalls, 2);
   assert.deepEqual(operations, [
     { type: 'unregister', ids: ['stale-plan-entry'] },
@@ -89,6 +110,30 @@ test('injectable registration surfaces failure after recovery retry is exhausted
     { type: 'unregister', ids: ['stale-registered-a'] },
     { type: 'register', ids: ['remote-cosmetics'] },
   ]);
+});
+
+test('remote scriptlet reload hints match open-tab frame URLs safely', () => {
+  const hint = {
+    before: [
+      {
+        id: 'remote-scriptlet.isolated.before-scriptlet',
+        matches: ['*://*.example.com/*'],
+        excludeMatches: ['*://www.example.com/*'],
+      },
+    ],
+    after: [
+      {
+        id: 'remote-scriptlet.main.after-scriptlet',
+        matches: ['https://www.example.org/*'],
+        excludeMatches: [],
+      },
+    ],
+  };
+
+  assert.equal(shouldReloadForFrameUrls(['https://example.com/frame.html'], hint), true);
+  assert.equal(shouldReloadForFrameUrls(['https://www.example.com/dashboard'], hint), false);
+  assert.equal(shouldReloadForFrameUrls(['https://www.example.org/embed'], hint), true);
+  assert.equal(shouldReloadForFrameUrls(['chrome-extension://abcdef/popup.html'], hint), false);
 });
 
 test('remote scriptlet registration canonicalizes duplicate entries and scopes ids by world', async () => {

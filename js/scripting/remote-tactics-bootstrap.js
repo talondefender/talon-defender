@@ -1,8 +1,5 @@
 // Bridge compiled remote JSON tactics from extension storage into the page.
 (function talonRemoteTacticsBootstrap() {
-    if ( self.__talonRemoteTacticsBootstrap === true ) { return; }
-    self.__talonRemoteTacticsBootstrap = true;
-
     const STORAGE_KEY = 'communityBundlePublicTactics';
     const REQUEST_EVENT = 'td-remote-tactics-request';
     const CONFIG_EVENT = 'td-remote-tactics-config';
@@ -18,11 +15,12 @@
         return value;
     };
 
-    const dispatchConfig = tactics => {
+    const dispatchConfig = (tactics, requestId = 0) => {
         try {
             document.dispatchEvent(new CustomEvent(CONFIG_EVENT, {
                 detail: {
                     hostname,
+                    requestId,
                     tactics: cloneValue(tactics),
                 },
             }));
@@ -59,14 +57,37 @@
         });
     };
 
-    const readAndDispatch = async () => {
+    const readAndDispatch = async ({ requestId = 0 } = {}) => {
         const tactics = await readStoredTactics().catch(() => []);
-        dispatchConfig(tactics);
+        dispatchConfig(tactics, requestId);
+        return tactics;
     };
 
-    document.addEventListener(REQUEST_EVENT, () => {
-        void readAndDispatch();
+    if ( self.TalonRemoteTacticsBootstrapController ) {
+        self.TalonRemoteTacticsBootstrapController.refresh().catch(() => {});
+        return;
+    }
+
+    document.addEventListener(REQUEST_EVENT, event => {
+        const detail = event instanceof CustomEvent ? event.detail : null;
+        if ( detail?.hostname && `${detail.hostname}`.trim().toLowerCase() !== hostname ) {
+            return;
+        }
+        void readAndDispatch({
+            requestId: Number(detail?.requestId) || 0,
+        });
     }, true);
 
-    void readAndDispatch();
+    self.TalonRemoteTacticsBootstrapController = {
+        refresh(options = {}) {
+            return readAndDispatch({
+                requestId: Number(options?.requestId) || 0,
+            });
+        },
+        stop() {
+            return Promise.resolve(true);
+        },
+    };
+
+    self.TalonRemoteTacticsBootstrapController.refresh().catch(() => {});
 })();

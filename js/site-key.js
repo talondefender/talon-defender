@@ -1,3 +1,4 @@
+import '../shared/public-suffix-data.js';
 import '../shared/site-key-resolver.js';
 
 const resolver = () => globalThis.TalonSiteKeyResolver;

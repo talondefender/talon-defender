@@ -2,215 +2,10 @@
 (function talonSiteKeyResolverScope() {
     if ( globalThis.TalonSiteKeyResolver ) { return; }
 
-    const MULTI_LABEL_PUBLIC_SUFFIXES = Object.freeze([
-        'ac.il',
-        'ac.in',
-        'ac.jp',
-        'ac.kr',
-        'ac.nz',
-        'ac.th',
-        'ac.uk',
-        'ac.vn',
-        'asn.au',
-        'co.id',
-        'co.il',
-        'co.in',
-        'co.jp',
-        'co.kr',
-        'co.nz',
-        'co.th',
-        'co.uk',
-        'com.ar',
-        'com.au',
-        'com.br',
-        'com.cn',
-        'com.co',
-        'com.do',
-        'com.ec',
-        'com.eg',
-        'com.gt',
-        'com.hk',
-        'com.mx',
-        'com.my',
-        'com.ng',
-        'com.pa',
-        'com.pe',
-        'com.ph',
-        'com.pk',
-        'com.pl',
-        'com.sg',
-        'com.tr',
-        'com.tw',
-        'com.ua',
-        'com.uy',
-        'com.ve',
-        'com.vn',
-        'csiro.au',
-        'edu.au',
-        'edu.br',
-        'edu.cn',
-        'edu.do',
-        'edu.ec',
-        'edu.eg',
-        'edu.gt',
-        'edu.mx',
-        'edu.my',
-        'edu.ng',
-        'edu.pa',
-        'edu.pe',
-        'edu.ph',
-        'edu.pk',
-        'edu.pl',
-        'edu.sg',
-        'edu.tr',
-        'edu.tw',
-        'edu.ua',
-        'edu.uy',
-        'edu.ve',
-        'edu.vn',
-        'firm.in',
-        'gen.in',
-        'gen.tr',
-        'gob.do',
-        'gob.mx',
-        'gob.pa',
-        'gob.pe',
-        'gob.ve',
-        'go.id',
-        'go.jp',
-        'go.kr',
-        'gov.au',
-        'gov.br',
-        'gov.cn',
-        'gov.hk',
-        'gov.il',
-        'gov.in',
-        'gov.my',
-        'gov.ng',
-        'gov.sg',
-        'gov.tr',
-        'gov.tw',
-        'gov.uk',
-        'gov.ua',
-        'gov.ve',
-        'gov.vn',
-        'govt.nz',
-        'gub.uy',
-        'id.au',
-        'idv.hk',
-        'idv.tw',
-        'iwi.nz',
-        'kiwi.nz',
-        'lg.jp',
-        'ltd.uk',
-        'me.uk',
-        'mil.br',
-        'mil.cn',
-        'mil.co',
-        'mil.do',
-        'mil.ec',
-        'mil.eg',
-        'mil.gt',
-        'mil.id',
-        'mil.in',
-        'mil.kr',
-        'mil.my',
-        'mil.ng',
-        'mil.pa',
-        'mil.pe',
-        'mil.ph',
-        'mil.pk',
-        'mil.tr',
-        'mil.tw',
-        'mil.uy',
-        'mil.ve',
-        'name.tr',
-        'ne.jp',
-        'ne.kr',
-        'net.au',
-        'net.br',
-        'net.cn',
-        'net.do',
-        'net.ec',
-        'net.eg',
-        'net.gt',
-        'net.hk',
-        'net.id',
-        'net.il',
-        'net.in',
-        'net.kr',
-        'net.mx',
-        'net.my',
-        'net.ng',
-        'net.nz',
-        'net.pa',
-        'net.pe',
-        'net.ph',
-        'net.pk',
-        'net.pl',
-        'net.sg',
-        'net.th',
-        'net.tr',
-        'net.tw',
-        'net.ua',
-        'net.uy',
-        'net.ve',
-        'net.vn',
-        'nhs.uk',
-        'nic.in',
-        'nom.co',
-        'nom.pe',
-        'or.id',
-        'or.jp',
-        'or.kr',
-        'org.au',
-        'org.br',
-        'org.cn',
-        'org.co',
-        'org.do',
-        'org.ec',
-        'org.eg',
-        'org.gt',
-        'org.hk',
-        'org.il',
-        'org.in',
-        'org.kr',
-        'org.mx',
-        'org.my',
-        'org.ng',
-        'org.nz',
-        'org.pa',
-        'org.pe',
-        'org.ph',
-        'org.pk',
-        'org.pl',
-        'org.sg',
-        'org.th',
-        'org.tr',
-        'org.tw',
-        'org.ua',
-        'org.uy',
-        'org.ve',
-        'org.vn',
-        'plc.uk',
-        'pol.tr',
-        'res.in',
-        'sch.id',
-        'sch.uk',
-        'school.nz',
-        'web.id',
-        'web.tr',
-    ]);
-
-    const multiLabelPublicSuffixSet = new Set(MULTI_LABEL_PUBLIC_SUFFIXES);
-    const reservedSecondLevelLabels = new Set(
-        MULTI_LABEL_PUBLIC_SUFFIXES
-            .map(entry => entry.split('.')[0])
-            .filter(label => typeof label === 'string' && label !== '')
-    );
-
     const IPV4_RE = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
     const HOSTNAME_LABEL_RE = /^[a-z0-9-]+$/;
+
+    let publicSuffixRuleSets;
 
     const normalizeHostname = value => {
         if ( typeof value !== 'string' ) { return ''; }
@@ -240,6 +35,50 @@
         return false;
     };
 
+    const splitRules = value => (
+        typeof value === 'string' && value !== ''
+            ? value.split('\n').filter(rule => typeof rule === 'string' && rule !== '')
+            : []
+    );
+
+    const getPublicSuffixRuleSets = () => {
+        if ( publicSuffixRuleSets !== undefined ) { return publicSuffixRuleSets; }
+        const data = globalThis.TalonPublicSuffixData;
+        if ( data instanceof Object === false ) {
+            publicSuffixRuleSets = null;
+            return publicSuffixRuleSets;
+        }
+        publicSuffixRuleSets = {
+            exact: new Set(splitRules(data.exactRulesText)),
+            wildcard: new Set(splitRules(data.wildcardRulesText)),
+            exception: new Set(splitRules(data.exceptionRulesText)),
+        };
+        return publicSuffixRuleSets;
+    };
+
+    const getPublicSuffixLabelCount = labels => {
+        const ruleSets = getPublicSuffixRuleSets();
+        if ( ruleSets === null ) { return 0; }
+        let matchingLength = 1;
+        let exceptionLength = 0;
+        for ( let count = 1; count <= labels.length; count++ ) {
+            const suffix = labels.slice(-count).join('.');
+            if ( ruleSets.exact.has(suffix) ) {
+                matchingLength = Math.max(matchingLength, count);
+            }
+            if ( count < labels.length && ruleSets.wildcard.has(suffix) ) {
+                matchingLength = Math.max(matchingLength, count + 1);
+            }
+            if ( ruleSets.exception.has(suffix) ) {
+                exceptionLength = Math.max(exceptionLength, count);
+            }
+        }
+        if ( exceptionLength > 0 ) {
+            return Math.max(1, exceptionLength - 1);
+        }
+        return matchingLength;
+    };
+
     const isPublicSuffix = hostname => {
         const normalized = normalizeHostname(hostname);
         if ( normalized === '' ) { return false; }
@@ -247,7 +86,8 @@
         const labels = normalized.split('.');
         if ( labels.length === 0 || hasInvalidHostnameLabel(labels) ) { return false; }
         if ( labels.length === 1 ) { return true; }
-        return multiLabelPublicSuffixSet.has(normalized);
+        const publicSuffixLabelCount = getPublicSuffixLabelCount(labels);
+        return publicSuffixLabelCount !== 0 && publicSuffixLabelCount === labels.length;
     };
 
     const getRegistrableDomain = hostname => {
@@ -258,24 +98,15 @@
         const labels = normalized.split('.');
         if ( labels.length <= 1 ) { return normalized; }
         if ( hasInvalidHostnameLabel(labels) ) { return normalized; }
-        if ( labels.length === 2 ) { return normalized; }
 
-        const suffix2 = labels.slice(-2).join('.');
-        if ( multiLabelPublicSuffixSet.has(suffix2) ) {
-            return labels.slice(-3).join('.');
-        }
+        const publicSuffixLabelCount = getPublicSuffixLabelCount(labels);
+        if ( publicSuffixLabelCount === 0 ) { return normalized; }
+        if ( labels.length <= publicSuffixLabelCount ) { return normalized; }
 
-        const tld = labels.at(-1) || '';
-        const secondLevel = labels.at(-2) || '';
-        if ( tld.length === 2 && reservedSecondLevelLabels.has(secondLevel) ) {
-            return normalized;
-        }
-
-        return labels.slice(-2).join('.');
+        return labels.slice(-(publicSuffixLabelCount + 1)).join('.');
     };
 
     globalThis.TalonSiteKeyResolver = Object.freeze({
-        MULTI_LABEL_PUBLIC_SUFFIXES,
         normalizeHostname,
         isIpAddress,
         isPublicSuffix,

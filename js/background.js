@@ -96,6 +96,10 @@ import {
     normalizeSiteKeyHostname,
 } from './site-key.js';
 import {
+    REMOTE_SCRIPTLET_RELOAD_REASON,
+    shouldReloadForFrameUrls,
+} from './remote-scriptlet-hotfix.js';
+import {
     AUTO_REGIONAL_RULESET_IDS_STORAGE_KEY,
     REGIONAL_RULESET_OPT_OUT_STORAGE_KEY,
     getAutoRegionalRulesetIds,
@@ -118,17 +122,23 @@ const AUTO_PROMOTION_ALARM = 'auto-promotion-expire';
 const AUTO_PROMOTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const REMOTE_COSMETICS_RUNTIME_STATS_KEY = 'remoteCosmeticsRuntimeStatsV1';
 const REMOTE_COSMETICS_RUNTIME_STATS_TTL_MS = 24 * 60 * 60 * 1000;
-const LIVE_RUNTIME_REFRESH_FILES = Object.freeze([
+const ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object.freeze([
+    '/shared/public-suffix-data.js',
     '/shared/site-key-resolver.js',
     '/js/scripting/breakage-guard.js',
     '/js/scripting/shadow-dom-helper.js',
     '/js/scripting/remote-cosmetics.js',
     '/js/scripting/remote-tactics-bootstrap.js',
-    '/js/scripting/remote-tactics.js',
     '/js/scripting/native-heuristics.js',
     '/js/scripting/automation.js',
     '/js/scripting/post-hide-cleanup.js',
 ]);
+const MAIN_WORLD_LIVE_RUNTIME_REFRESH_FILES = Object.freeze([
+    '/js/scripting/remote-tactics.js',
+]);
+const DEFAULT_ACTION_TITLE = 'Talon Defender';
+const HOTFIX_RELOAD_ACTION_TITLE = 'Talon Defender: Reload tab to apply hotfix';
+const HOTFIX_RELOAD_BADGE_COLOR = '#f59e0b';
 const PUBLIC_SAFE_REGIONAL_RULESET_ID_SET = new Set(getPublicSafeRegionalRulesetIds());
 
 const autoBackoffCounts = new Map();
@@ -140,8 +150,142 @@ let autoPromotionState = {
     genericHigh: new Map(),
     complete: new Map(),
 };
+const reloadNeededTabs = new Map();
 let remoteCosmeticsRuntimeStats = {};
 let communityEmergencySyncState = {};
+
+const setActionBadgeTextColor = options => {
+    const setter = browser.action?.setBadgeTextColor;
+    if ( typeof setter !== 'function' ) { return Promise.resolve(); }
+    return Promise.resolve(setter(options)).catch(() => {});
+};
+
+const setActionBadgeBackgroundColor = options => {
+    const setter = browser.action?.setBadgeBackgroundColor;
+    if ( typeof setter !== 'function' ) { return Promise.resolve(); }
+    return Promise.resolve(setter(options)).catch(() => {});
+};
+
+const setActionBadgeText = options => {
+    const setter = browser.action?.setBadgeText;
+    if ( typeof setter !== 'function' ) { return Promise.resolve(); }
+    return Promise.resolve(setter(options)).catch(() => {});
+};
+
+const setActionTitle = options => {
+    const setter = browser.action?.setTitle;
+    if ( typeof setter !== 'function' ) { return Promise.resolve(); }
+    return Promise.resolve(setter(options)).catch(() => {});
+};
+
+const getReloadNeededState = tabId => {
+    const entry = reloadNeededTabs.get(tabId);
+    if ( entry instanceof Object === false ) {
+        return { reason: '' };
+    }
+    return {
+        reason: typeof entry.reason === 'string' ? entry.reason : '',
+        updatedAt: Number(entry.updatedAt) || 0,
+    };
+};
+
+const refreshReloadNeededBadgeForTab = async tabId => {
+    if ( Number.isInteger(tabId) === false || tabId < 0 ) { return false; }
+    if ( paywallActive ) { return false; }
+    const state = getReloadNeededState(tabId);
+    if ( state.reason === '' ) {
+        await Promise.all([
+            setActionBadgeText({ tabId, text: '' }),
+            setActionTitle({ tabId, title: DEFAULT_ACTION_TITLE }),
+        ]);
+        return false;
+    }
+    await Promise.all([
+        setActionBadgeBackgroundColor({ tabId, color: HOTFIX_RELOAD_BADGE_COLOR }),
+        setActionBadgeTextColor({ tabId, color: '#111827' }),
+        setActionBadgeText({ tabId, text: '!' }),
+        setActionTitle({ tabId, title: HOTFIX_RELOAD_ACTION_TITLE }),
+    ]);
+    return true;
+};
+
+const refreshReloadNeededBadges = async () => {
+    if ( paywallActive ) { return false; }
+    const jobs = [];
+    for ( const tabId of reloadNeededTabs.keys() ) {
+        jobs.push(refreshReloadNeededBadgeForTab(tabId));
+    }
+    await Promise.all(jobs);
+    return jobs.length !== 0;
+};
+
+const clearReloadNeededStateForTab = async tabId => {
+    if ( Number.isInteger(tabId) === false || tabId < 0 ) { return false; }
+    const hadEntry = reloadNeededTabs.delete(tabId);
+    if ( hadEntry === false ) { return false; }
+    await refreshReloadNeededBadgeForTab(tabId);
+    return true;
+};
+
+const markReloadNeededForTab = async (tabId, reason) => {
+    if ( Number.isInteger(tabId) === false || tabId < 0 ) { return false; }
+    const normalizedReason = typeof reason === 'string' ? reason.trim() : '';
+    if ( normalizedReason === '' ) { return false; }
+    reloadNeededTabs.set(tabId, {
+        reason: normalizedReason,
+        updatedAt: Date.now(),
+    });
+    await refreshReloadNeededBadgeForTab(tabId);
+    return true;
+};
+
+const listTabFrameUrls = async (tabId, fallbackUrl = '') => {
+    const urls = new Set();
+    if ( typeof fallbackUrl === 'string' && fallbackUrl !== '' ) {
+        urls.add(fallbackUrl);
+    }
+    const getAllFrames = browser.webNavigation?.getAllFrames;
+    if ( typeof getAllFrames !== 'function' ) {
+        return Array.from(urls);
+    }
+    try {
+        const frames = await getAllFrames({ tabId });
+        for ( const frame of frames || [] ) {
+            if ( typeof frame?.url !== 'string' || frame.url === '' ) { continue; }
+            urls.add(frame.url);
+        }
+    } catch (reason) {
+        if ( isIgnorableRuntimeError(reason) === false ) {
+            ubolErr(`reloadNeeded/getAllFrames/${reason}`);
+        }
+    }
+    return Array.from(urls);
+};
+
+const markTabsForRemoteScriptletReload = async reloadHint => {
+    if ( reloadHint instanceof Object === false || browser.tabs?.query === undefined ) {
+        return [];
+    }
+    let tabs = [];
+    try {
+        tabs = await browser.tabs.query({});
+    } catch (reason) {
+        ubolErr(`reloadNeeded/queryTabs/${reason}`);
+        return [];
+    }
+    const markedTabIds = [];
+    await Promise.all((tabs || []).map(async tab => {
+        const tabId = Number.isInteger(tab?.id) ? tab.id : -1;
+        if ( tabId < 0 ) { return; }
+        const frameUrls = await listTabFrameUrls(tabId, tab?.url || '');
+        if ( shouldReloadForFrameUrls(frameUrls, reloadHint) === false ) { return; }
+        const marked = await markReloadNeededForTab(tabId, REMOTE_SCRIPTLET_RELOAD_REASON);
+        if ( marked ) {
+            markedTabIds.push(tabId);
+        }
+    }));
+    return markedTabIds;
+};
 
 const serializeAutoBackoffState = () => {
     const out = {};
@@ -2254,6 +2398,7 @@ if ( chrome.webNavigation?.onBeforeNavigate ) {
 if ( chrome.webNavigation?.onCommitted ) {
     chrome.webNavigation.onCommitted.addListener(details => {
         if ( details?.frameId !== 0 ) { return; }
+        clearReloadNeededStateForTab(details.tabId).catch(ubolErr);
         const pendingTargetUrl = youtubeFollowupNeutralHopTargets.get(details.tabId);
         if ( typeof pendingTargetUrl === 'string' && pendingTargetUrl !== '' ) {
             if ( details.url === YOUTUBE_FOLLOWUP_NEUTRAL_HOP_URL ) {
@@ -2274,6 +2419,7 @@ if ( chrome.webNavigation?.onCommitted ) {
 if ( browser.tabs?.onRemoved ) {
     browser.tabs.onRemoved.addListener(tabId => {
         youtubeWatchTabState.delete(tabId);
+        clearReloadNeededStateForTab(tabId).catch(ubolErr);
         clearYouTubeFollowupHeaderStripRules(tabId).catch(ubolErr);
         clearYouTubeFollowupNextBlockRules(tabId).catch(ubolErr);
         clearYouTubeFollowupNeutralHop(tabId);
@@ -2406,9 +2552,10 @@ async function syncRegionalRulesetOptOutState(enabledRulesets) {
     return true;
 }
 
-function stopLiveRuntimeControllers() {
+function stopIsolatedRuntimeControllers() {
     const controllerTargets = [
         [ 'TalonRemoteCosmeticsController', [ 'stop', 'clear' ] ],
+        [ 'TalonRemoteTacticsBootstrapController', [ 'stop' ] ],
         [ 'TalonNativeHeuristicsController', [ 'stop' ] ],
         [ 'TalonAutomationController', [ 'stop' ] ],
         [ 'TalonPostHideCleanupController', [ 'stop' ] ],
@@ -2432,19 +2579,49 @@ function stopLiveRuntimeControllers() {
     return Promise.all(jobs).then(() => true);
 }
 
+function stopMainWorldRuntimeControllers() {
+    const controller = globalThis.TalonRemoteTacticsController;
+    if ( controller instanceof Object === false ) { return Promise.resolve(true); }
+    if ( typeof controller.stop !== 'function' ) { return Promise.resolve(true); }
+    try {
+        return Promise.resolve(controller.stop()).then(() => true);
+    } catch {
+    }
+    return Promise.resolve(true);
+}
+
+async function executeRuntimeRefreshLane(tabId, files, options = {}) {
+    if ( Array.isArray(files) === false || files.length === 0 ) { return false; }
+    await browser.scripting.executeScript({
+        files,
+        target: { tabId, allFrames: true },
+        ...options,
+    });
+    return true;
+}
+
+async function executeRuntimeStopLane(tabId, func, options = {}) {
+    await browser.scripting.executeScript({
+        func,
+        target: { tabId, allFrames: true },
+        ...options,
+    });
+    return true;
+}
+
 async function refreshRuntimeStateForTab(tabId, filteringLevel) {
     if ( browser.scripting?.executeScript === undefined ) { return false; }
     try {
         if ( filteringLevel >= MODE_OPTIMAL ) {
-            await browser.scripting.executeScript({
-                files: LIVE_RUNTIME_REFRESH_FILES,
-                target: { tabId },
+            await executeRuntimeRefreshLane(tabId, ISOLATED_LIVE_RUNTIME_REFRESH_FILES);
+            await executeRuntimeRefreshLane(tabId, MAIN_WORLD_LIVE_RUNTIME_REFRESH_FILES, {
+                world: 'MAIN',
             });
             return true;
         }
-        await browser.scripting.executeScript({
-            func: stopLiveRuntimeControllers,
-            target: { tabId },
+        await executeRuntimeStopLane(tabId, stopIsolatedRuntimeControllers);
+        await executeRuntimeStopLane(tabId, stopMainWorldRuntimeControllers, {
+            world: 'MAIN',
         });
         return true;
     } catch (reason) {
@@ -2486,12 +2663,33 @@ async function refreshRuntimeStateForOpenTabs() {
 }
 
 async function syncInjectablesAndRefreshTabs({ runtimeOnly = false } = {}) {
-    if ( isEntitled() === false ) { return false; }
+    if ( isEntitled() === false ) {
+        return {
+            registerResult: false,
+            runtimeRefreshed: false,
+            reloadHint: null,
+        };
+    }
+    let registerResult = true;
+    let reloadHint = null;
     if ( runtimeOnly !== true ) {
-        await registerInjectablesIfEntitled().catch(ubolErr);
+        registerResult = await registerInjectablesIfEntitled().catch(reason => ({
+            ok: false,
+            lastError: String(reason || 'register injectables failed'),
+        }));
+        reloadHint = registerResult instanceof Object && registerResult.ok === true
+            ? registerResult.remoteScriptletReloadHint ?? null
+            : null;
+        if ( reloadHint instanceof Object ) {
+            await markTabsForRemoteScriptletReload(reloadHint).catch(ubolErr);
+        }
     }
     await refreshRuntimeStateForOpenTabs().catch(ubolErr);
-    return true;
+    return {
+        registerResult,
+        runtimeRefreshed: true,
+        reloadHint,
+    };
 }
 
 function registerInjectablesIfEntitled() {
@@ -2559,16 +2757,21 @@ async function handleCommunitySyncResult(result) {
                     lastError: String(reason || failureReason || 'rollback failed'),
                 };
             });
-            const restoreResult = await registerInjectablesIfEntitled().catch(reason => ({
-                ok: false,
-                lastError: String(reason || 'rollback injectable restore failed'),
+            const restoreSyncResult = await syncInjectablesAndRefreshTabs({
+                runtimeOnly: false,
+            }).catch(reason => ({
+                registerResult: {
+                    ok: false,
+                    lastError: String(reason || 'rollback injectable restore failed'),
+                },
+                runtimeRefreshed: false,
             }));
+            const restoreResult = restoreSyncResult?.registerResult;
             if ( restoreResult instanceof Object && restoreResult.ok !== true ) {
                 await appendCommunitySyncError(
                     `rollback injectable restore failed: ${describeInjectableFailure(restoreResult)}`
                 );
             }
-            await refreshRuntimeStateForOpenTabs().catch(ubolErr);
             return {
                 ...result,
                 source: 'remote-rolled-back',
@@ -2580,7 +2783,10 @@ async function handleCommunitySyncResult(result) {
         try {
             if ( result.requiresInjectableRefresh ) {
                 await resetRemoteCosmeticsRuntimeStats().catch(ubolErr);
-                const injectableResult = await registerInjectablesIfEntitled();
+                const syncResult = await syncInjectablesAndRefreshTabs({
+                    runtimeOnly: false,
+                });
+                const injectableResult = syncResult?.registerResult;
                 if (
                     injectableResult instanceof Object
                         ? injectableResult.ok !== true
@@ -2588,7 +2794,6 @@ async function handleCommunitySyncResult(result) {
                 ) {
                     return rollbackActivation(describeInjectableFailure(injectableResult));
                 }
-                await refreshRuntimeStateForOpenTabs().catch(ubolErr);
             }
             await finalizeCommunityActivationSuccess(activation);
             return result;
@@ -2826,6 +3031,7 @@ async function disablePaywall({ broadcast = true } = {}) {
     } catch (reason) {
         ubolErr(`paywall/clearAllowAllRules/${reason}`);
     }
+    await refreshReloadNeededBadges().catch(ubolErr);
     await syncYouTubeWatchControlCookies({ forceWrite: true }).catch(ubolErr);
     await syncToolbarIconsForAllTabs().catch(ubolErr);
     if (broadcast) {
@@ -2935,7 +3141,7 @@ async function applyEntitlementStatusEffects(
         await disablePaywall({ broadcast });
     }
     if ( registerInjectablesOnEntitled ) {
-        await registerInjectablesIfEntitled().catch(ubolErr);
+        await syncInjectablesAndRefreshTabs({ runtimeOnly: false }).catch(ubolErr);
     }
 
     const forcedCommunitySync = shouldForceCommunitySyncAfterEntitlementRefresh({
@@ -3054,8 +3260,8 @@ async function ensureAnnoyancesForCompleteDefault() {
 async function onPermissionsRemoved() {
     const modified = await syncWithBrowserPermissions();
     if (modified === false) { return false; }
-    ensureAnnoyancesForCompleteDefault().catch(ubolErr);
-    registerInjectablesIfEntitled().catch(ubolErr);
+    await ensureAnnoyancesForCompleteDefault().catch(ubolErr);
+    syncInjectablesAndRefreshTabs({ runtimeOnly: false }).catch(ubolErr);
     return true;
 }
 
@@ -3066,10 +3272,10 @@ async function onPermissionsAdded(permissions) {
     if (details === undefined) {
         const modified = await syncWithBrowserPermissions();
         if (modified === false) { return; }
-        ensureAnnoyancesForCompleteDefault().catch(ubolErr);
+        await ensureAnnoyancesForCompleteDefault().catch(ubolErr);
         return Promise.all([
             updateSessionRules(),
-            registerInjectablesIfEntitled(),
+            syncInjectablesAndRefreshTabs({ runtimeOnly: false }),
         ]);
     }
     const defaultMode = await getDefaultFilteringMode();
@@ -3081,7 +3287,7 @@ async function onPermissionsAdded(permissions) {
     if (beforeLevel === details.afterLevel) { return; }
     const afterLevel = await setFilteringMode(details.hostname, details.afterLevel);
     if (afterLevel !== details.afterLevel) { return; }
-    await registerInjectablesIfEntitled();
+    await syncInjectablesAndRefreshTabs({ runtimeOnly: false });
             if (rulesetConfig.autoReload) {
                 self.setTimeout(() => {
                     browser.tabs.update(details.tabId, {
@@ -3124,7 +3330,7 @@ async function setDeveloperMode(state) {
         saveRulesetConfig(),
     ]);
     if ( cleanupResult.requiresInjectableRefresh ) {
-        await registerInjectablesIfEntitled().catch(ubolErr);
+        await syncInjectablesAndRefreshTabs({ runtimeOnly: false }).catch(ubolErr);
     }
 }
 
@@ -3901,7 +4107,7 @@ function onMessage(request, sender, callback) {
                 return syncRegionalRulesetOptOutState(result.enabledRulesets).then(() =>
                     saveRulesetConfig()
                 ).then(() => {
-                    return registerInjectablesIfEntitled();
+                    return syncInjectablesAndRefreshTabs({ runtimeOnly: false });
                 }).then(() => {
                     callback(result);
                 });
@@ -4033,6 +4239,14 @@ function onMessage(request, sender, callback) {
             return true;
         }
 
+        case 'getTabReloadNeededState': {
+            const requestedTabId = Number.isInteger(request.tabId)
+                ? request.tabId
+                : sender?.tab?.id;
+            callback(getReloadNeededState(requestedTabId));
+            return true;
+        }
+
         case 'getFilteringMode': {
             getFilteringMode(request.hostname).then(actualLevel => {
                 callback(actualLevel);
@@ -4098,7 +4312,7 @@ function onMessage(request, sender, callback) {
                 if (level === beforeLevel) { return beforeLevel; }
                 return setFilteringMode(hostname, level);
             }).then(afterLevel => {
-                return registerInjectablesIfEntitled()
+                return syncInjectablesAndRefreshTabs({ runtimeOnly: false })
                     .catch(ubolErr)
                     .then(() => afterLevel);
             }).then(afterLevel => {
@@ -4218,10 +4432,9 @@ function onMessage(request, sender, callback) {
                     callback(afterLevel);
                     return;
                 }
-                Promise.all([
-                    registerInjectablesIfEntitled().catch(ubolErr),
-                    ensureAnnoyancesForCompleteDefault().catch(ubolErr),
-                ])
+                ensureAnnoyancesForCompleteDefault()
+                    .catch(ubolErr)
+                    .then(() => syncInjectablesAndRefreshTabs({ runtimeOnly: false }).catch(ubolErr))
                     .then(() => syncToolbarIconsForAllTabs().catch(ubolErr))
                     .finally(() => {
                         callback(afterLevel);
@@ -4248,15 +4461,15 @@ function onMessage(request, sender, callback) {
                 return true;
             }
             setFilteringModeDetails(modes).then(() => {
-                return registerInjectablesIfEntitled().catch(ubolErr);
+                return ensureAnnoyancesForCompleteDefault().catch(ubolErr);
+            }).then(() => {
+                return syncInjectablesAndRefreshTabs({ runtimeOnly: false }).catch(ubolErr);
             }).then(() => {
                 getDefaultFilteringMode().then(defaultFilteringMode => {
                     broadcastMessage({ defaultFilteringMode });
                 });
-                return ensureAnnoyancesForCompleteDefault().catch(ubolErr);
+                return syncToolbarIconsForAllTabs().catch(ubolErr);
             }).then(() =>
-                syncToolbarIconsForAllTabs().catch(ubolErr)
-            ).then(() =>
                 getFilteringModeDetails(true)
             ).then(details => {
                 callback(details);
