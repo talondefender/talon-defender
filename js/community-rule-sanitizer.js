@@ -28,6 +28,10 @@ export const COMMUNITY_ALLOWED_REDIRECT_EXTENSION_PATHS = Object.freeze([
     '/web_accessible_resources/1x1.gif',
     '/web_accessible_resources/2x2.png',
     '/web_accessible_resources/32x32.png',
+    '/web_accessible_resources/noop-vast3.xml',
+    '/web_accessible_resources/noop-vmap1.xml',
+    '/web_accessible_resources/noop-0.1s.mp3',
+    '/web_accessible_resources/noop-1s.mp4',
 ]);
 
 const VALID_RESOURCE_TYPES = new Set([

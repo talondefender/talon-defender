@@ -110,6 +110,85 @@ test('schema v2 accepts safe allow, allowAllRequests, and packaged redirect exce
   assert.equal(redirectRule.condition.domainType, 'thirdParty');
 });
 
+test('schema v2 accepts passive packaged XML and media redirect stubs', () => {
+  const result = sanitizeCommunityRules([
+    {
+      action: {
+        type: 'redirect',
+        redirect: {
+          extensionPath: 'web_accessible_resources/noop-vast3.xml',
+        },
+      },
+      condition: {
+        initiatorDomains: ['video.example.com'],
+        requestDomains: ['ads.example.net'],
+        resourceTypes: ['xmlhttprequest'],
+        domainType: 'thirdParty',
+      },
+    },
+    {
+      action: {
+        type: 'redirect',
+        redirect: {
+          extensionPath: 'web_accessible_resources/noop-vmap1.xml',
+        },
+      },
+      condition: {
+        initiatorDomains: ['video.example.com'],
+        requestDomains: ['ads.example.net'],
+        resourceTypes: ['xmlhttprequest'],
+        domainType: 'thirdParty',
+      },
+    },
+    {
+      action: {
+        type: 'redirect',
+        redirect: {
+          extensionPath: 'web_accessible_resources/noop-0.1s.mp3',
+        },
+      },
+      condition: {
+        initiatorDomains: ['audio.example.com'],
+        requestDomains: ['ads.example.net'],
+        resourceTypes: ['media'],
+        domainType: 'thirdParty',
+      },
+    },
+    {
+      action: {
+        type: 'redirect',
+        redirect: {
+          extensionPath: 'web_accessible_resources/noop-1s.mp4',
+        },
+      },
+      condition: {
+        initiatorDomains: ['video.example.com'],
+        requestDomains: ['ads.example.net'],
+        resourceTypes: ['media'],
+        domainType: 'thirdParty',
+      },
+    },
+  ], {
+    schemaVersion: 2,
+  });
+
+  assert.equal(result.rules.length, 4);
+  assert.equal(result.byAction.redirect, 4);
+  assert.equal(result.dropped.unsupportedRedirectPath, 0);
+  assert.deepEqual(
+    result.rules.map(rule => rule.action.redirect.extensionPath),
+    [
+      '/web_accessible_resources/noop-vast3.xml',
+      '/web_accessible_resources/noop-vmap1.xml',
+      '/web_accessible_resources/noop-0.1s.mp3',
+      '/web_accessible_resources/noop-1s.mp4',
+    ]
+  );
+  assert.ok(
+    result.rules.every(rule => rule.priority === COMMUNITY_RULE_PRIORITY_REDIRECT)
+  );
+});
+
 test('schema v2 rejects unsafe exception scope, unsupported redirect targets, and unsupported actions', () => {
   const result = sanitizeCommunityRules([
     {

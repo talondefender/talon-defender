@@ -704,6 +704,91 @@ test('community sync prioritizes exact-host exceptions and redirects under dynam
   );
 });
 
+test('community sync applies passive packaged XML and media redirect stubs through the signed bundle path', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  remoteBundle = await createSignedBundle({
+    schemaVersion: 2,
+    rules: [
+      {
+        action: {
+          type: 'redirect',
+          redirect: {
+            extensionPath: 'web_accessible_resources/noop-vast3.xml',
+          },
+        },
+        condition: {
+          initiatorDomains: ['video.example.com'],
+          requestDomains: ['ads.example.net'],
+          resourceTypes: ['xmlhttprequest'],
+          domainType: 'thirdParty',
+        },
+      },
+      {
+        action: {
+          type: 'redirect',
+          redirect: {
+            extensionPath: 'web_accessible_resources/noop-vmap1.xml',
+          },
+        },
+        condition: {
+          initiatorDomains: ['video.example.com'],
+          requestDomains: ['ads.example.net'],
+          resourceTypes: ['xmlhttprequest'],
+          domainType: 'thirdParty',
+        },
+      },
+      {
+        action: {
+          type: 'redirect',
+          redirect: {
+            extensionPath: 'web_accessible_resources/noop-0.1s.mp3',
+          },
+        },
+        condition: {
+          initiatorDomains: ['audio.example.com'],
+          requestDomains: ['ads.example.net'],
+          resourceTypes: ['media'],
+          domainType: 'thirdParty',
+        },
+      },
+      {
+        action: {
+          type: 'redirect',
+          redirect: {
+            extensionPath: 'web_accessible_resources/noop-1s.mp4',
+          },
+        },
+        condition: {
+          initiatorDomains: ['video.example.com'],
+          requestDomains: ['ads.example.net'],
+          resourceTypes: ['media'],
+          domainType: 'thirdParty',
+        },
+      },
+    ],
+  });
+
+  const result = await syncCommunityRules({ force: true });
+  await finalizeCommunityActivationSuccess(result.activation);
+  const communityRules = dnrState.dynamicRules
+    .filter(rule => rule.id >= 6000000 && rule.id < 7000000);
+
+  assert.equal(result.source, 'remote');
+  assert.equal(result.applied.added, 4);
+  assert.equal(result.applied.byAction.redirect, 4);
+  assert.equal(result.applied.dropped.unsupportedRedirectPath, 0);
+  assert.deepEqual(
+    communityRules.map(rule => rule.action.redirect.extensionPath).sort(),
+    [
+      '/web_accessible_resources/noop-vast3.xml',
+      '/web_accessible_resources/noop-vmap1.xml',
+      '/web_accessible_resources/noop-0.1s.mp3',
+      '/web_accessible_resources/noop-1s.mp4',
+    ].sort()
+  );
+});
+
 test('community sync stores signed public directives and scriptlets without developer mode', { concurrency: false }, async () => {
   resetEnvironment();
 
