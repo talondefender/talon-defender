@@ -1,5 +1,6 @@
 import { t, pluralSuffix } from "../shared/i18n.js";
 import { SUBSCRIBE_URL, TRIAL_EXPIRED_URL, SUPPORT_URL, PRIVACY_URL, RECOVER_LICENSE_URL } from "../shared/links.js";
+import { ignoreRuntimeError, isIgnorableRuntimeError } from "../js/runtime-errors.js";
 
 const MODE_NONE = 0;
 const MODE_BASIC = 1;
@@ -84,6 +85,12 @@ const HARD_DENY_ERROR_CODES = new Set([
   "TRIAL_ENDED"
 ]);
 
+self.addEventListener("unhandledrejection", (event) => {
+  if (isIgnorableRuntimeError(event?.reason)) {
+    event.preventDefault();
+  }
+});
+
 init().catch((error) => {
   console.error("Popup init failed", error);
   // Fallback: never leave the popup blank if init fails unexpectedly.
@@ -94,6 +101,38 @@ init().catch((error) => {
     expiredOverlayEl.hidden = true;
   }
 });
+
+function clearCurrentTabState() {
+  currentHost = null;
+  currentTabId = null;
+  currentReloadNeededReason = "";
+  if (dynamicHostLabelEl) {
+    dynamicHostLabelEl.textContent = t("popupNoActiveTab");
+  }
+  renderRuntimeNotice();
+}
+
+async function reloadCurrentTab(context) {
+  if (!currentTabId) {
+    return false;
+  }
+  try {
+    await chrome.tabs.reload(currentTabId);
+    return true;
+  } catch (error) {
+    const ignorable = isIgnorableRuntimeError(error);
+    try {
+      ignoreRuntimeError(error);
+    } catch (unexpectedError) {
+      console.error(`Failed to ${context}`, unexpectedError);
+      return false;
+    }
+    if (ignorable) {
+      clearCurrentTabState();
+    }
+    return false;
+  }
+}
 
 async function init() {
   setDocumentLanguage();
@@ -457,17 +496,15 @@ function wireEvents() {
 
   if (runtimeNoticeReloadButton) {
     runtimeNoticeReloadButton.addEventListener("click", async () => {
-      if (!currentTabId) {
-        return;
-      }
       runtimeNoticeReloadButton.disabled = true;
       try {
-        await chrome.tabs.reload(currentTabId);
+        const reloaded = await reloadCurrentTab("reload tab for hotfix");
+        if (!reloaded) {
+          return;
+        }
         currentReloadNeededReason = "";
         renderRuntimeNotice();
         window.close();
-      } catch (error) {
-        console.error("Failed to reload tab for hotfix", error);
       } finally {
         runtimeNoticeReloadButton.disabled = false;
       }
@@ -1017,13 +1054,7 @@ async function activateLicenseKey(key, { statusEl } = {}) {
       statusEl.textContent = t("licenseStatusActivated");
       statusEl.className = "status-note";
     }
-    if (currentTabId) {
-      try {
-        await chrome.tabs.reload(currentTabId);
-      } catch (_error) {
-        // ignore
-      }
-    }
+    await reloadCurrentTab("reload tab after license activation");
     return;
   }
 
@@ -1079,13 +1110,7 @@ async function setSiteEnabled(enabled) {
     await chrome.runtime.sendMessage({ what: "setFilteringModeDetails", modes: PAUSED_FILTERING_MODES });
   }
   await refreshFilteringState();
-  if (currentTabId) {
-    try {
-      await chrome.tabs.reload(currentTabId);
-    } catch (_error) {
-      // ignore
-    }
-  }
+  await reloadCurrentTab("reload tab after protection change");
 }
 
 async function setSiteMode(level) {
@@ -1111,13 +1136,7 @@ async function setSiteMode(level) {
       dynamicStatusEl.textContent = t("popupFilteringEnabledSite");
     }
   }
-  if (currentTabId) {
-    try {
-      await chrome.tabs.reload(currentTabId);
-    } catch (_error) {
-      // ignore
-    }
-  }
+  await reloadCurrentTab("reload tab after site filtering change");
 }
 
 

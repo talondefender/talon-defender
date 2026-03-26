@@ -4742,6 +4742,7 @@ function onCommand(command, tab) {
     switch (command) {
         case 'enter-picker-mode': {
             if (browser.scripting === undefined) { return; }
+            if ( Number.isInteger(tab?.id) === false ) { return; }
             browser.scripting.executeScript({
                 files: [
                     '/js/scripting/css-procedural-api.js',
@@ -4749,7 +4750,7 @@ function onCommand(command, tab) {
                     '/js/scripting/picker.js',
                 ],
                 target: { tabId: tab.id },
-            });
+            }).catch(ignoreRuntimeError);
             break;
         }
         default:

@@ -20,6 +20,7 @@
 */
 
 import { webext } from './ext-compat.js';
+import { isIgnorableRuntimeError } from './runtime-errors.js';
 
 /******************************************************************************/
 
@@ -34,27 +35,6 @@ export const webextFlavor = (( ) => {
 })();
 
 /******************************************************************************/
-
-const IGNORABLE_RUNTIME_ERRORS = [
-    'No tab with id',
-    'No window with id',
-    'Could not establish connection. Receiving end does not exist.',
-    'The message port closed before a response was received.',
-];
-
-const errorMessageFrom = error => {
-    if ( error && typeof error.message === 'string' ) { return error.message; }
-    if ( typeof error === 'string' ) { return error; }
-    return '';
-};
-
-const isIgnorableRuntimeError = error => {
-    const message = errorMessageFrom(error);
-    if ( message === '' ) { return false; }
-    return IGNORABLE_RUNTIME_ERRORS.some(snippet => message.includes(snippet));
-};
-
- /******************************************************************************/
 
 // The extension's service worker can be evicted at any time, so when we
 // send a message, we try a few more times when the message fails to be sent.

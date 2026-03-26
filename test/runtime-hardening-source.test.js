@@ -80,12 +80,17 @@ test('state-changing background entry points use unified injectable sync and exp
 test('popup surfaces reload-needed hotfix state with an explicit reload action', async () => {
   const htmlSource = await readSource('popup/popup.html');
   const jsSource = await readSource('popup/popup.js');
+  const reloadMatches = jsSource.match(/chrome\.tabs\.reload\(currentTabId\)/g) ?? [];
 
   assert.match(htmlSource, /id="runtimeNotice"/);
   assert.match(htmlSource, /id="runtimeNoticeReload"/);
+  assert.match(jsSource, /self\.addEventListener\("unhandledrejection", \(event\) => \{/);
+  assert.match(jsSource, /async function reloadCurrentTab\(context\)/);
+  assert.match(jsSource, /ignoreRuntimeError\(error\)/);
   assert.match(jsSource, /what: "getTabReloadNeededState"/);
   assert.match(jsSource, /currentReloadNeededReason === "remoteScriptletHotfix"/);
-  assert.match(jsSource, /chrome\.tabs\.reload\(currentTabId\)/);
+  assert.match(jsSource, /await reloadCurrentTab\("reload tab for hotfix"\)/);
+  assert.equal(reloadMatches.length, 1);
 });
 
 test('remote cosmetics uses local style ownership instead of background CSS messaging', async () => {
@@ -131,5 +136,14 @@ test('adaptive lanes opt into related fallback frames beyond scriptlets', async 
   assert.match(
     source,
     /id: 'post-hide-cleanup',[\s\S]*matchOriginAsFallback: true/
+  );
+});
+
+test('command-triggered picker injection suppresses only ignorable stale-tab failures', async () => {
+  const source = await readSource('js/background.js');
+
+  assert.match(
+    source,
+    /function onCommand\(command, tab\) \{[\s\S]*Number\.isInteger\(tab\?\.id\) === false[\s\S]*browser\.scripting\.executeScript\(\{[\s\S]*target: \{ tabId: tab\.id \},[\s\S]*\}\)\.catch\(ignoreRuntimeError\);/
   );
 });

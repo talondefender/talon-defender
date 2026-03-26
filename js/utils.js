@@ -23,6 +23,10 @@ import {
     browser,
     runtime,
 } from './ext.js';
+import {
+    isIgnorableRuntimeError,
+    ignoreRuntimeError,
+} from './runtime-errors.js';
 
 /******************************************************************************/
 
@@ -32,34 +36,6 @@ function parsedURLromOrigin(origin) {
     } catch {
     }
 }
-
-/******************************************************************************/
-
-const IGNORABLE_RUNTIME_ERRORS = [
-    'No tab with id',
-    'No window with id',
-    'Could not establish connection. Receiving end does not exist.',
-    'The message port closed before a response was received.',
-];
-
-const errorMessageFrom = error => {
-    if ( error && typeof error.message === 'string' ) { return error.message; }
-    if ( typeof error === 'string' ) { return error; }
-    return '';
-};
-
-const isIgnorableRuntimeError = error => {
-    const message = errorMessageFrom(error);
-    if ( message === '' ) { return false; }
-    return IGNORABLE_RUNTIME_ERRORS.some(snippet => message.includes(snippet));
-};
-
-const ignoreRuntimeError = error => {
-    // Some browser APIs may reject with an empty reason; do not turn that into "Uncaught undefined".
-    if ( error === undefined || error === null ) { return; }
-    if ( isIgnorableRuntimeError(error) ) { return; }
-    throw error;
-};
 
 const toBroaderHostname = hn => {
     if (hn === '*') { return ''; }
