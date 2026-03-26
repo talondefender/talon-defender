@@ -1508,6 +1508,41 @@ const snapshotToInjectableState = snapshot => ({
     tactics: snapshot?.publicTactics ?? null,
 });
 
+const buildCompiledInjectableSnapshot = compiled => ({
+    cosmetics: compiled?.cosmetics ?? null,
+    heuristics: compiled?.heuristics ?? null,
+    publicDirectives: Array.isArray(compiled?.publicDirectives)
+        ? compiled.publicDirectives
+        : null,
+    publicScriptlets: Array.isArray(compiled?.publicScriptlets)
+        ? compiled.publicScriptlets
+        : null,
+    publicTactics: Array.isArray(compiled?.publicTactics)
+        ? compiled.publicTactics
+        : null,
+    privateDirectives: null,
+    privateScriptlets: null,
+    legacyDirectives: null,
+    legacyScriptlets: null,
+});
+
+const compiledStateToInjectableState = compiled =>
+    snapshotToInjectableState(buildCompiledInjectableSnapshot(compiled));
+
+const hasStoredCompiledCommunityState = ({
+    rules,
+    meta,
+    injectableSnapshot,
+} = {}) => (
+    Array.isArray(rules) ||
+    meta instanceof Object ||
+    injectableSnapshot?.cosmetics instanceof Object ||
+    injectableSnapshot?.heuristics instanceof Object ||
+    Array.isArray(injectableSnapshot?.publicDirectives) ||
+    Array.isArray(injectableSnapshot?.publicScriptlets) ||
+    Array.isArray(injectableSnapshot?.publicTactics)
+);
+
 const readStoredCommunityInjectableState = async ( ) =>
     snapshotToInjectableState(await readStoredCommunityInjectableSnapshot());
 
@@ -1709,22 +1744,35 @@ async function applyFallback(reason, baseResult = {}) {
     }
     scheduleCommunityRetryAlarm();
 
-    const [ storedRules, storedMeta ] = await Promise.all([
+    const [
+        storedRules,
+        storedMeta,
+        storedInjectableSnapshot,
+    ] = await Promise.all([
         localRead(STORAGE_KEYS.rules),
         localRead(STORAGE_KEYS.meta),
+        readStoredCommunityInjectableSnapshot(),
     ]);
     let storedRestoreError = '';
-    if ( Array.isArray(storedRules) && storedRules.length !== 0 ) {
-        const applied = await updateCommunityRules(storedRules, {
-            source: 'stored',
-            version: storedMeta?.version,
-            schemaVersion: storedMeta?.schemaVersion,
-        });
+    if ( hasStoredCompiledCommunityState({
+        rules: storedRules,
+        meta: storedMeta,
+        injectableSnapshot: storedInjectableSnapshot,
+    }) ) {
+        const applied = await updateCommunityRules(
+            Array.isArray(storedRules) ? storedRules : [],
+            {
+                source: 'stored',
+                version: storedMeta?.version,
+                schemaVersion: storedMeta?.schemaVersion,
+            }
+        );
         storedRestoreError = getCommunityApplyError(applied);
         if ( storedRestoreError === '' ) {
             return {
                 source: 'stored',
                 applied,
+                meta: storedMeta instanceof Object ? storedMeta : null,
                 error: message,
                 requiresInjectableRefresh,
                 cleanupReason,
@@ -1995,13 +2043,7 @@ export async function syncCommunityRules({ force = false } = {}) {
         return applyFallback(error, privateStateResult);
     }
 
-    const afterInjectableState = snapshotToInjectableState({
-        cosmetics: compiled.cosmetics,
-        heuristics: compiled.heuristics,
-        directives: compiled.publicDirectives,
-        scriptlets: compiled.publicScriptlets,
-        tactics: compiled.publicTactics,
-    });
+    const afterInjectableState = compiledStateToInjectableState(compiled);
     const requiresInjectableRefresh = Boolean(
         privateStateResult.requiresInjectableRefresh ||
         hasCommunityInjectableStateChanged(beforeInjectableState, afterInjectableState)
@@ -2191,13 +2233,7 @@ export async function syncCommunityOverlayRules({
         } catch (error) {
             return persistOverlayError(String(error || 'overlay removal apply failed'));
         }
-        const afterInjectableState = snapshotToInjectableState({
-            cosmetics: compiled.cosmetics,
-            heuristics: compiled.heuristics,
-            directives: compiled.publicDirectives,
-            scriptlets: compiled.publicScriptlets,
-            tactics: compiled.publicTactics,
-        });
+        const afterInjectableState = compiledStateToInjectableState(compiled);
         return {
             source: 'overlay-removed',
             overlaySiteKey: normalizedSiteKey,
@@ -2382,13 +2418,7 @@ export async function syncCommunityOverlayRules({
     } catch (error) {
         return persistOverlayError(String(error || 'overlay apply failed'));
     }
-    const afterInjectableState = snapshotToInjectableState({
-        cosmetics: compiled.cosmetics,
-        heuristics: compiled.heuristics,
-        directives: compiled.publicDirectives,
-        scriptlets: compiled.publicScriptlets,
-        tactics: compiled.publicTactics,
-    });
+    const afterInjectableState = compiledStateToInjectableState(compiled);
     return {
         source: 'overlay',
         overlaySiteKey: normalizedSiteKey,

@@ -531,6 +531,164 @@ test('community sync falls back to stored rules when remote apply fails', { conc
   );
 });
 
+test('community sync treats stored extras-only state as last-known-good fallback state', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  const storedMeta = {
+    version: 'stored-extras-v1',
+    schemaVersion: 4,
+    ttlHours: 6,
+  };
+  await browserStub.storage.local.set({
+    communityBundleRules: [],
+    communityBundleMeta: storedMeta,
+    communityBundlePublicDirectives: [
+      {
+        id: 'stored-directive',
+        category: 'annoyances',
+        action: 'hide',
+        hosts: ['=video.example'],
+        selectors: ['.stored-directive'],
+        fallbackAction: undefined,
+        fallbackSelectors: [],
+        postActions: [],
+        maxApplies: undefined,
+      },
+    ],
+    communityBundlePublicScriptlets: [
+      {
+        rulesetId: 'ublock-filters',
+        token: 'abort-on-property-read',
+        hosts: ['video.example'],
+        world: 'MAIN',
+      },
+    ],
+    communityBundlePublicTactics: [
+      {
+        id: 'stored-tactic',
+        kind: 'jsonPrune',
+        hosts: ['=video.example'],
+        transport: 'fetch',
+        urlPathPrefixes: ['/api/player'],
+        jsonPaths: ['payload.adPlacements'],
+      },
+    ],
+  });
+
+  remoteBundle = await createSignedBundle({
+    rules: [
+      {
+        action: { type: 'block' },
+        condition: { urlFilter: '||remote.example^' },
+      },
+    ],
+    version: 'remote-v2',
+  });
+  dnrState.failCommunityUpdateCount = 1;
+
+  const result = await syncCommunityRules({ force: true });
+
+  assert.equal(result.source, 'stored');
+  assert.deepEqual(result.meta, storedMeta);
+  assert.equal(storageData.communityBundleMeta.version, 'stored-extras-v1');
+  assert.deepEqual(storageData.communityBundlePublicDirectives, [
+    {
+      id: 'stored-directive',
+      category: 'annoyances',
+      action: 'hide',
+      hosts: ['=video.example'],
+      selectors: ['.stored-directive'],
+      fallbackAction: undefined,
+      fallbackSelectors: [],
+      postActions: [],
+      maxApplies: undefined,
+    },
+  ]);
+  assert.deepEqual(storageData.communityBundlePublicScriptlets, [
+    {
+      rulesetId: 'ublock-filters',
+      token: 'abort-on-property-read',
+      hosts: ['video.example'],
+      world: 'MAIN',
+    },
+  ]);
+  assert.deepEqual(storageData.communityBundlePublicTactics, [
+    {
+      id: 'stored-tactic',
+      kind: 'jsonPrune',
+      hosts: ['=video.example'],
+      transport: 'fetch',
+      urlPathPrefixes: ['/api/player'],
+      jsonPaths: ['payload.adPlacements'],
+    },
+  ]);
+  assert.deepEqual(
+    dnrState.dynamicRules.filter(rule => rule.id >= 6000000 && rule.id < 7000000),
+    []
+  );
+});
+
+test('community sync uses packaged fallback when no stored compiled community state exists', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  remoteBundle = await createSignedBundle({
+    rules: [
+      {
+        action: { type: 'block' },
+        condition: { urlFilter: '||remote.example^' },
+      },
+    ],
+    version: 'remote-v2',
+  });
+  dnrState.failCommunityUpdateCount = 1;
+
+  const result = await syncCommunityRules({ force: true });
+  const communityRules = dnrState.dynamicRules
+    .filter(rule => rule.id >= 6000000 && rule.id < 7000000);
+
+  assert.equal(result.source, 'fallback');
+  assert.match(result.error, /apply failed: simulated community apply failure/);
+  assert.equal(communityRules.length, fallbackRules.length);
+});
+
+test('community sync records combined errors when stored restore fails before packaged fallback succeeds', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  await browserStub.storage.local.set({
+    communityBundleRules: [
+      {
+        action: { type: 'block' },
+        condition: { urlFilter: '||stored.example^' },
+      },
+    ],
+    communityBundleMeta: {
+      version: 'stored-v1',
+      schemaVersion: 2,
+      ttlHours: 6,
+    },
+  });
+
+  remoteBundle = await createSignedBundle({
+    rules: [
+      {
+        action: { type: 'block' },
+        condition: { urlFilter: '||remote.example^' },
+      },
+    ],
+    version: 'remote-v2',
+  });
+  dnrState.failCommunityUpdateCount = 2;
+
+  const result = await syncCommunityRules({ force: true });
+  const communityRules = dnrState.dynamicRules
+    .filter(rule => rule.id >= 6000000 && rule.id < 7000000);
+
+  assert.equal(result.source, 'fallback');
+  assert.match(result.error, /apply failed: simulated community apply failure/);
+  assert.match(result.error, /stored restore failed: simulated community apply failure/);
+  assert.equal(communityRules.length, fallbackRules.length);
+});
+
 test('community sync stores signed protected exact-host cosmetics and aligned heuristic tuning', { concurrency: false }, async () => {
   resetEnvironment();
 
@@ -984,6 +1142,51 @@ test('community sync stores signed public directives and scriptlets without deve
   assert.equal(Object.hasOwn(storageData, 'communityBundleScriptlets'), false);
 });
 
+test('community sync marks directives-only baseline extras for immediate injectable refresh', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  remoteBundle = await createSignedBundle({
+    schemaVersion: 3,
+    rules: [],
+    directives: [
+      {
+        id: 'public-directive-only',
+        category: 'annoyances',
+        action: 'hide',
+        hosts: ['=video.example'],
+        selectors: ['.directive-only'],
+      },
+    ],
+  });
+
+  const result = await syncCommunityRules({ force: true });
+
+  assert.equal(result.source, 'remote');
+  assert.equal(result.requiresInjectableRefresh, true);
+});
+
+test('community sync marks scriptlets-only baseline extras for immediate injectable refresh', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  remoteBundle = await createSignedBundle({
+    schemaVersion: 3,
+    rules: [],
+    scriptlets: [
+      {
+        rulesetId: 'ublock-filters',
+        token: 'abort-on-property-read',
+        hosts: ['video.example'],
+        world: 'MAIN',
+      },
+    ],
+  });
+
+  const result = await syncCommunityRules({ force: true });
+
+  assert.equal(result.source, 'remote');
+  assert.equal(result.requiresInjectableRefresh, true);
+});
+
 test('community sync stores signed public tactics from schema v4 bundles', { concurrency: false }, async () => {
   resetEnvironment();
 
@@ -1051,6 +1254,30 @@ test('community sync stores signed public tactics from schema v4 bundles', { con
   assert.equal(storageData.communityBundleMeta.publicTacticsCount, 2);
   assert.equal(storageData.communityBundleMeta.tacticsCount, 2);
   assert.equal(storageData.communityBundleMeta.tacticsHostCount, 1);
+});
+
+test('community sync marks tactics-only baseline extras for immediate injectable refresh', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  remoteBundle = await createSignedBundle({
+    schemaVersion: 4,
+    rules: [],
+    tactics: [
+      {
+        id: 'tactic-only',
+        kind: 'jsonPrune',
+        hosts: ['video.example'],
+        transport: 'fetch',
+        urlPathPrefixes: ['/api/player'],
+        jsonPaths: ['payload.adPlacements'],
+      },
+    ],
+  });
+
+  const result = await syncCommunityRules({ force: true });
+
+  assert.equal(result.source, 'remote');
+  assert.equal(result.requiresInjectableRefresh, true);
 });
 
 test('community sync drops internal Talon first-party scopes across remote rules and extras', { concurrency: false }, async () => {
@@ -1584,6 +1811,53 @@ test('overlay sync keeps the stored overlay on 204 and refreshes the per-site sy
     baseline: baselineBundle.version,
     known: 'overlay.204.1',
   });
+});
+
+test('overlay extras-only updates and removals request immediate injectable refresh', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  const baselineBundle = await createSignedBundle({
+    version: 'baseline.extras.1',
+    schemaVersion: 3,
+    rules: [],
+  });
+  await applyBaselineBundle(baselineBundle);
+
+  remoteOverlayResponses.set('video.example', {
+    status: 200,
+    body: await createSignedOverlayBundle({
+      siteKey: 'video.example',
+      baselineVersion: baselineBundle.version,
+      version: 'overlay.extras.1',
+      rules: [],
+      directives: [
+        {
+          id: 'overlay-directive-only',
+          action: 'hide',
+          hosts: ['=video.example'],
+          selectors: ['.overlay-only'],
+        },
+      ],
+      schemaVersion: 3,
+    }),
+  });
+
+  const applied = await applyOverlayBundle('video.example', {
+    reason: 'overlay-extras-only',
+  });
+
+  remoteOverlayResponses.set('video.example', {
+    status: 404,
+    body: null,
+  });
+  const removed = await applyOverlayBundle('video.example', {
+    reason: 'overlay-extras-removed',
+  });
+
+  assert.equal(applied.source, 'overlay');
+  assert.equal(applied.requiresInjectableRefresh, true);
+  assert.equal(removed.source, 'overlay-removed');
+  assert.equal(removed.requiresInjectableRefresh, true);
 });
 
 test('overlay sync removes revoked site overlays and recompiles the effective community bundle from baseline only', { concurrency: false }, async () => {
