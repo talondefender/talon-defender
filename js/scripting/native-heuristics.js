@@ -224,19 +224,61 @@
         }
     };
 
+    const normalizeHostnameCandidate = value => {
+        if ( typeof value !== 'string' ) { return ''; }
+        return value.trim().toLowerCase().replace(/^\.+|\.+$/g, '');
+    };
+
+    const normalizeScopedHostPattern = value => {
+        if ( typeof value !== 'string' ) { return ''; }
+        const trimmed = value.trim().toLowerCase();
+        if ( trimmed === '' ) { return ''; }
+        if ( trimmed.includes('://') || trimmed.includes('/') ) { return ''; }
+        if ( trimmed === '*' || trimmed === 'all-urls' ) { return trimmed; }
+
+        const normalizeBareHostname = candidate => {
+            const normalized = normalizeHostnameCandidate(candidate);
+            if ( normalized === '' ) { return ''; }
+            if ( normalized.includes('*') || normalized === 'all-urls' ) { return ''; }
+            return normalized;
+        };
+
+        if ( trimmed.startsWith('=') ) {
+            const bare = normalizeBareHostname(trimmed.slice(1));
+            return bare === '' ? '' : `=${bare}`;
+        }
+        if ( trimmed.startsWith('*.') ) {
+            const bare = normalizeBareHostname(trimmed.slice(2));
+            return bare === '' ? '' : `*.${bare}`;
+        }
+        if ( trimmed.endsWith('.*') ) {
+            const bare = normalizeBareHostname(trimmed.slice(0, -2));
+            return bare === '' ? '' : `${bare}.*`;
+        }
+        return normalizeBareHostname(trimmed);
+    };
+
     const patternMatchesHostname = (pattern, hn) => {
-        if (typeof pattern !== 'string') { return false; }
-        const p = pattern.toLowerCase();
+        const delegated = guard?.hostPatternMatches;
+        if ( typeof delegated === 'function' ) {
+            return delegated(pattern, hn) === true;
+        }
+        const p = normalizeScopedHostPattern(pattern);
+        const normalizedHostname = normalizeHostnameCandidate(hn);
+        if ( p === '' || normalizedHostname === '' ) { return false; }
         if (p === '*' || p === 'all-urls') { return true; }
+        if (p.startsWith('=')) {
+            return normalizedHostname === p.slice(1);
+        }
         if (p.startsWith('*.')) {
             const bare = p.slice(2);
-            return hn === bare || hn.endsWith(`.${bare}`);
+            return normalizedHostname === bare || normalizedHostname.endsWith(`.${bare}`);
         }
         if (p.endsWith('.*')) {
             const bare = p.slice(0, -2);
-            return hn === bare || hn.startsWith(`${bare}.`);
+            return normalizedHostname === bare || normalizedHostname.startsWith(`${bare}.`);
         }
-        return hn === p || hn.endsWith(`.${p}`);
+        return normalizedHostname === p || normalizedHostname.endsWith(`.${p}`);
     };
 
     const isVisible = el => {

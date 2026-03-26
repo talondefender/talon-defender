@@ -7,7 +7,9 @@ const testDir = path.join(rootDir, "test");
 const allowedTestFiles = new Set([
   "test/auto-backoff.test.js",
   "test/automation-directives.test.js",
+  "test/breakage-guard.test.js",
   "test/breakage-policy.test.js",
+  "test/community-emergency-sync.test.js",
   "test/community-rule-sanitizer.test.js",
   "test/community-sync-application.test.js",
   "test/community-sync-diagnostics.test.js",

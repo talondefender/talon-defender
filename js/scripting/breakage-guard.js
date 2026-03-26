@@ -72,12 +72,50 @@ const CHECKOUT_HINT_SELECTOR = [
 ].join(',');
 const MAX_MUTATION_AUDIT_PER_PAGE = 6;
 
+const normalizeHostnameCandidate = value => {
+    if ( typeof value !== 'string' ) { return ''; }
+    return value.trim().toLowerCase().replace(/^\.+|\.+$/g, '');
+};
+
+const normalizeScopedHostPattern = value => {
+    if ( typeof value !== 'string' ) { return ''; }
+    const trimmed = value.trim().toLowerCase();
+    if ( trimmed === '' ) { return ''; }
+    if ( trimmed.includes('://') || trimmed.includes('/') ) { return ''; }
+    if ( trimmed === '*' || trimmed === 'all-urls' ) { return trimmed; }
+
+    const normalizeBareHostname = candidate => {
+        const normalized = normalizeHostnameCandidate(candidate);
+        if ( normalized === '' ) { return ''; }
+        if ( normalized.includes('*') || normalized === 'all-urls' ) { return ''; }
+        return normalized;
+    };
+
+    if ( trimmed.startsWith('=') ) {
+        const bare = normalizeBareHostname(trimmed.slice(1));
+        return bare === '' ? '' : `=${bare}`;
+    }
+    if ( trimmed.startsWith('*.') ) {
+        const bare = normalizeBareHostname(trimmed.slice(2));
+        return bare === '' ? '' : `*.${bare}`;
+    }
+    if ( trimmed.endsWith('.*') ) {
+        const bare = normalizeBareHostname(trimmed.slice(0, -2));
+        return bare === '' ? '' : `${bare}.*`;
+    }
+    return normalizeBareHostname(trimmed);
+};
+
+const isExactHostPattern = value => normalizeScopedHostPattern(value).startsWith('=');
+
 const patternMatchesHostname = (pattern, hostname) => {
-    if ( typeof pattern !== 'string' || typeof hostname !== 'string' ) { return false; }
-    const p = pattern.trim().toLowerCase();
-    const hn = hostname.trim().toLowerCase();
+    const p = normalizeScopedHostPattern(pattern);
+    const hn = normalizeHostnameCandidate(hostname);
     if ( p === '' || hn === '' ) { return false; }
     if ( p === '*' || p === 'all-urls' ) { return true; }
+    if ( p.startsWith('=') ) {
+        return hn === p.slice(1);
+    }
     if ( p.startsWith('*.') ) {
         const bare = p.slice(2);
         return hn === bare || hn.endsWith(`.${bare}`);
@@ -410,14 +448,22 @@ const shouldAllowDirective = directive => {
     if ( selectors.length === 0 ) { return false; }
 
     const hosts = Array.isArray(directive.hosts) ? directive.hosts : [];
-    const hasWildcardHost = hosts.some(h => typeof h === 'string' && (h === '*' || h === 'all-urls'));
+    const matchingHosts = hosts.filter(h => patternMatchesHostname(h, hostname));
+    const hasWildcardHost = hosts.some(h => {
+        const normalized = normalizeScopedHostPattern(h);
+        return normalized === '*' || normalized === 'all-urls';
+    });
     if ( protection.allowedRiskTier < RISK_TIERS.high ) {
-        if ( action === 'remove' ) { return false; }
-        if ( category !== 'consent' ) { return false; }
-        if ( hasWildcardHost && action !== 'click' && action !== 'hide' ) { return false; }
+        if ( action !== 'hide' ) { return false; }
+        if ( matchingHosts.length === 0 ) { return false; }
+        if ( matchingHosts.some(host => isExactHostPattern(host) === false) ) {
+            return false;
+        }
         if ( directive.fallbackAction && directive.fallbackAction !== 'hide' ) { return false; }
         if ( directive.fallbackAction === 'hide' ) {
-            const fallback = filterSelectors(directive.fallbackSelectors, { requireKnownConsent: true });
+            const fallback = filterSelectors(directive.fallbackSelectors, {
+                requireKnownConsent: category === 'consent',
+            });
             if ( fallback.length === 0 ) { return false; }
         }
     } else if ( action === 'remove' && hasWildcardHost ) {
@@ -596,6 +642,8 @@ self.TalonBreakageGuard = {
     isSubsystemSuppressed,
     auditAfterMutation,
     reportBreakageSignal,
+    hostPatternMatches: patternMatchesHostname,
+    isExactHostPattern,
 };
 
 })();

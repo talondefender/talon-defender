@@ -7,6 +7,7 @@ test('community sync diagnostics summary reports schema version, action counts, 
   const lastAttempt = Date.UTC(2026, 2, 25, 18, 15, 0, 0);
   const lastSuccess = Date.UTC(2026, 2, 25, 18, 0, 0, 0);
   const lastPartialDnrRepair = Date.UTC(2026, 2, 25, 17, 55, 0, 0);
+  const lastEmergencySyncAt = Date.UTC(2026, 2, 25, 17, 50, 0, 0);
   const summary = buildCommunitySyncDiagnosticsSummary({
     meta: {
       version: '2026.03.25.1',
@@ -16,8 +17,10 @@ test('community sync diagnostics summary reports schema version, action counts, 
       hotfixLane: 'public',
       cosmeticsCount: 6,
       hostCosmeticsCount: 5,
+      protectedCosmeticsCount: 2,
       heuristicRegexCount: 2,
       directivesCount: 4,
+      protectedDirectivesCount: 1,
       scriptletsCount: 3,
       publicDirectivesCount: 3,
       publicScriptletsCount: 2,
@@ -25,6 +28,10 @@ test('community sync diagnostics summary reports schema version, action counts, 
       proofScriptletsCount: 1,
       partialDnrRepairCount: 1,
       lastPartialDnrRepair,
+      emergencySyncRollingCount: 3,
+      lastEmergencySyncAt,
+      lastEmergencySyncDomain: 'checkout.example.com',
+      lastEmergencySyncReason: 'blocked-navigation-threshold',
       liveRemoteCosmeticChunkCount: 5,
       liveRemoteCosmeticDroppedAtApply: 2,
       liveRemoteCosmeticHostCount: 2,
@@ -69,8 +76,10 @@ test('community sync diagnostics summary reports schema version, action counts, 
   assert.equal(summary.activeExceptions, 3);
   assert.equal(summary.cosmeticsCount, 6);
   assert.equal(summary.hostCosmeticsCount, 5);
+  assert.equal(summary.protectedCosmeticsCount, 2);
   assert.equal(summary.heuristicRegexCount, 2);
   assert.equal(summary.directivesCount, 4);
+  assert.equal(summary.protectedDirectivesCount, 1);
   assert.equal(summary.scriptletsCount, 3);
   assert.equal(summary.publicDirectivesCount, 3);
   assert.equal(summary.publicScriptletsCount, 2);
@@ -82,6 +91,10 @@ test('community sync diagnostics summary reports schema version, action counts, 
   assert.equal(summary.partialDnrRepairSeen, true);
   assert.equal(summary.partialDnrRepairCount, 1);
   assert.equal(summary.lastPartialDnrRepair, new Date(lastPartialDnrRepair).toISOString());
+  assert.equal(summary.emergencySyncRollingCount, 3);
+  assert.equal(summary.lastEmergencySync, new Date(lastEmergencySyncAt).toISOString());
+  assert.equal(summary.lastEmergencySyncDomain, 'checkout.example.com');
+  assert.equal(summary.lastEmergencySyncReason, 'blocked-navigation-threshold');
   assert.equal(summary.liveRemoteCosmeticChunkCount, 5);
   assert.equal(summary.liveRemoteCosmeticDroppedAtApply, 2);
   assert.equal(summary.liveRemoteCosmeticHostCount, 2);

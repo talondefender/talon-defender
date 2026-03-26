@@ -1,5 +1,6 @@
 import {
     registrableDomain as resolveRegistrableDomain,
+    normalizeSiteKeyHostname,
 } from './site-key.js';
 
 export const RISK_TIERS = Object.freeze({
@@ -265,12 +266,49 @@ export function getScriptletHostExclusions(scriptletId, options = {}) {
         : [];
 }
 
+export function normalizeScopedHostPattern(value, { allowGlobal = true } = {}) {
+    if ( typeof value !== 'string' ) { return ''; }
+    const trimmed = value.trim().toLowerCase();
+    if ( trimmed === '' ) { return ''; }
+    if ( trimmed.includes('://') || trimmed.includes('/') ) { return ''; }
+    if ( allowGlobal && (trimmed === '*' || trimmed === 'all-urls') ) {
+        return trimmed;
+    }
+
+    const normalizeBareHostname = candidate => {
+        const normalized = normalizeSiteKeyHostname(candidate);
+        if ( normalized === '' ) { return ''; }
+        if ( normalized.includes('*') || normalized === 'all-urls' ) { return ''; }
+        return normalized;
+    };
+
+    if ( trimmed.startsWith('=') ) {
+        const bare = normalizeBareHostname(trimmed.slice(1));
+        return bare === '' ? '' : `=${bare}`;
+    }
+    if ( trimmed.startsWith('*.') ) {
+        const bare = normalizeBareHostname(trimmed.slice(2));
+        return bare === '' ? '' : `*.${bare}`;
+    }
+    if ( trimmed.endsWith('.*') ) {
+        const bare = normalizeBareHostname(trimmed.slice(0, -2));
+        return bare === '' ? '' : `${bare}.*`;
+    }
+    return normalizeBareHostname(trimmed);
+}
+
+export function isExactHostnamePattern(value) {
+    return normalizeScopedHostPattern(value, { allowGlobal: false }).startsWith('=');
+}
+
 export function patternMatchesHostname(pattern, hostname) {
-    if ( typeof pattern !== 'string' || typeof hostname !== 'string' ) { return false; }
-    const p = pattern.trim().toLowerCase();
-    const hn = hostname.trim().toLowerCase();
+    const p = normalizeScopedHostPattern(pattern);
+    const hn = normalizeSiteKeyHostname(hostname);
     if ( p === '' || hn === '' ) { return false; }
     if ( p === '*' || p === 'all-urls' ) { return true; }
+    if ( p.startsWith('=') ) {
+        return hn === p.slice(1);
+    }
     if ( p.startsWith('*.') ) {
         const bare = p.slice(2);
         return hn === bare || hn.endsWith(`.${bare}`);
@@ -369,19 +407,28 @@ export function classifyProtectedSurface(hostname, pathname = '') {
 }
 
 export function patternCouldMatchProtectedDomain(pattern) {
-    if ( typeof pattern !== 'string' ) { return false; }
-    const p = pattern.trim().toLowerCase();
+    const p = normalizeScopedHostPattern(pattern);
     if ( p === '' ) { return false; }
     if ( p === '*' || p === 'all-urls' ) { return true; }
-    if ( p.endsWith('.gov') || p.endsWith('.edu') || p.endsWith('.ac.uk') || p.endsWith('.nhs.uk') ) {
+    const candidate = p.startsWith('=') ? p.slice(1) : p;
+    if (
+        candidate.endsWith('.gov') ||
+        candidate.endsWith('.edu') ||
+        candidate.endsWith('.ac.uk') ||
+        candidate.endsWith('.nhs.uk')
+    ) {
         return true;
     }
     for ( const rule of PROTECTED_DOMAIN_RULES ) {
-        if ( patternMatchesHostname(p, rule.pattern) || patternMatchesHostname(rule.pattern, p) ) {
+        if (
+            patternMatchesHostname(p, rule.pattern) ||
+            patternMatchesHostname(rule.pattern, candidate)
+        ) {
             return true;
         }
     }
-    return /(login|signin|account|auth|checkout|billing|payment|wallet|docs|drive|search)/i.test(p);
+    return /(login|signin|account|auth|checkout|billing|payment|wallet|docs|drive|search)/i
+        .test(candidate);
 }
 
 export function selectorHasNuisanceHint(selector) {

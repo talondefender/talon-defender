@@ -402,7 +402,7 @@ test('community sync falls back to stored rules when remote apply fails', { conc
   );
 });
 
-test('community sync stores signed global cosmetics and heuristic selector tuning', { concurrency: false }, async () => {
+test('community sync stores signed protected exact-host cosmetics and aligned heuristic tuning', { concurrency: false }, async () => {
   resetEnvironment();
 
   remoteBundle = await createSignedBundle({
@@ -415,18 +415,22 @@ test('community sync stores signed global cosmetics and heuristic selector tunin
     cosmetics: {
       all: ['.global-banner', 'body'],
       hosts: {
+        '=accounts.google.com': ['.checkout-promo'],
         'accounts.google.com': ['.should-drop'],
         'news.example': ['.inline-promo'],
       },
     },
     heuristics: {
-      disableHosts: ['example.com'],
+      disableHosts: ['=example.com'],
       labelRegexes: ['sponsored', '('],
       labelSelectors: ['.sponsored-label', 'body', '.sponsored-label'],
       widgetSelectors: ['ins.adsbygoogle', 'html'],
       containerStopSelectors: ['.ad-slot'],
       minScore: 3,
       minScoreLowConfidence: 4,
+      minContainerHeight: 30,
+      minContainerWidth: 60,
+      maxLabelTextLength: 80,
     },
   });
 
@@ -437,20 +441,25 @@ test('community sync stores signed global cosmetics and heuristic selector tunin
   assert.deepEqual(storageData.communityBundleCosmetics, {
     all: ['.global-banner'],
     hosts: {
+      '=accounts.google.com': ['.checkout-promo'],
       'news.example': ['.inline-promo'],
     },
   });
   assert.deepEqual(storageData.communityBundleHeuristics, {
-    disableHosts: ['example.com'],
+    disableHosts: ['=example.com'],
     labelRegexes: ['sponsored'],
     labelSelectors: ['.sponsored-label', '.sponsored-label'],
     widgetSelectors: ['ins.adsbygoogle'],
     containerStopSelectors: ['.ad-slot'],
-    minScore: 4,
-    minScoreLowConfidence: 5,
+    maxLabelTextLength: 80,
+    minContainerHeight: 30,
+    minContainerWidth: 60,
+    minScore: 3,
+    minScoreLowConfidence: 4,
   });
-  assert.equal(storageData.communityBundleMeta.cosmeticsCount, 2);
-  assert.equal(storageData.communityBundleMeta.hostCosmeticsCount, 1);
+  assert.equal(storageData.communityBundleMeta.cosmeticsCount, 3);
+  assert.equal(storageData.communityBundleMeta.hostCosmeticsCount, 2);
+  assert.equal(storageData.communityBundleMeta.protectedCosmeticsCount, 1);
   assert.equal(storageData.communityBundleMeta.heuristicRegexCount, 1);
   assert.ok(typeof storageData.communityBundleLastSuccess === 'number');
   assert.equal(Object.hasOwn(storageData, 'communityBundleLastError'), false);
@@ -577,13 +586,25 @@ test('community sync stores signed public directives and scriptlets without deve
     ],
     directives: [
       {
-        id: 'public-hotfix-consent',
-        category: 'consent',
+        id: 'public-hotfix-checkout',
+        category: 'annoyances',
         action: 'hide',
-        hosts: ['news.example'],
-        selectors: ['#onetrust-consent-sdk'],
+        hosts: ['=checkout.shopify.com'],
+        selectors: ['.checkout-promo'],
         fallbackAction: 'hide',
-        fallbackSelectors: ['#onetrust-consent-sdk'],
+        fallbackSelectors: ['.checkout-promo-fallback'],
+      },
+      {
+        id: 'reject-protected-suffix-host',
+        action: 'hide',
+        hosts: ['checkout.shopify.com'],
+        selectors: ['.should-drop'],
+      },
+      {
+        id: 'reject-protected-click',
+        action: 'click',
+        hosts: ['=checkout.shopify.com'],
+        selectors: ['.should-drop'],
       },
       {
         id: 'reject-broad-hosts',
@@ -592,6 +613,12 @@ test('community sync stores signed public directives and scriptlets without deve
       },
     ],
     scriptlets: [
+      {
+        rulesetId: 'ublock-filters',
+        token: 'abort-on-property-read',
+        hosts: ['=checkout.shopify.com'],
+        world: 'MAIN',
+      },
       {
         rulesetId: 'ublock-filters',
         token: 'abort-on-property-read',
@@ -616,18 +643,19 @@ test('community sync stores signed public directives and scriptlets without deve
   assert.equal(storageData.communityBundleMeta.retryMinutes, 15);
   assert.equal(storageData.communityBundleMeta.hotfixLane, 'public');
   assert.equal(storageData.communityBundleMeta.publicDirectivesCount, 1);
+  assert.equal(storageData.communityBundleMeta.protectedDirectivesCount, 1);
   assert.equal(storageData.communityBundleMeta.publicScriptletsCount, 1);
   assert.equal(storageData.communityBundleMeta.proofDirectivesCount, 0);
   assert.equal(storageData.communityBundleMeta.proofScriptletsCount, 0);
   assert.deepEqual(storageData.communityBundlePublicDirectives, [
     {
-      id: 'public-hotfix-consent',
-      category: 'consent',
-      hosts: ['news.example'],
+      id: 'public-hotfix-checkout',
+      category: 'annoyances',
+      hosts: ['=checkout.shopify.com'],
       action: 'hide',
-      selectors: ['#onetrust-consent-sdk'],
+      selectors: ['.checkout-promo'],
       fallbackAction: 'hide',
-      fallbackSelectors: ['#onetrust-consent-sdk'],
+      fallbackSelectors: ['.checkout-promo-fallback'],
       postActions: [],
       maxApplies: undefined,
     },

@@ -11,9 +11,10 @@ import { isDeveloperModeAllowed, rulesetConfig } from './config.js';
 import { ubolErr, ubolLog } from './debug.js';
 import { updateCommunityRules } from './ruleset-manager.js';
 import {
-    isKnownConsentRootSelector,
+    isExactHostnamePattern,
     isRemoteScriptletAllowed,
     isSafeMutationSelector,
+    normalizeScopedHostPattern,
     patternCouldMatchProtectedDomain,
 } from './breakage-policy.js';
 import {
@@ -260,6 +261,29 @@ const scheduleCommunitySuccessAlarm = ({ ttlHours, delayMs } = {}) => {
         delayMs: Number.isFinite(delayMs) && delayMs > 0 ? delayMs : ttlMs,
         periodMs: ttlMs,
     });
+};
+
+const countProtectedCosmeticSelectors = input => {
+    if ( input?.hosts instanceof Object === false ) { return 0; }
+    let total = 0;
+    for ( const [hostPattern, selectors] of Object.entries(input.hosts) ) {
+        if ( patternCouldMatchProtectedDomain(hostPattern) === false ) { continue; }
+        if ( Array.isArray(selectors) === false ) { continue; }
+        total += selectors.length;
+    }
+    return total;
+};
+
+const countProtectedDirectives = input => {
+    if ( Array.isArray(input) === false ) { return 0; }
+    let total = 0;
+    for ( const directive of input ) {
+        if ( directive instanceof Object === false ) { continue; }
+        const hosts = Array.isArray(directive.hosts) ? directive.hosts : [];
+        if ( hosts.some(patternCouldMatchProtectedDomain) === false ) { continue; }
+        total += 1;
+    }
+    return total;
 };
 
 /******************************************************************************/
@@ -629,6 +653,21 @@ export async function syncCommunityRules({ force = false } = {}) {
         return out;
     };
 
+    const sanitizeScopedHostPatterns = (input, limit) => {
+        const out = [];
+        const seen = new Set();
+        for ( const value of sanitizeStringArray(input, limit) ) {
+            const normalized = normalizeScopedHostPattern(value);
+            if ( normalized === '' || normalized === '*' || normalized === 'all-urls' ) {
+                continue;
+            }
+            if ( seen.has(normalized) ) { continue; }
+            seen.add(normalized);
+            out.push(normalized);
+        }
+        return out;
+    };
+
     const sanitizeCosmetics = input => {
         if ( input instanceof Object === false ) { return null; }
         const out = { all: [], hosts: {} };
@@ -641,9 +680,16 @@ export async function syncCommunityRules({ force = false } = {}) {
         if ( hosts instanceof Object ) {
             let hostCount = 0;
             for ( const [ host, selectors ] of Object.entries(hosts) ) {
-                if ( typeof host !== 'string' || host.trim() === '' ) { continue; }
-                const normalizedHost = host.trim().toLowerCase();
-                if ( patternCouldMatchProtectedDomain(normalizedHost) ) { continue; }
+                const normalizedHost = normalizeScopedHostPattern(host, {
+                    allowGlobal: false,
+                });
+                if ( normalizedHost === '' ) { continue; }
+                if (
+                    patternCouldMatchProtectedDomain(normalizedHost) &&
+                    isExactHostnamePattern(normalizedHost) === false
+                ) {
+                    continue;
+                }
                 const filteredSelectors = sanitizeStringArray(selectors, 250)
                     .filter(selector => isSafeMutationSelector(selector));
                 if ( filteredSelectors.length === 0 ) { continue; }
@@ -661,8 +707,9 @@ export async function syncCommunityRules({ force = false } = {}) {
     const sanitizeHeuristics = input => {
         if ( input instanceof Object === false ) { return null; }
         const out = {};
-        if ( input.disableHosts ) {
-            out.disableHosts = sanitizeStringArray(input.disableHosts, 200);
+        const disableHosts = sanitizeScopedHostPatterns(input.disableHosts, 200);
+        if ( disableHosts.length !== 0 ) {
+            out.disableHosts = disableHosts;
         }
         const labelRegexes = normalizeCommunityHeuristicLabelRegexes(
             input.labelRegexes
@@ -696,44 +743,21 @@ export async function syncCommunityRules({ force = false } = {}) {
             return n;
         };
         if ( input.maxLabelTextLength !== undefined ) {
-            out.maxLabelTextLength = Math.min(40, toNum(input.maxLabelTextLength, 10, 80, 40));
+            out.maxLabelTextLength = toNum(input.maxLabelTextLength, 10, 80, 40);
         }
         if ( input.minContainerHeight !== undefined ) {
-            out.minContainerHeight = Math.max(60, toNum(input.minContainerHeight, 30, 300, 60));
+            out.minContainerHeight = toNum(input.minContainerHeight, 30, 300, 60);
         }
         if ( input.minContainerWidth !== undefined ) {
-            out.minContainerWidth = Math.max(120, toNum(input.minContainerWidth, 60, 600, 120));
+            out.minContainerWidth = toNum(input.minContainerWidth, 60, 600, 120);
         }
         if ( input.minScore !== undefined ) {
-            out.minScore = Math.max(4, toNum(input.minScore, 1, 10, 4));
+            out.minScore = toNum(input.minScore, 1, 10, 4);
         }
         if ( input.minScoreLowConfidence !== undefined ) {
-            out.minScoreLowConfidence = Math.max(5, toNum(input.minScoreLowConfidence, 1, 12, 5));
+            out.minScoreLowConfidence = toNum(input.minScoreLowConfidence, 1, 12, 5);
         }
         return Object.keys(out).length === 0 ? null : out;
-    };
-
-    const sanitizeScopedHostPatterns = (input, limit) => {
-        const out = [];
-        const seen = new Set();
-        for ( const value of sanitizeStringArray(input, limit) ) {
-            const normalized = value.toLowerCase();
-            if ( normalized === '*' || normalized === 'all-urls' ) { continue; }
-            if ( normalized.includes('://') || normalized.includes('/') ) { continue; }
-            if ( normalized.startsWith('*.') ) {
-                const bare = normalized.slice(2);
-                if ( bare === '' || bare.includes('*') ) { continue; }
-            } else if ( normalized.endsWith('.*') ) {
-                const bare = normalized.slice(0, -2);
-                if ( bare === '' || bare.includes('*') ) { continue; }
-            } else if ( normalized.includes('*') ) {
-                continue;
-            }
-            if ( seen.has(normalized) ) { continue; }
-            seen.add(normalized);
-            out.push(normalized);
-        }
-        return out;
     };
 
     const sanitizeDirectives = input => {
@@ -756,15 +780,20 @@ export async function syncCommunityRules({ force = false } = {}) {
             ) {
                 continue;
             }
-            if ( sanitizedHosts.some(patternCouldMatchProtectedDomain) ) {
-                if ( d.category !== 'consent' ) { continue; }
-                if ( action === 'remove' ) { continue; }
-            }
             const fallbackAction = typeof d.fallbackAction === 'string'
                 ? d.fallbackAction.trim()
                 : undefined;
             const fallbackSelectors = sanitizeStringArray(d.fallbackSelectors, 8)
-                .filter(selector => isKnownConsentRootSelector(selector));
+                .filter(selector => isSafeMutationSelector(selector, {
+                    requireKnownConsent: d.category === 'consent',
+                }));
+            const protectedHosts = sanitizedHosts.filter(patternCouldMatchProtectedDomain);
+            if ( protectedHosts.length !== 0 ) {
+                if ( action !== 'hide' ) { continue; }
+                if ( protectedHosts.some(host => isExactHostnamePattern(host) === false) ) {
+                    continue;
+                }
+            }
             if ( fallbackAction && fallbackAction !== 'hide' ) { continue; }
             if ( fallbackAction === 'hide' && fallbackSelectors.length === 0 ) { continue; }
             out.push({
@@ -848,8 +877,10 @@ export async function syncCommunityRules({ force = false } = {}) {
         remoteDirectiveFeaturesEnabled: Boolean(totalDirectives || totalScriptlets),
         cosmeticsCount: countCommunityCosmeticSelectors(cosmeticsToStore),
         hostCosmeticsCount: countHostSpecificCommunityCosmeticSelectors(cosmeticsToStore),
+        protectedCosmeticsCount: countProtectedCosmeticSelectors(cosmeticsToStore),
         heuristicRegexCount: countCommunityHeuristicLabelRegexes(heuristicsToStore),
         directivesCount: totalDirectives?.length || 0,
+        protectedDirectivesCount: countProtectedDirectives(totalDirectives),
         scriptletsCount: totalScriptlets?.length || 0,
         publicDirectivesCount: publicDirectivesToStore?.length || 0,
         publicScriptletsCount: publicScriptletsToStore?.length || 0,
@@ -919,4 +950,8 @@ export async function syncCommunityRules({ force = false } = {}) {
     };
 }
 
-export { ALARM_NAME };
+export {
+    ALARM_NAME,
+    COMMUNITY_URL_DEFAULT,
+    normalizeCommunityURL,
+};

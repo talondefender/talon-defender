@@ -71,6 +71,7 @@ import {
     AUTO_BACKOFF_SIGNAL_WINDOW_MS,
     BREAKAGE_SUBSYSTEM_IDS,
     getDowngradedFilteringMode,
+    isSevereBreakageSignal,
     mergeBreakageEvidenceEntry,
     normalizeBreakageSubsystem,
     normalizeHttpHostname,
@@ -127,6 +128,7 @@ let autoPromotionState = {
     complete: new Map(),
 };
 let remoteCosmeticsRuntimeStats = {};
+let communityEmergencySyncState = {};
 
 const serializeAutoBackoffState = () => {
     const out = {};
@@ -284,6 +286,17 @@ const persistRemoteCosmeticsRuntimeStats = async () => {
     await localWrite(REMOTE_COSMETICS_RUNTIME_STATS_KEY, remoteCosmeticsRuntimeStats);
 };
 
+const persistCommunityEmergencySyncState = async () => {
+    communityEmergencySyncState = normalizeCommunityEmergencySyncState(
+        communityEmergencySyncState
+    );
+    if ( Object.keys(communityEmergencySyncState).length === 0 ) {
+        await localRemove(COMMUNITY_EMERGENCY_SYNC_STATE_KEY);
+        return;
+    }
+    await localWrite(COMMUNITY_EMERGENCY_SYNC_STATE_KEY, communityEmergencySyncState);
+};
+
 const loadAutoBackoffState = async () => {
     const stored = await localRead(AUTO_BACKOFF_STORAGE_KEY);
     autoBackoffState = new Map();
@@ -384,6 +397,34 @@ const loadRemoteCosmeticsRuntimeStats = async () => {
     remoteCosmeticsRuntimeStats = stored instanceof Object
         ? { ...stored }
         : {};
+};
+
+const loadCommunityEmergencySyncState = async () => {
+    const stored = await localRead(COMMUNITY_EMERGENCY_SYNC_STATE_KEY);
+    communityEmergencySyncState = normalizeCommunityEmergencySyncState(stored);
+};
+
+const triggerEmergencyCommunitySync = async (hostname, reason) => {
+    const domain = normalizeAutoPromotedHostname(hostname);
+    const gate = shouldTriggerCommunityEmergencySync({
+        state: communityEmergencySyncState,
+        domain,
+        entitled: isEntitled(),
+        communityRulesEnabled: rulesetConfig.communityRulesEnabled === true,
+        communityUrlValid: normalizeCommunityURL(
+            rulesetConfig.communityRulesURL || COMMUNITY_URL_DEFAULT
+        ) !== '',
+    });
+    communityEmergencySyncState = gate.state;
+    if ( gate.allowed !== true ) { return gate.reason; }
+    communityEmergencySyncState = recordCommunityEmergencySync({
+        state: communityEmergencySyncState,
+        domain: gate.domain,
+        reason,
+    });
+    await persistCommunityEmergencySyncState();
+    runCommunitySync({ force: true });
+    return 'queued';
 };
 
 const pruneExpiredSubsystemBackoffEntries = async (now = Date.now()) => {
@@ -659,6 +700,10 @@ const recordBlockedNavigation = (hostname) => {
     const updated = autoBackoffCounts.get(hostname);
     if (updated && updated.count >= AUTO_BACKOFF_MIN_ERRORS) {
         autoBackoffCounts.delete(hostname);
+        triggerEmergencyCommunitySync(
+            hostname,
+            'blocked-navigation-threshold'
+        ).catch(ubolErr);
         applyAutoBackoff(hostname).catch(ubolErr);
     }
 };
@@ -688,7 +733,17 @@ const recordBreakageSignal = async (hostname, signal, details = {}) => {
         now,
         subsystem
     );
-    if ( shouldTriggerSignalBackoff(normalizedSignal, counter) ) {
+    const shouldBackoff = shouldTriggerSignalBackoff(normalizedSignal, counter);
+    if ( shouldBackoff ) {
+        const emergencyReason = isSevereBreakageSignal(normalizedSignal)
+            ? `severe-signal:${normalizedSignal}`
+            : `signal-threshold:${normalizedSignal}`;
+        triggerEmergencyCommunitySync(
+            normalizedHostname,
+            emergencyReason
+        ).catch(ubolErr);
+    }
+    if ( shouldBackoff ) {
         if ( subsystem !== '' ) {
             const subsystemResult = await applySubsystemBackoff(
                 normalizedHostname,
@@ -716,6 +771,11 @@ const initAutoPromotionState = async () => {
 const initRuntimeDiagnosticsState = async () => {
     await loadRemoteCosmeticsRuntimeStats();
     await pruneStaleRemoteCosmeticsRuntimeStats();
+};
+
+const initCommunityEmergencySyncState = async () => {
+    await loadCommunityEmergencySyncState();
+    await persistCommunityEmergencySyncState();
 };
 
 if (chrome.webNavigation?.onErrorOccurred) {
@@ -761,9 +821,18 @@ import {
 
 import {
     ALARM_NAME as COMMUNITY_ALARM_NAME,
+    COMMUNITY_URL_DEFAULT,
+    normalizeCommunityURL,
     scrubPrivateCommunityState,
     syncCommunityRules,
 } from './community-sync.js';
+import {
+    COMMUNITY_EMERGENCY_SYNC_STATE_KEY,
+    getCommunityEmergencySyncDiagnostics,
+    normalizeCommunityEmergencySyncState,
+    recordCommunityEmergencySync,
+    shouldTriggerCommunityEmergencySync,
+} from './community-emergency-sync.js';
 import {
     COMMUNITY_SYNC_FAILURE_RETRY_MS,
     countCommunityCosmeticSelectors,
@@ -3339,6 +3408,7 @@ function onMessage(request, sender, callback) {
                 localRead('communityBundleDirectives'),
                 localRead('communityBundleScriptlets'),
                 localRead(REMOTE_COSMETICS_RUNTIME_STATS_KEY),
+                localRead(COMMUNITY_EMERGENCY_SYNC_STATE_KEY),
                 localRead(ALLOW_ALL_RULES_DIAGNOSTICS_KEY),
             ]).then(([
                 meta,
@@ -3354,6 +3424,7 @@ function onMessage(request, sender, callback) {
                 legacyDirectives,
                 legacyScriptlets,
                 liveRuntimeStats,
+                emergencySyncState,
                 allowAllRulesDiagnostics,
             ]) => {
                 const diagnosticsMeta = meta instanceof Object
@@ -3409,6 +3480,19 @@ function onMessage(request, sender, callback) {
                 diagnosticsMeta.liveRemoteCosmeticDroppedAtApply =
                     liveRemoteCosmeticDroppedAtApply;
                 diagnosticsMeta.liveRemoteCosmeticHostCount = liveRemoteCosmeticHostCount;
+                const emergencyDiagnostics = getCommunityEmergencySyncDiagnostics(
+                    emergencySyncState
+                );
+                if ( emergencyDiagnostics.rollingCount !== 0 ) {
+                    diagnosticsMeta.emergencySyncRollingCount =
+                        emergencyDiagnostics.rollingCount;
+                    diagnosticsMeta.lastEmergencySyncAt =
+                        emergencyDiagnostics.lastSyncAt;
+                    diagnosticsMeta.lastEmergencySyncDomain =
+                        emergencyDiagnostics.lastDomain;
+                    diagnosticsMeta.lastEmergencySyncReason =
+                        emergencyDiagnostics.lastReason;
+                }
                 const partialDnrRepairCount = Math.max(
                     0,
                     Math.floor(Number(allowAllRulesDiagnostics?.partialRepairCount) || 0)
@@ -4133,6 +4217,7 @@ async function start() {
     await initAutoBackoff().catch(ubolErr);
     await initAutoPromotionState().catch(ubolErr);
     await initRuntimeDiagnosticsState().catch(ubolErr);
+    await initCommunityEmergencySyncState().catch(ubolErr);
     await syncToolbarIconsForAllTabs().catch(ubolErr);
 
     toggleDeveloperMode(rulesetConfig.developerMode);

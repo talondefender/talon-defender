@@ -58,8 +58,10 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
         actionCounts.allowAllRequests;
     const cosmeticsCount = toNonNegativeInteger(meta?.cosmeticsCount);
     const hostCosmeticsCount = toNonNegativeInteger(meta?.hostCosmeticsCount);
+    const protectedCosmeticsCount = toNonNegativeInteger(meta?.protectedCosmeticsCount);
     const heuristicRegexCount = toNonNegativeInteger(meta?.heuristicRegexCount);
     const directivesCount = toNonNegativeInteger(meta?.directivesCount);
+    const protectedDirectivesCount = toNonNegativeInteger(meta?.protectedDirectivesCount);
     const scriptletsCount = toNonNegativeInteger(meta?.scriptletsCount);
     const publicDirectivesCount = toNonNegativeInteger(meta?.publicDirectivesCount);
     const publicScriptletsCount = toNonNegativeInteger(meta?.publicScriptletsCount);
@@ -80,6 +82,15 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
         : '';
     const partialDnrRepairCount = toNonNegativeInteger(meta?.partialDnrRepairCount);
     const lastPartialDnrRepair = toIsoTimestamp(meta?.lastPartialDnrRepair);
+    const emergencySyncRollingCount =
+        toNonNegativeInteger(meta?.emergencySyncRollingCount);
+    const lastEmergencySync = toIsoTimestamp(meta?.lastEmergencySyncAt);
+    const lastEmergencySyncDomain = typeof meta?.lastEmergencySyncDomain === 'string'
+        ? meta.lastEmergencySyncDomain.trim()
+        : '';
+    const lastEmergencySyncReason = typeof meta?.lastEmergencySyncReason === 'string'
+        ? meta.lastEmergencySyncReason.trim()
+        : '';
     const hasDroppedCounts = (
         droppedCounts.unsupportedAction !== 0 ||
         droppedCounts.unsafeScope !== 0 ||
@@ -97,8 +108,10 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
         activeExceptions !== 0 ||
         cosmeticsCount !== 0 ||
         hostCosmeticsCount !== 0 ||
+        protectedCosmeticsCount !== 0 ||
         heuristicRegexCount !== 0 ||
         directivesCount !== 0 ||
+        protectedDirectivesCount !== 0 ||
         scriptletsCount !== 0 ||
         publicDirectivesCount !== 0 ||
         publicScriptletsCount !== 0 ||
@@ -107,6 +120,7 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
         liveRemoteCosmeticChunkCount !== 0 ||
         liveRemoteCosmeticDroppedAtApply !== 0 ||
         liveRemoteCosmeticHostCount !== 0 ||
+        emergencySyncRollingCount !== 0 ||
         partialDnrRepairCount !== 0 ||
         hasActionCounts ||
         hasDroppedCounts
@@ -144,8 +158,10 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
         activeExceptions,
         cosmeticsCount,
         hostCosmeticsCount,
+        protectedCosmeticsCount,
         heuristicRegexCount,
         directivesCount,
+        protectedDirectivesCount,
         scriptletsCount,
         publicDirectivesCount,
         publicScriptletsCount,
@@ -157,6 +173,10 @@ export const buildCommunitySyncDiagnosticsSummary = (input = {}) => {
         partialDnrRepairSeen: partialDnrRepairCount !== 0,
         partialDnrRepairCount,
         lastPartialDnrRepair,
+        emergencySyncRollingCount,
+        lastEmergencySync,
+        lastEmergencySyncDomain: lastEmergencySyncDomain || 'none',
+        lastEmergencySyncReason: lastEmergencySyncReason || 'none',
         liveRemoteCosmeticChunkCount,
         liveRemoteCosmeticDroppedAtApply,
         liveRemoteCosmeticHostCount,

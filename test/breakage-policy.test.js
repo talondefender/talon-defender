@@ -38,6 +38,9 @@ test('protected surface classifier locks down sensitive hosts and paths', () => 
 test('hostname matcher covers wildcard and exact matches', () => {
   assert.equal(patternMatchesHostname('*.stripe.com', 'api.stripe.com'), true);
   assert.equal(patternMatchesHostname('docs.google.com', 'docs.google.com'), true);
+  assert.equal(patternMatchesHostname('docs.google.com', 'sub.docs.google.com'), true);
+  assert.equal(patternMatchesHostname('=docs.google.com', 'docs.google.com'), true);
+  assert.equal(patternMatchesHostname('=docs.google.com', 'sub.docs.google.com'), false);
   assert.equal(patternMatchesHostname('docs.google.com', 'drive.google.com'), false);
 });
 
@@ -60,6 +63,8 @@ test('youtube watch bootstrap defaults to compatibility-first off', () => {
 test('protected host exposure detection treats wildcards and sensitive domains as risky', () => {
   assert.equal(patternCouldMatchProtectedDomain('*'), true);
   assert.equal(patternCouldMatchProtectedDomain('*.paypal.com'), true);
+  assert.equal(patternCouldMatchProtectedDomain('=accounts.google.com'), true);
+  assert.equal(patternCouldMatchProtectedDomain('=news.example.com'), false);
   assert.equal(patternCouldMatchProtectedDomain('news.example.com'), false);
 });
 
