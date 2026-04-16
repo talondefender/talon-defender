@@ -14,29 +14,6 @@
     "service_worker": "/js/background.js",
     "type": "module"
   },
-  "content_scripts": [
-    {
-      "matches": [
-        "https://www.youtube.com/watch*"
-      ],
-      "js": [
-        "js/scripting/youtube-watch-sanitizer.js"
-      ],
-      "run_at": "document_start",
-      "all_frames": false,
-      "world": "MAIN"
-    },
-    {
-      "matches": [
-        "https://www.youtube.com/watch*"
-      ],
-      "js": [
-        "js/scripting/youtube-watch-bridge.js"
-      ],
-      "run_at": "document_start",
-      "all_frames": false
-    }
-  ],
   "commands": {
     "enter-picker-mode": {
       "description": "__MSG_pickerTipEnter__"
@@ -276,16 +253,6 @@
   },
   "version": "0.1.2",
   "web_accessible_resources": [
-    {
-      "resources": [
-        "options/youtube-followup-relay.html",
-        "js/youtube-followup-relay.js"
-      ],
-      "matches": [
-        "https://www.youtube.com/*"
-      ],
-      "use_dynamic_url": true
-    },
     {
       "resources": [
         "/strictblock.html"

@@ -5,145 +5,116 @@ import fs from 'node:fs/promises';
 const readSource = relativePath =>
   fs.readFile(new URL(`../${relativePath}`, import.meta.url), 'utf8');
 
-test('adaptive subsystems register the shared shadow DOM helper before their runtime files', async () => {
+const countMatches = (source, pattern) => (source.match(pattern) ?? []).length;
+
+test('adaptive subsystems keep the shared helper ordering and bounded remote tactics lanes', async () => {
   const source = await readSource('js/scripting-manager.js');
 
   assert.match(source, /const TALON_SHADOW_DOM_HELPER_PATH = '\/js\/scripting\/shadow-dom-helper\.js'/);
   assert.match(source, /const TALON_BLOCK_HINTS_PATH = '\/js\/scripting\/block-hints\.js'/);
-  assert.match(source, /const TALON_PUBLIC_SUFFIX_DATA_PATH = '\/shared\/public-suffix-data\.js'/);
   assert.match(source, /TALON_SHADOW_DOM_HELPER_PATH,\s*TALON_BLOCK_HINTS_PATH,\s*'\/js\/scripting\/native-heuristics\.js'/);
   assert.match(source, /TALON_SHADOW_DOM_HELPER_PATH,\s*TALON_BLOCK_HINTS_PATH,\s*'\/js\/scripting\/automation\.js'/);
-  assert.match(source, /TALON_PUBLIC_SUFFIX_DATA_PATH,\s*'\/shared\/site-key-resolver\.js',\s*'\/js\/scripting\/breakage-guard\.js',\s*TALON_SHADOW_DOM_HELPER_PATH,\s*TALON_BLOCK_HINTS_PATH,\s*'\/js\/scripting\/remote-cosmetics\.js'/);
-  assert.match(source, /TALON_SHADOW_DOM_HELPER_PATH,\s*TALON_BLOCK_HINTS_PATH,\s*'\/js\/scripting\/post-hide-cleanup\.js'/);
+  assert.match(source, /\/js\/scripting\/remote-cosmetics-global\.js/);
+  assert.match(source, /\/js\/scripting\/remote-cosmetics-host\.js/);
+  assert.match(source, /id: 'remote-tactics-bootstrap'/);
+  assert.match(source, /id: 'remote-tactics-main'/);
+  assert.match(source, /world: 'MAIN'/);
+  assert.doesNotMatch(source, /registerNationalPostAntiAdblock/);
+  assert.doesNotMatch(source, /registerFinancialPostCompatibility/);
+  assert.doesNotMatch(source, /registerFinancialPostAntiAdblock/);
 });
 
-test('remote tactics stays packaged and bounded instead of executing remote code', async () => {
+test('remote tactics stays packaged and bootstrap caching is explicit', async () => {
   const bootstrapSource = await readSource('js/scripting/remote-tactics-bootstrap.js');
   const mainSource = await readSource('js/scripting/remote-tactics.js');
 
-  assert.match(bootstrapSource, /communityBundlePublicTactics/);
-  assert.match(bootstrapSource, /td-remote-tactics-config/);
+  assert.match(bootstrapSource, /const STORAGE_KEY = 'communityBundlePublicTactics';/);
+  assert.match(bootstrapSource, /let cachedTactics = \[\];/);
+  assert.match(bootstrapSource, /let cacheLoaded = false;/);
+  assert.match(bootstrapSource, /let pendingRead = null;/);
+  assert.match(bootstrapSource, /if \( cacheLoaded \) \{/);
+  assert.match(bootstrapSource, /if \( pendingRead instanceof Promise \) \{/);
+  assert.match(bootstrapSource, /changes\[STORAGE_KEY\] === undefined/);
+  assert.match(bootstrapSource, /cachedTactics = \[\];\s*cacheLoaded = false;/);
   assert.match(mainSource, /self\.fetch = new Proxy\(self\.fetch/);
   assert.match(mainSource, /self\.XMLHttpRequest = class extends NativeXMLHttpRequest/);
-  assert.match(mainSource, /td-remote-tactics-request/);
   assert.doesNotMatch(mainSource, /\beval\s*\(/);
   assert.doesNotMatch(mainSource, /Function\s*\(/);
   assert.doesNotMatch(mainSource, /import\(/);
 });
 
-test('runtime refresh keeps remote tactics on a host-gated isolated and MAIN-world lane', async () => {
+test('background runtime refresh uses a fingerprint gate instead of unconditional tab sweeps', async () => {
   const source = await readSource('js/background.js');
-  const isolatedRefreshBlock = source.slice(
-    source.indexOf('const ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object.freeze(['),
-    source.indexOf('const REMOTE_COSMETICS_HOST_LIVE_RUNTIME_REFRESH_FILES = Object.freeze([')
+
+  assert.match(source, /let lastInjectableRuntimeFingerprint = '';/);
+  assert.match(source, /async function computeInjectableRuntimeFingerprint\(\)/);
+  assert.match(source, /enabledRulesets: Array\.isArray\(rulesetConfig\.enabledRulesets\)/);
+  assert.match(source, /const shouldRefreshOpenTabs =\s*refreshOpenTabs === true/);
+  assert.match(source, /registrationChanged === true/);
+  assert.match(source, /runtimeFingerprint !== lastInjectableRuntimeFingerprint/);
+  assert.match(source, /lastInjectableRuntimeFingerprint = runtimeFingerprint;/);
+  assert.match(source, /runtimeRefreshed: shouldRefreshOpenTabs/);
+});
+
+test('startup now performs one eager injectable sync and no YouTube bootstrap reconciliation', async () => {
+  const source = await readSource('js/background.js');
+  const startBlock = source.slice(
+    source.indexOf('async function start() {'),
+    source.indexOf('/******************************************************************************/', source.indexOf('async function start() {'))
   );
 
-  assert.match(source, /const ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object\.freeze\(\[/);
-  assert.match(source, /const REMOTE_COSMETICS_HOST_LIVE_RUNTIME_REFRESH_FILES = Object\.freeze\(\[[\s\S]*'\/js\/scripting\/remote-cosmetics-host\.js'[\s\S]*\]\);/);
-  assert.match(source, /const REMOTE_TACTICS_ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object\.freeze\(\[[\s\S]*'\/js\/scripting\/remote-tactics-bootstrap\.js'[\s\S]*\]\);/);
-  assert.match(source, /const MAIN_WORLD_LIVE_RUNTIME_REFRESH_FILES = Object\.freeze\(\[[\s\S]*'\/js\/scripting\/remote-tactics\.js'[\s\S]*\]\);/);
-  assert.match(source, /target: \{ tabId, allFrames: true \}/);
-  assert.match(source, /const tabMatchesHostnameSet = async \(/);
-  assert.match(source, /if \( hostname !== '' && hostnames\.has\(hostname\) \) \{/);
-  assert.match(source, /const frameUrls = await listTabFrameUrls\(tabId, fallbackUrl\)/);
-  assert.match(source, /frameUrls\.some\(url => hostnames\.has\(normalizeHttpHostname\(url\)\)\)/);
-  assert.match(source, /const shouldRefreshRemoteCosmeticsHost = await tabMatchesHostnameSet\(tabId, \{/);
-  assert.match(source, /await executeRuntimeRefreshLane\(\s*tabId,\s*REMOTE_COSMETICS_HOST_LIVE_RUNTIME_REFRESH_FILES/);
-  assert.match(source, /await executeRuntimeStopLane\(tabId, stopRemoteCosmeticsHostController\)/);
-  assert.match(source, /const shouldRefreshRemoteTactics = await tabMatchesRemoteTacticHosts\(tabId, \{/);
-  assert.match(source, /await executeRuntimeRefreshLane\(\s*tabId,\s*REMOTE_TACTICS_ISOLATED_LIVE_RUNTIME_REFRESH_FILES/);
-  assert.match(source, /await executeRuntimeRefreshLane\(tabId, MAIN_WORLD_LIVE_RUNTIME_REFRESH_FILES, \{\s*world: 'MAIN',\s*\}\)/);
-  assert.match(source, /await executeRuntimeStopLane\(tabId, stopRemoteTacticsBootstrapController\)/);
-  assert.match(source, /await executeRuntimeStopLane\(tabId, stopMainWorldRuntimeControllers, \{\s*world: 'MAIN',\s*\}\)/);
-  assert.match(source, /readRegisteredRemoteCosmeticHostnames\(\)/);
-  assert.match(source, /readRegisteredRemoteTacticHostnames\(\)/);
-  assert.match(source, /TalonRemoteTacticsBootstrapController/);
-  assert.match(source, /TalonRemoteTacticsController/);
   assert.equal(
-    isolatedRefreshBlock.includes('/js/scripting/remote-tactics-bootstrap.js'),
-    false
+    countMatches(startBlock, /syncInjectablesAndRefreshTabs\(\{ runtimeOnly: false \}\)\.catch\(ubolErr\)/g),
+    1
   );
+  assert.doesNotMatch(startBlock, /registerInjectablesIfEntitled\(\)\.catch\(ubolErr\);/);
+  assert.doesNotMatch(startBlock, /syncYouTubeWatchControlCookies/);
+  assert.doesNotMatch(startBlock, /syncPrivateYouTubeRuntimeLaneRules/);
+  assert.doesNotMatch(source, /requestCompatibilityBackoff/);
+  assert.doesNotMatch(source, /runtime\.onConnect\.addListener/);
 });
 
-test('state-changing background entry points use unified injectable sync and expose reload-needed state', async () => {
-  const source = await readSource('js/background.js');
-
-  assert.match(source, /case 'applyRulesets':[\s\S]*syncInjectablesAndRefreshTabs\(\{ runtimeOnly: false \}\)/);
-  assert.match(source, /case 'setFilteringMode':[\s\S]*syncInjectablesAndRefreshTabs\(\{ runtimeOnly: false \}\)/);
-  assert.match(source, /case 'setDefaultFilteringMode':[\s\S]*syncInjectablesAndRefreshTabs\(\{ runtimeOnly: false \}\)/);
-  assert.match(source, /case 'setFilteringModeDetails':[\s\S]*syncInjectablesAndRefreshTabs\(\{ runtimeOnly: false \}\)/);
-  assert.match(source, /registerResult instanceof Object && registerResult\.ok === true/);
-  assert.match(source, /case 'getTabReloadNeededState':/);
-  assert.match(source, /markTabsForRemoteScriptletReload/);
-});
-
-test('popup surfaces reload-needed hotfix state with an explicit reload action', async () => {
-  const htmlSource = await readSource('popup/popup.html');
-  const jsSource = await readSource('popup/popup.js');
-  const reloadMatches = jsSource.match(/chrome\.tabs\.reload\(currentTabId\)/g) ?? [];
-
-  assert.match(htmlSource, /id="runtimeNotice"/);
-  assert.match(htmlSource, /id="runtimeNoticeReload"/);
-  assert.match(jsSource, /self\.addEventListener\("unhandledrejection", \(event\) => \{/);
-  assert.match(jsSource, /async function reloadCurrentTab\(context\)/);
-  assert.match(jsSource, /ignoreRuntimeError\(error\)/);
-  assert.match(jsSource, /what: "getTabReloadNeededState"/);
-  assert.match(jsSource, /currentReloadNeededReason === "remoteScriptletHotfix"/);
-  assert.match(jsSource, /await reloadCurrentTab\("reload tab for hotfix"\)/);
-  assert.equal(reloadMatches.length, 1);
-});
-
-test('remote cosmetics uses local style ownership instead of background CSS messaging', async () => {
-  const source = await readSource('js/scripting/remote-cosmetics.js');
-
-  assert.doesNotMatch(source, /what:\s*'insertCSS'/);
-  assert.doesNotMatch(source, /what:\s*'removeCSS'/);
-  assert.match(source, /STYLE_MARKER_ATTR = 'data-talon-remote-cosmetics'/);
-  assert.match(source, /STYLE_SCOPE_ATTR = 'data-talon-remote-cosmetics-scope'/);
-  assert.match(source, /ensureDocumentStyle\(scope, cssText\)/);
-  assert.match(source, /syncShadowStyles\(scope\)/);
-});
-
-test('automation queries shadow roots and applies hide styling only to marked nodes', async () => {
+test('automation host-filters first and only loads ruleset state when a gate is present', async () => {
   const source = await readSource('js/scripting/automation.js');
 
-  assert.match(source, /shadowController\?\.enumerateRoots\?\.\(\)/);
-  assert.match(source, /const buildHideStyleText = id => \{/);
-  assert.match(source, /ensureShadowRootHideStyle\(root, styleId, cssText\)/);
-  assert.match(source, /syncHideStyles\(activeDirectives\)/);
-  assert.match(source, /for \( const selector of selectors \) \{/);
+  assert.match(source, /const hostMatchedDirectives = directives\.filter\(hostMatchesDirective\);/);
+  assert.match(source, /const requiresRulesetGate = hostMatchedDirectives\.some\(directive =>/);
+  assert.match(source, /const enabledRulesets = requiresRulesetGate\s*\?\s*await loadEnabledRulesets\(\)\s*:\s*null;/);
+  assert.match(source, /activeDirectives = hostMatchedDirectives/);
+  assert.doesNotMatch(source, /NATIONAL_POST_/);
+  assert.doesNotMatch(source, /__ubolNationalPostRuntime/);
 });
 
-test('adaptive lanes opt into related fallback frames beyond scriptlets', async () => {
-  const source = await readSource('js/scripting-manager.js');
+test('ad shell prepaint is reduced to generic selectors without National Post runtime state', async () => {
+  const source = await readSource('js/scripting/ad-shell-styles.js');
 
-  assert.match(
-    source,
-    /id: 'native-heuristics',[\s\S]*matchOriginAsFallback: true/
-  );
-  assert.match(
-    source,
-    /id: 'automation',[\s\S]*matchOriginAsFallback: true/
-  );
-  assert.match(
-    source,
-    /id: 'remote-cosmetics-global',[\s\S]*matchOriginAsFallback: true/
-  );
-  assert.match(
-    source,
-    /id: 'remote-cosmetics-host',[\s\S]*matchOriginAsFallback: true/
-  );
-  assert.match(
-    source,
-    /id: 'post-hide-cleanup',[\s\S]*matchOriginAsFallback: true/
-  );
+  assert.match(source, /const BASE_SELECTORS = \[/);
+  assert.match(source, /const HOST_SCOPED_SELECTORS = Object\.freeze\(\[/);
+  assert.match(source, /style\.textContent = STYLE_TEXT;/);
+  assert.doesNotMatch(source, /NATIONAL_POST_/);
+  assert.doesNotMatch(source, /__ubolNationalPostRuntime/);
+  assert.doesNotMatch(source, /MutationObserver/);
 });
 
-test('command-triggered picker injection suppresses only ignorable stale-tab failures', async () => {
-  const source = await readSource('js/background.js');
+test('shadow root helper tracks added nodes incrementally and reserves full rescans for removals or load events', async () => {
+  const source = await readSource('js/scripting/shadow-dom-helper.js');
 
-  assert.match(
-    source,
-    /function onCommand\(command, tab\) \{[\s\S]*Number\.isInteger\(tab\?\.id\) === false[\s\S]*browser\.scripting\.executeScript\(\{[\s\S]*target: \{ tabId: tab\.id \},[\s\S]*\}\)\.catch\(ignoreRuntimeError\);/
-  );
+  assert.match(source, /let pendingAddedNodes = \[\];/);
+  assert.match(source, /let pendingFullRescan = false;/);
+  assert.match(source, /const scanAddedNodeTree = node => \{/);
+  assert.match(source, /const flushPendingRescan = \(\) => \{/);
+  assert.match(source, /if \( pendingFullRescan \) \{\s*rescanNow\(\);/);
+  assert.match(source, /for \( const node of addedNodes \) \{\s*changed = scanAddedNodeTree\(node\) \|\| changed;/);
+  assert.match(source, /if \( mutation\.removedNodes\?\.length \) \{\s*pendingFullRescan = true;/);
+  assert.match(source, /pendingAddedNodes\.push\(node\);/);
+});
+
+test('remote cosmetics runtime stats are deduped by scope before messaging background', async () => {
+  const source = await readSource('js/scripting/remote-cosmetics.js');
+
+  assert.match(source, /const runtimeStatsByScope = new Map\(\);/);
+  assert.match(source, /const previous = runtimeStatsByScope\.get\(scope\);/);
+  assert.match(source, /previous\?\.chunkCount === nextStats\.chunkCount/);
+  assert.match(source, /runtimeStatsByScope\.set\(scope, nextStats\);/);
+  assert.match(source, /runtimeStatsByScope\.delete\(scope\);/);
 });

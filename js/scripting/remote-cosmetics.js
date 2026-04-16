@@ -199,6 +199,7 @@ const scopeStates = new Map([
         installed: false,
     } ],
 ]);
+const runtimeStatsByScope = new Map();
 
 const getScopeState = scope => scopeStates.get(scope) || null;
 const isValidScope = scope => scope === SCOPE_GLOBAL || scope === SCOPE_HOST;
@@ -329,6 +330,7 @@ const clearAppliedCss = scope => {
     const scopeState = getScopeState(scope);
     if ( scopeState === null ) { return Promise.resolve(); }
     scopeState.cssText = '';
+    runtimeStatsByScope.delete(scope);
     removeDocumentStyle(scope);
     syncShadowStyles(scope);
     return Promise.resolve();
@@ -339,15 +341,30 @@ const sendRuntimeStats = (scope, {
     selectorCount = 0,
     hostSpecificSelectorCount = 0,
     droppedAtApply = 0,
-} = {}) => sendMessage({
-    what: 'recordRemoteCosmeticsRuntimeStats',
-    hostname,
-    laneScope: scope,
-    chunkCount,
-    selectorCount,
-    hostSpecificSelectorCount,
-    droppedAtApply,
-});
+} = {}) => {
+    const nextStats = {
+        chunkCount,
+        selectorCount,
+        hostSpecificSelectorCount,
+        droppedAtApply,
+    };
+    const previous = runtimeStatsByScope.get(scope);
+    if (
+        previous?.chunkCount === nextStats.chunkCount &&
+        previous?.selectorCount === nextStats.selectorCount &&
+        previous?.hostSpecificSelectorCount === nextStats.hostSpecificSelectorCount &&
+        previous?.droppedAtApply === nextStats.droppedAtApply
+    ) {
+        return Promise.resolve();
+    }
+    runtimeStatsByScope.set(scope, nextStats);
+    return sendMessage({
+        what: 'recordRemoteCosmeticsRuntimeStats',
+        hostname,
+        laneScope: scope,
+        ...nextStats,
+    });
+};
 
 const resolveScopeSelectors = (scope, cosmetics) => {
     const selectors = [];

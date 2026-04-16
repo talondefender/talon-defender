@@ -397,8 +397,6 @@ js/scripting/remote-tactics.js
 js/scripting/shadow-dom-helper.js
 js/scripting/toolbar-icon.js
 js/scripting/tool-overlay.js
-js/scripting/youtube-watch-bridge.js
-js/scripting/youtube-watch-sanitizer.js
 js/scripting/unpicker.js
 js/scripting-manager.js
 js/single-flight.js
@@ -428,6 +426,7 @@ options/attributions.js
 options/options.css
 options/options.html
 options/options.js
+options/ruleset-toggle-state.js
 package.json
 package-lock.json
 picker-ui.html
@@ -1300,8 +1299,6 @@ shared/public-suffix-data.js
 shared/site-key-resolver.js
 shared/source-code.js
 strictblock.html
-options/youtube-followup-relay.html
-js/youtube-followup-relay.js
 test/auto-backoff.test.js
 test/automation-directives.test.js
 test/breakage-guard.test.js
@@ -1320,6 +1317,7 @@ test/regional-rulesets.test.js
 test/remote-tactics-runtime.test.js
 test/runtime-errors.test.js
 test/runtime-hardening-source.test.js
+test/options-ruleset-toggle-state.test.js
 test/shadow-dom-helper.test.js
 test/single-flight.test.js
 test/site-key.test.js

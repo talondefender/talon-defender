@@ -70,7 +70,10 @@ const pendingWrites = [];
 
 export async function customFiltersFromHostname(hostname) {
     const promises = [];
-    let hn = hostname;
+    let hn = typeof hostname === 'string'
+        ? hostname.trim().toLowerCase()
+        : '';
+    if ( hn === '' ) { return []; }
     while ( hn !== '' ) {
         promises.push(readFromStorage(`site.${hn}`));
         const pos = hn.indexOf('.');
@@ -81,7 +84,7 @@ export async function customFiltersFromHostname(hostname) {
     const out = [];
     for ( let i = 0; i < promises.length; i++ ) {
         const selectors = results[i];
-        if ( selectors === undefined ) { continue; }
+        if ( Array.isArray(selectors) === false ) { continue; }
         selectors.forEach(selector => {
             out.push(selector.startsWith('0') ? selector.slice(1) : selector);
         });
@@ -243,7 +246,10 @@ export async function removeAllCustomFilters(hostname) {
 
 export async function removeCustomFilters(hostname, selectors) {
     const promises = [];
-    let hn = hostname;
+    let hn = typeof hostname === 'string'
+        ? hostname.trim().toLowerCase()
+        : '';
+    if ( hn === '' ) { return false; }
     while ( hn !== '' ) {
         promises.push(removeCustomFiltersByKey(`site.${hn}`, selectors));
         const pos = hn.indexOf('.');

@@ -10,8 +10,14 @@ import {
   TERMS_URL
 } from "../shared/links.js";
 import { readSourceCodeInfo } from "../shared/source-code.js";
+import {
+  applyRulesetToggleChange,
+  getRulesetToggleState,
+  normalizeEnabledRulesets,
+} from "./ruleset-toggle-state.js";
 
 const MODE_NONE = 0;
+const OPTIONS_BROADCAST_CHANNEL = "uBOL";
 
 const allowlistForm = document.getElementById("allowlistForm");
 const allowlistInput = document.getElementById("allowlistInput");
@@ -45,6 +51,7 @@ const ATTRIBUTIONS_URL =
   typeof chrome !== "undefined" && chrome.runtime?.getURL
     ? chrome.runtime.getURL("options/attributions.html")
     : "options/attributions.html";
+const LICENSE_RUNTIME_MESSAGE_TIMEOUT_MS = 12000;
 
 const EXTRA_PROTECTION_RULESETS = [
   "annoyances-cookies",
@@ -93,8 +100,32 @@ let paywalled = false;
 let licenseEntryVisible = false;
 let licenseKeyRevealed = false;
 let storedLicenseKey = "";
+let runtimeStateChannel = null;
+let rulesetsLoaded = false;
+let entitlementLoaded = false;
+let busyRulesetCheckboxId = "";
 
 init().catch((error) => console.error("Options init failed", error));
+
+async function sendRuntimeMessageWithTimeout(message, {
+  timeoutMs = LICENSE_RUNTIME_MESSAGE_TIMEOUT_MS
+} = {}) {
+  let timeoutId = null;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => chrome.runtime.sendMessage(message)),
+      new Promise((_, reject) => {
+        timeoutId = self.setTimeout(() => {
+          reject(new Error(`runtime message timeout: ${message?.what || "unknown"}`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== null) {
+      self.clearTimeout(timeoutId);
+    }
+  }
+}
 
 function maskLicenseKey(value) {
   const raw = String(value || "").trim().toUpperCase();
@@ -133,15 +164,16 @@ async function init() {
   wireLicense();
   wireSubscriptionLinks();
   wireFooterLinks();
-  await refreshEntitlement();
-  setPaywalledUI(paywalled);
-  if (paywalled) {
-    return;
-  }
+  wireRuntimeStateUpdates();
   wireCoreFilters();
   wireAllowlist();
-  await refreshRulesets();
-  await refreshAllowlist();
+  const rulesetsPromise = refreshRulesets({ bootstrap: true });
+  const allowlistPromise = refreshAllowlist();
+  await refreshEntitlement();
+  entitlementLoaded = true;
+  setPaywalledUI(paywalled);
+  renderCoreFilterStatus();
+  await Promise.allSettled([rulesetsPromise, allowlistPromise]);
 }
 
 function setDocumentLanguage() {
@@ -195,6 +227,56 @@ function formatRemaining(ms) {
   return formatUnit(minutes, "minute", "short");
 }
 
+function canonicalizeLicenseKeyInput(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  if (/^aab1\./i.test(raw)) {
+    return raw;
+  }
+
+  const cleaned = raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!cleaned) {
+    return "";
+  }
+
+  const truncated = cleaned.slice(0, 18);
+  return formatByGroups(truncated, [2, 4, 4, 4, 4]);
+}
+
+function formatByGroups(value, groups) {
+  if (!value) {
+    return "";
+  }
+  let offset = 0;
+  const parts = [];
+  for (const size of groups) {
+    if (offset >= value.length) {
+      break;
+    }
+    parts.push(value.slice(offset, offset + size));
+    offset += size;
+  }
+  if (offset < value.length) {
+    parts.push(value.slice(offset));
+  }
+  return parts.filter(Boolean).join("-");
+}
+
+function bindLicenseKeyFormatter(inputEl) {
+  if (!inputEl) {
+    return;
+  }
+  inputEl.addEventListener("input", () => {
+    const next = canonicalizeLicenseKeyInput(inputEl.value);
+    if (next !== inputEl.value) {
+      inputEl.value = next;
+    }
+  });
+}
+
 function renderEntitlementStatus(status) {
   if (!subscriptionStatusEl) {
     return;
@@ -233,11 +315,15 @@ function renderEntitlementStatus(status) {
     : t("subscriptionExpired");
 }
 
-async function refreshEntitlement() {
-  try {
-    entitlementStatus = await chrome.runtime.sendMessage({ what: "getEntitlementStatus" });
-  } catch (_error) {
-    entitlementStatus = { status: "expired" };
+async function refreshEntitlement(nextStatus = null) {
+  if (nextStatus && typeof nextStatus === "object") {
+    entitlementStatus = nextStatus;
+  } else {
+    try {
+      entitlementStatus = await chrome.runtime.sendMessage({ what: "getEntitlementStatus" });
+    } catch (_error) {
+      entitlementStatus = { status: "expired" };
+    }
   }
   paywalled = entitlementStatus?.status === "expired";
   renderEntitlementStatus(entitlementStatus);
@@ -323,6 +409,7 @@ function wireLicense() {
   if (!licenseFormEl) {
     return;
   }
+  bindLicenseKeyFormatter(licenseKeyEl);
   licenseFormEl.addEventListener("submit", async (event) => {
     event.preventDefault();
     await activateLicense();
@@ -334,14 +421,22 @@ function wireLicense() {
         licenseStatusEl.textContent = t("licenseStatusUsingThisDevice");
         licenseStatusEl.hidden = false;
       }
+      let nextStatus = null;
+      let replaceError = null;
       try {
-        await chrome.runtime.sendMessage({ what: "replaceDevice" });
+        nextStatus = await sendRuntimeMessageWithTimeout({ what: "replaceDevice" });
+        if (nextStatus?.error) {
+          throw new Error(String(nextStatus.error));
+        }
       } catch (error) {
-        console.error("Device replace failed", error);
+        replaceError = error;
       }
       useThisDeviceButton.disabled = false;
-      await refreshEntitlement();
+      await refreshEntitlement(nextStatus);
       setPaywalledUI(paywalled);
+      if (replaceError && entitlementStatus?.status !== "paid") {
+        console.error("Device replace failed", replaceError);
+      }
     });
   }
 }
@@ -421,25 +516,33 @@ function wireFooterRemoveLicense() {
     if (!confirmed) {
       return;
     }
+    let nextStatus = null;
+    let clearError = null;
     try {
-      await chrome.runtime.sendMessage({ what: "clearLicenseKey" });
+      nextStatus = await sendRuntimeMessageWithTimeout({ what: "clearLicenseKey" });
+      if (nextStatus?.error) {
+        throw new Error(String(nextStatus.error));
+      }
     } catch (error) {
-      console.error("Failed to clear license", error);
+      clearError = error;
     }
     if (licenseKeyEl) {
       licenseKeyEl.value = "";
     }
-    await refreshEntitlement();
+    await refreshEntitlement(nextStatus);
     setPaywalledUI(paywalled);
     if (licenseStatusEl) {
       licenseStatusEl.textContent = t("licenseStatusRemoved");
+    }
+    if (clearError) {
+      console.error("Failed to clear license", clearError);
     }
   });
 }
 
 async function activateLicense() {
   setLicenseEntryVisible(true);
-  const key = (licenseKeyEl?.value || "").trim();
+  const key = canonicalizeLicenseKeyInput(licenseKeyEl?.value || "");
   if (!key) {
     if (licenseStatusEl) {
       licenseStatusEl.textContent = t("licenseStatusEnterKey");
@@ -451,17 +554,18 @@ async function activateLicense() {
     licenseStatusEl.textContent = t("licenseStatusActivating");
   }
 
+  let nextStatus = null;
+  let activationError = null;
   try {
-    await chrome.runtime.sendMessage({ what: "setLicenseKey", licenseKey: key });
-  } catch (error) {
-    console.error("Activation failed", error);
-    if (licenseStatusEl) {
-      licenseStatusEl.textContent = t("licenseStatusActivationFailed");
+    nextStatus = await sendRuntimeMessageWithTimeout({ what: "setLicenseKey", licenseKey: key });
+    if (nextStatus?.error) {
+      throw new Error(String(nextStatus.error));
     }
-    return;
+  } catch (error) {
+    activationError = error;
   }
 
-  await refreshEntitlement();
+  await refreshEntitlement(nextStatus);
   setPaywalledUI(paywalled);
   const isPaid = entitlementStatus?.status === "paid";
   if (isPaid) {
@@ -479,12 +583,16 @@ async function activateLicense() {
       if (useThisDeviceButton) {
         useThisDeviceButton.hidden = false;
       }
+    } else if (entitlementStatus?.licenseKeyPresent) {
+      licenseStatusEl.textContent = t("licenseStatusVerifyLater");
     } else {
-      licenseStatusEl.textContent =
-        entitlementStatus?.licenseKeyPresent
-          ? t("licenseStatusVerifyLater")
-          : t("licenseStatusActivationRequired");
+      licenseStatusEl.textContent = activationError
+        ? t("licenseStatusActivationFailed")
+        : t("licenseStatusActivationRequired");
     }
+  }
+  if (activationError) {
+    console.error("Activation failed", activationError);
   }
 }
 
@@ -493,18 +601,41 @@ function wireCoreFilters() {
     if (!entry.checkbox) return;
     entry.checkbox.addEventListener("change", async (event) => {
       const enabled = Boolean(event.target.checked);
-      entry.checkbox.disabled = true;
+      busyRulesetCheckboxId = entry.checkbox.id;
+      renderCoreFilterStatus();
       try {
         await setRulesetsEnabled(entry.rulesets, enabled);
-        await refreshRulesets();
       } catch (error) {
         console.error(`Failed to toggle ${entry.label}`, error);
-        entry.checkbox.checked = !enabled;
+        await refreshRulesets();
       } finally {
-        entry.checkbox.disabled = false;
+        busyRulesetCheckboxId = "";
+        renderCoreFilterStatus();
       }
     });
   });
+}
+
+function wireRuntimeStateUpdates() {
+  if (runtimeStateChannel !== null) {
+    return;
+  }
+  try {
+    runtimeStateChannel = new BroadcastChannel(OPTIONS_BROADCAST_CHANNEL);
+    runtimeStateChannel.onmessage = (event) => {
+      const message = event?.data;
+      if (!(message instanceof Object)) {
+        return;
+      }
+      if (Array.isArray(message.enabledRulesets)) {
+        rulesetsLoaded = true;
+        enabledRulesets = new Set(normalizeEnabledRulesets(message.enabledRulesets));
+        renderCoreFilterStatus();
+      }
+    };
+  } catch (error) {
+    console.warn("Options runtime state channel unavailable", error);
+  }
 }
 
 function wireAllowlist() {
@@ -522,51 +653,98 @@ function wireAllowlist() {
   }
 }
 
-async function refreshRulesets() {
+async function refreshRulesets({ bootstrap = false } = {}) {
+  rulesetsLoaded = false;
+  renderCoreFilterStatus();
   try {
-    const enabled = await chrome.runtime.sendMessage({ what: "getEnabledRulesets" });
-    enabledRulesets = new Set(enabled || []);
+    let enabled = null;
+    if (bootstrap) {
+      const snapshot = await sendRuntimeMessageWithTimeout(
+        { what: "getOptionsPageData" },
+        { timeoutMs: 4000 }
+      ).catch(() => null);
+      if (Array.isArray(snapshot?.enabledRulesets)) {
+        enabled = snapshot.enabledRulesets;
+      }
+    }
+    if (Array.isArray(enabled) === false) {
+      enabled = await sendRuntimeMessageWithTimeout(
+        { what: "getEnabledRulesets" },
+        { timeoutMs: 4000 }
+      );
+    }
+    enabledRulesets = new Set(normalizeEnabledRulesets(enabled));
   } catch (error) {
     console.error("Failed to load ruleset state", error);
     enabledRulesets = new Set();
+  } finally {
+    rulesetsLoaded = true;
   }
   renderCoreFilterStatus();
 }
 
 function getToggleActivityState(entry) {
-  const enabledCount = entry.rulesets.reduce((count, id) =>
-    count + (enabledRulesets.has(id) ? 1 : 0), 0);
-  return {
-    enabledCount,
-    active: enabledCount !== 0,
-    partial: enabledCount !== 0 && enabledCount !== entry.rulesets.length
-  };
+  return getRulesetToggleState(Array.from(enabledRulesets), entry.rulesets);
 }
 
 function renderCoreFilterStatus() {
   FILTER_TOGGLES.forEach((entry) => {
     if (!entry.checkbox) return;
-    const { active } = getToggleActivityState(entry);
-    entry.checkbox.checked = active;
-    entry.checkbox.indeterminate = false;
+    if (rulesetsLoaded === false) {
+      entry.checkbox.checked = false;
+      entry.checkbox.indeterminate = true;
+      entry.checkbox.disabled = true;
+      if (entry.statusEl) {
+        entry.statusEl.textContent = t("uiLoading");
+        entry.statusEl.className = "toggle-status muted";
+      }
+      return;
+    }
+    const { allEnabled, partial } = getToggleActivityState(entry);
+    entry.checkbox.checked = allEnabled;
+    entry.checkbox.indeterminate = partial;
+    entry.checkbox.disabled =
+      entitlementLoaded === false ||
+      paywalled ||
+      busyRulesetCheckboxId === entry.checkbox.id;
     if (entry.statusEl) {
-      entry.statusEl.textContent = active ? t("uiActive") : t("uiDisabled");
-      entry.statusEl.className = `toggle-status ${active ? "ok" : "muted"}`;
+      const stateText = partial
+        ? t("uiPartial")
+        : allEnabled
+          ? t("uiActive")
+          : t("uiDisabled");
+      const stateClass = partial
+        ? "warn"
+        : allEnabled
+          ? "ok"
+          : "muted";
+      entry.statusEl.textContent = stateText;
+      entry.statusEl.className = `toggle-status ${stateClass}`;
     }
   });
 }
 
 async function setRulesetsEnabled(ids, enabled) {
-  const current = await chrome.runtime.sendMessage({ what: "getEnabledRulesets" });
-  const next = new Set(current || []);
-  ids.forEach((id) => {
-    if (enabled) next.add(id);
-    else next.delete(id);
-  });
-  await chrome.runtime.sendMessage({
+  const current = await sendRuntimeMessageWithTimeout(
+    { what: "getEnabledRulesets" },
+    { timeoutMs: 4000 }
+  );
+  const next = applyRulesetToggleChange(current, ids, enabled);
+  const result = await sendRuntimeMessageWithTimeout({
     what: "applyRulesets",
-    enabledRulesets: Array.from(next)
+    enabledRulesets: next
+  }, {
+    timeoutMs: 4000
   });
+  if (result?.error) {
+    throw new Error(String(result.error));
+  }
+  if (Array.isArray(result?.enabledRulesets)) {
+    enabledRulesets = new Set(normalizeEnabledRulesets(result.enabledRulesets));
+    renderCoreFilterStatus();
+    return;
+  }
+  await refreshRulesets();
 }
 
 async function refreshAllowlist() {

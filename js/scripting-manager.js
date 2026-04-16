@@ -25,12 +25,8 @@ import { browser, localRead, localRemove, localWrite } from './ext.js';
 import { ubolErr, ubolLog } from './debug.js';
 
 import {
-    getScriptletHostExclusions,
     INTERNAL_UNFILTERED_DOMAINS,
     isInternalUnfilteredHostname,
-    normalizeYouTubeWatchOwnerProfile,
-    YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT,
-    YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY,
 } from './breakage-policy.js';
 import { canonicalizeCommunityScriptlets } from './community-sync.js';
 import { collectCommunityTacticHostnames } from './community-tactics.js';
@@ -158,21 +154,6 @@ const normalizeMatches = matches => {
 const getScriptletPath = id =>
     SCRIPTLET_PATH_ALIASES.get(id) || `/rulesets/scripting/scriptlet/${id}.js`;
 
-const exactAndWildcardMatchesFromHostnames = hostnames => {
-    const out = [];
-    const seen = new Set();
-    for ( const hostname of hostnames || [] ) {
-        if ( typeof hostname !== 'string' || hostname.trim() === '' ) { continue; }
-        const normalized = hostname.trim();
-        for ( const match of [ `*://${normalized}/*`, ut.matchFromHostname(normalized) ] ) {
-            if ( seen.has(match) ) { continue; }
-            seen.add(match);
-            out.push(match);
-        }
-    }
-    return out;
-};
-
 const exactMatchesFromHostnames = hostnames => {
     const out = [];
     const seen = new Set();
@@ -185,18 +166,6 @@ const exactMatchesFromHostnames = hostnames => {
         out.push(match);
     }
     return out;
-};
-
-const pushCompatibilityExcludeMatches = (excludeMatches, hostnames) => {
-    if ( Array.isArray(excludeMatches) === false || Array.isArray(hostnames) === false ) {
-        return;
-    }
-    const seen = new Set(excludeMatches);
-    for ( const match of exactAndWildcardMatchesFromHostnames(hostnames) ) {
-        if ( seen.has(match) ) { continue; }
-        seen.add(match);
-        excludeMatches.push(match);
-    }
 };
 
 const pushExactExcludeMatches = (excludeMatches, hostnames) => {
@@ -264,32 +233,6 @@ const readActiveSubsystemSuppressionHostnames = async () => {
         }
     }
     return out;
-};
-
-const applyCompatibilityHostExclusions = (
-    scriptletId,
-    targetHostnames,
-    excludeMatches,
-    youtubeOwnerProfile = YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT,
-) => {
-    const compatibilityExclusions = getScriptletHostExclusions(scriptletId, {
-        youtubeOwnerProfile,
-    });
-    if ( compatibilityExclusions.length === 0 ) { return targetHostnames; }
-    const hostnames = Array.isArray(targetHostnames)
-        ? targetHostnames
-        : Array.from(targetHostnames || []);
-    if ( hostnames.length === 0 ) { return hostnames; }
-    if ( hostnames.includes('*') || hostnames.includes('all-urls') ) {
-        pushCompatibilityExcludeMatches(excludeMatches, compatibilityExclusions);
-        return hostnames;
-    }
-    const applicableExclusions = ut.intersectHostnameIters(
-        compatibilityExclusions,
-        hostnames,
-    );
-    if ( applicableExclusions.length === 0 ) { return hostnames; }
-    return ut.subtractHostnameIters(hostnames, applicableExclusions);
 };
 
 const collectRegisteredRemoteTacticHostnames = (
@@ -740,7 +683,7 @@ function registerSpecific(context) {
 /******************************************************************************/
 
 function registerScriptlet(context, scriptletDetails) {
-    const { before, filteringModeDetails, rulesetsDetails, youtubeWatchOwnerProfile } = context;
+    const { before, filteringModeDetails, rulesetsDetails } = context;
 
     const hasBroadHostPermission =
         filteringModeDetails.optimal.has('all-urls') ||
@@ -783,12 +726,6 @@ function registerScriptlet(context, scriptletDetails) {
                     );
                 }
             }
-            targetHostnames = applyCompatibilityHostExclusions(
-                id,
-                targetHostnames,
-                excludeMatches,
-                youtubeWatchOwnerProfile,
-            );
             if ( targetHostnames.length === 0 ) { continue; }
             matches.push(...ut.matchesFromHostnames(targetHostnames));
             normalizeMatches(matches);
@@ -838,7 +775,6 @@ function registerRemoteScriptlets(context, scriptletDetails) {
         before,
         filteringModeDetails,
         remoteScriptlets,
-        youtubeWatchOwnerProfile,
     } = context;
     const canonicalRemoteScriptlets = canonicalizeCommunityScriptlets(remoteScriptlets);
     if ( Array.isArray(canonicalRemoteScriptlets) === false ||
@@ -895,12 +831,6 @@ function registerRemoteScriptlets(context, scriptletDetails) {
                 );
             }
         }
-        targetHostnames = applyCompatibilityHostExclusions(
-            baseId,
-            targetHostnames,
-            excludeMatches,
-            youtubeWatchOwnerProfile,
-        );
         if ( targetHostnames.length === 0 ) { continue; }
 
         const matches = ut.matchesFromHostnames(targetHostnames);
@@ -1494,7 +1424,6 @@ const buildInjectablesRegistrationPlan = async () => {
         remoteTactics,
         autoGenericHighHosts,
         subsystemSuppressionHostnames,
-        youtubeWatchOwnerProfile,
         registered,
     ] = await Promise.all([
         getFilteringModeDetails(),
@@ -1521,11 +1450,6 @@ const buildInjectablesRegistrationPlan = async () => {
         ),
         readActiveAutoGenericHighHosts(),
         readActiveSubsystemSuppressionHostnames(),
-        readOptionalLocalValue(
-            YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY,
-            YOUTUBE_WATCH_OWNER_PROFILE_DEFAULT,
-            `registerInjectables/${YOUTUBE_WATCH_OWNER_PROFILE_STORAGE_KEY}`
-        ),
         browser.scripting.getRegisteredContentScripts(),
     ]);
     const before = new Map(
@@ -1554,7 +1478,6 @@ const buildInjectablesRegistrationPlan = async () => {
             after: [],
         },
         registeredTacticsHostCount: 0,
-        youtubeWatchOwnerProfile: normalizeYouTubeWatchOwnerProfile(youtubeWatchOwnerProfile),
     };
 
     await Promise.all([

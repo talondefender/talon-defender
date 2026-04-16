@@ -18,6 +18,7 @@ const allowedTestFiles = new Set([
   "test/default-rulesets.test.js",
   "test/entitlement-regression.test.js",
   "test/injectable-registration.test.js",
+  "test/options-ruleset-toggle-state.test.js",
   "test/public-safe-audit.test.js",
   "test/regional-rulesets.test.js",
   "test/remote-tactics-runtime.test.js",

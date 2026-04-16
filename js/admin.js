@@ -34,6 +34,7 @@ import {
 import {
     getDefaultFilteringMode,
     readFilteringModeDetails,
+    reconcileFilteringModeDetails,
 } from './mode-manager.js';
 
 import {
@@ -122,14 +123,14 @@ const adminSettings = {
         }
         if ( this.keys.has('defaultFiltering') ) {
             ubolLog('admin setting "defaultFiltering" changed');
-            await readFilteringModeDetails(true);
+            await reconcileFilteringModeDetails();
             await registerInjectables();
             const defaultFilteringMode = await getDefaultFilteringMode();
             broadcastMessage({ defaultFilteringMode });
         }
         if ( this.keys.has('noFiltering') ) {
             ubolLog('admin setting "noFiltering" changed');
-            const filteringModeDetails = await readFilteringModeDetails(true);
+            const filteringModeDetails = await reconcileFilteringModeDetails();
             broadcastMessage({ filteringModeDetails });
         }
         if ( this.keys.has('showBlockedCount') ) {

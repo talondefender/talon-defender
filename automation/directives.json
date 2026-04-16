@@ -3,6 +3,7 @@
     "id": "onetrust-dismiss",
     "category": "consent",
     "hosts": ["*"],
+    "requiresRulesets": ["annoyances-overlays"],
     "action": "click",
     "selectors": [
       "#onetrust-reject-all-handler",
@@ -21,6 +22,7 @@
     "id": "quantcast-hide",
     "category": "consent",
     "hosts": ["*"],
+    "requiresRulesets": ["annoyances-overlays"],
     "action": "hide",
     "selectors": [
       ".qc-cmp2-container",
@@ -32,6 +34,7 @@
     "id": "consentmanager-hide",
     "category": "consent",
     "hosts": ["*"],
+    "requiresRulesets": ["annoyances-overlays"],
     "action": "hide",
     "selectors": [
       "#cmp-ui-iframe",
@@ -47,6 +50,7 @@
     "id": "didomi-hide",
     "category": "consent",
     "hosts": ["*"],
+    "requiresRulesets": ["annoyances-overlays"],
     "action": "hide",
     "selectors": [
       "#didomi-notice",
@@ -58,6 +62,7 @@
     "id": "cookiebot-dismiss",
     "category": "consent",
     "hosts": ["*"],
+    "requiresRulesets": ["annoyances-overlays"],
     "action": "click",
     "selectors": [
       "#CybotCookiebotDialogBodyButtonDecline",
@@ -72,9 +77,23 @@
     "postActions": ["unlockScroll"]
   },
   {
+    "id": "guardian-sourcepoint-hide",
+    "category": "consent",
+    "hosts": ["=www.theguardian.com"],
+    "requiresRulesets": ["annoyances-overlays"],
+    "action": "hide",
+    "selectors": [
+      "div[id^=\"sp_message_container\"]",
+      "iframe[id^=\"sp_message_iframe\"]",
+      "iframe[title=\"The Guardian consent message\"]"
+    ],
+    "postActions": ["unlockScroll"]
+  },
+  {
     "id": "sourcepoint-hide",
     "category": "consent",
     "hosts": ["*"],
+    "requiresRulesets": ["annoyances-overlays"],
     "action": "hide",
     "selectors": [
       ".sp_message_container",
@@ -86,6 +105,7 @@
     "id": "trustarc-hide",
     "category": "consent",
     "hosts": ["*"],
+    "requiresRulesets": ["annoyances-overlays"],
     "action": "hide",
     "selectors": [
       "#truste-consent-track",
@@ -101,6 +121,7 @@
     "id": "cookieyes-dismiss",
     "category": "consent",
     "hosts": ["*"],
+    "requiresRulesets": ["annoyances-overlays"],
     "action": "click",
     "selectors": [
       ".cky-btn-reject",
@@ -120,6 +141,7 @@
     "id": "iubenda-hide",
     "category": "consent",
     "hosts": ["*"],
+    "requiresRulesets": ["annoyances-overlays"],
     "action": "hide",
     "selectors": [
       ".iubenda-cs-banner",
@@ -128,5 +150,40 @@
       "#iubenda-cs-overlay"
     ],
     "postActions": ["unlockScroll"]
+  },
+  {
+    "id": "guardian-sign-in-gate-hide",
+    "category": "annoyances",
+    "hosts": ["=www.theguardian.com"],
+    "requiresRulesets": ["annoyances-overlays"],
+    "directStyle": true,
+    "action": "hide",
+    "selectors": [
+      "#sign-in-gate"
+    ]
+  },
+  {
+    "id": "guardian-sticky-support-hide",
+    "category": "annoyances",
+    "hosts": ["=www.theguardian.com"],
+    "requiresRulesets": ["annoyances-overlays"],
+    "directStyle": true,
+    "action": "hide",
+    "selectors": [
+      "gu-island[name=\"StickyBottomBanner\"]",
+      "aside:has(gu-island[name=\"StickyBottomBanner\"])"
+    ]
+  },
+  {
+    "id": "guardian-body-end-support-hide",
+    "category": "annoyances",
+    "hosts": ["=www.theguardian.com"],
+    "requiresRulesets": ["annoyances-overlays"],
+    "directStyle": true,
+    "action": "hide",
+    "selectors": [
+      "gu-island[name=\"SlotBodyEnd\"]",
+      "#slot-body-end"
+    ]
   }
 ]

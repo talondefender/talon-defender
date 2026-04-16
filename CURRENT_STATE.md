@@ -7,12 +7,14 @@ Runtime behavior now:
 - the first popup flow can open `https://talondefender.com/welcome-live/?source=first_popup_open`.
 - the uninstall URL is always set to `https://talondefender.com/uninstall/` with `source` and `version` query parameters.
 - expired users can be reminded with `https://talondefender.com/trial-expired/` and a `trial_expired_reminder` source.
-- YouTube watch pages still have a manifest-declared `document_start` MAIN-world bootstrap script, but the public default now keeps its host-scoped enable cookie off unless an internal/private proof lane explicitly opts in.
+- YouTube watch pages still have a manifest-declared `document_start` MAIN-world bootstrap script, and the public default now keeps its host-scoped enable cookie on for entitled `optimal` and `complete` users while private proof lanes can still override the cookie explicitly.
 - YouTube watch pages now also support an internal owner-profile switch for private proofing, so Talon can compare `talon-current`, `upstream-core`, and `upstream-core+talon-wins` ownership without changing the public product surface.
 - Edge same-tab YouTube follow-up watch clicks now prep the tab, hop through a neutral `about:blank` document, and then re-enter the target watch URL so the next watch document is not bootstrapped directly from the prior watch page context.
 - same-tab YouTube follow-up watch prep now caches a clean donor bootstrap envelope from a donor watch tab and seeds that envelope back into the target watch page at `document_start` before YouTube consumes the follow-up bootstrap state.
 - host grouping for auto-promotion and heuristic site comparisons now uses a packaged fail-closed site-key resolver so ccTLD hosts do not broaden to bare public suffixes such as `co.uk`.
 - automation hide directives now apply across every matched selector in a directive, mirror their marker-based hide styles into discovered shadow roots and related fallback frames, and use a bounded retry backoff with inactivity reset instead of permanently stopping after three successful applies.
+- automation directives can now declare required bundled rulesets, so popup and consent fixes track the user-facing protection toggles instead of running outside the selected popup/overlay posture, and Guardian article pages now have exact-host automation coverage for the Sourcepoint consent wall, the inline `#sign-in-gate` registration interrupt, the sticky bottom `StickyBottomBanner` reader-revenue prompt, and the article-end `#slot-body-end` contribution ask, with those curated Guardian nuisance prompts now suppressed by direct selector CSS so article-surface mutation guards do not block them.
+- custom filter hostname walks now sanitize missing and non-string hostnames before slicing labels, preventing popup-panel and filtering lookups from crashing on `indexOf('.')` when a caller passes no hostname.
 
 Entitlement behavior now:
 - the free trial is `7` days from first initialization
@@ -20,7 +22,10 @@ Entitlement behavior now:
 - remote verification is cached for `24` hours when the last check succeeded
 - a remote license gets a `72` hour grace window after a successful verification
 - offline signed license keys are also supported through the embedded Ed25519 public key set
-- when status transitions from expired/paywalled back to trial or paid, the worker clears the paywall, restores injectables, and queues an async forced community sync without blocking the activation response
+- worker startup now initializes cached entitlement before the first early injectable registration, so expired profiles enter paywall and warning-icon state before popup reads instead of briefly looking active
+- popup and options license actions now bypass slow background startup gating and use bounded runtime waits so activation and `use this device` do not sit indefinitely on `Activating`
+- popup and options now also apply the entitlement status returned by `setLicenseKey`, `replaceDevice`, and `clearLicenseKey` immediately, then fall back to a fresh entitlement read only when the runtime action fails
+- when status transitions from expired/paywalled back to trial or paid, the worker clears the paywall, restores injectables, queues an async forced community sync, and defers the expensive open-tab runtime refresh so the activation response is not blocked
 
 Expired behavior now:
 - when status becomes `expired`, the extension enables a paywall override with `dnr.setAllowAllRules(..., true, ...)`
@@ -33,6 +38,8 @@ Bundled filtering surface now:
 - default rulesets enabled in the manifest are `ublock-filters`, `easylist`, `easyprivacy`, `annoyances-overlays`, `ublock-badware`, and `urlhaus-full`
 - entering complete mode now auto-enables the full bundled annoyance family: `annoyances-cookies`, `annoyances-notifications`, `annoyances-others`, `annoyances-overlays`, `annoyances-social`, and `annoyances-widgets`
 - the public Settings page now exposes an `Extra protection` toggle for the five non-default annoyance packs, so users no longer need to understand the hidden complete-mode concept
+- legacy or markerless ruleset selections now reset once to the canonical install defaults so reused Chrome storage cannot leave the public protection checkboxes blank, while later user checkbox changes persist normally across refreshes and restarts
+- the public Options page now bootstraps its protection checkboxes from a canonical background snapshot through the trusted early-message path, loads ruleset state in parallel with entitlement state, starts from a neutral `Loading...` row state instead of a fake all-disabled render, listens for runtime ruleset broadcasts, and renders multi-ruleset toggles as `active`, `partial`, or `disabled` so early startup races cannot falsely show all protections unchecked
 - the public package now also bundles a public-safe regional language ruleset family disabled by default and auto-enables locale-matched entries on fresh installs and untouched profiles
 - release packaging prunes unbundled ruleset artifacts so the shipped package only contains manifest-backed resources
 

@@ -3,7 +3,7 @@
 // Isolate from global scope
 (function uBOL_adShellStyles() {
 
-const SELECTORS = [
+const BASE_SELECTORS = [
     '.container--ads',
     '.container--ads-leaderboard-atf',
     '.container--ads-leaderboard-btf',
@@ -32,7 +32,34 @@ const SELECTORS = [
     '[class*="freestar" i]',
 ];
 
-const STYLE_TEXT = `${SELECTORS.join(',')}{display:none!important;visibility:hidden!important;height:0!important;min-height:0!important;max-height:0!important;margin:0!important;padding:0!important;border:0!important;}`;
+const HOST_SCOPED_SELECTORS = Object.freeze([
+    {
+        host: 'foxnews.com',
+        selectors: [
+            '.ad-container[class*="ad-h-" i][class*="ad-w-" i]',
+        ],
+    },
+]);
+
+const hostname = (self.location?.hostname || '').toLowerCase();
+const matchesHost = (pattern, candidate) =>
+    typeof pattern === 'string' &&
+    pattern !== '' &&
+    typeof candidate === 'string' &&
+    candidate !== '' &&
+    (candidate === pattern || candidate.endsWith(`.${pattern}`));
+
+const selectors = BASE_SELECTORS.slice();
+for ( const entry of HOST_SCOPED_SELECTORS ) {
+    if ( matchesHost(entry.host, hostname) === false ) { continue; }
+    selectors.push(...entry.selectors);
+}
+
+const STYLE_TEXT =
+    `${selectors.join(',')}` +
+    '{display:none!important;visibility:hidden!important;height:0!important;' +
+    'min-height:0!important;max-height:0!important;margin:0!important;' +
+    'padding:0!important;border:0!important;overflow:hidden!important;}';
 
 const inject = () => {
     try {

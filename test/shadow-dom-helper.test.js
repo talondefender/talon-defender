@@ -75,8 +75,8 @@ class FakeMutationObserver {
     this.targets = [];
   }
 
-  trigger() {
-    this.callback([]);
+  trigger(records = []) {
+    this.callback(records);
   }
 }
 
@@ -218,7 +218,12 @@ test('shadow helper rescans after mutation bursts and picks up newly attached ro
   lateHost.shadowRoot = new FakeDocumentFragment();
   harness.document.documentElement.append(lateHost);
 
-  harness.mutationObservers[0].trigger();
+  harness.mutationObservers[0].trigger([
+    {
+      addedNodes: [lateHost],
+      removedNodes: [],
+    },
+  ]);
   harness.runAllTimers();
 
   assert.equal(controller.enumerateRoots().includes(lateHost.shadowRoot), true);
@@ -234,4 +239,35 @@ test('shadow helper post-load rescans discover roots attached after initial pain
   harness.runAllTimers();
 
   assert.equal(controller.enumerateRoots().includes(host.closedShadowRoot), true);
+});
+
+test('shadow helper disconnects removed roots before re-observing active ones', () => {
+  const harness = createHelperHarness();
+  const firstHost = new FakeElement('section');
+  firstHost.shadowRoot = new FakeDocumentFragment();
+  const secondHost = new FakeElement('aside');
+  secondHost.shadowRoot = new FakeDocumentFragment();
+  harness.document.documentElement.append(firstHost);
+  harness.document.documentElement.append(secondHost);
+
+  const controller = loadHelper(harness);
+  const observer = harness.mutationObservers[0];
+
+  assert.equal(observer.targets.includes(firstHost.shadowRoot), true);
+  assert.equal(observer.targets.includes(secondHost.shadowRoot), true);
+
+  harness.document.documentElement.children =
+    harness.document.documentElement.children.filter(node => node !== firstHost);
+  firstHost.parentNode = null;
+  observer.trigger([
+    {
+      addedNodes: [],
+      removedNodes: [firstHost],
+    },
+  ]);
+  harness.runAllTimers();
+
+  assert.equal(controller.enumerateRoots().includes(firstHost.shadowRoot), false);
+  assert.equal(observer.targets.includes(firstHost.shadowRoot), false);
+  assert.equal(observer.targets.includes(secondHost.shadowRoot), true);
 });

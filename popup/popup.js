@@ -59,6 +59,7 @@ const expiredSupportLinkEl = document.getElementById("expiredSupportLink");
 
 let currentHost = null;
 let currentTabId = null;
+let currentTabUrl = "";
 let defaultFilteringMode = MODE_OPTIMAL;
 let currentEnabledState = true;
 let entitlementStatus = null;
@@ -84,12 +85,27 @@ const HARD_DENY_ERROR_CODES = new Set([
   "MAX_DEVICES",
   "TRIAL_ENDED"
 ]);
+const RUNTIME_MESSAGE_TIMEOUT_MS = 2000;
+const LICENSE_RUNTIME_MESSAGE_TIMEOUT_MS = 12000;
+const POPUP_STORAGE_TIMEOUT_MS = 1000;
+const POPUP_ACTIVE_TAB_TIMEOUT_MS = 1000;
+const POPUP_LOADING_FAILSAFE_MS = 2500;
+
+let popupLoadingFailSafeId = null;
 
 self.addEventListener("unhandledrejection", (event) => {
   if (isIgnorableRuntimeError(event?.reason)) {
     event.preventDefault();
   }
 });
+
+try {
+  chrome.runtime.sendMessage({ what: "popupWarmup" }, () => {
+    void chrome.runtime?.lastError;
+  });
+} catch (_error) {
+  // ignore
+}
 
 init().catch((error) => {
   console.error("Popup init failed", error);
@@ -100,11 +116,16 @@ init().catch((error) => {
   if (expiredOverlayEl) {
     expiredOverlayEl.hidden = true;
   }
+  clearPopupLoadingFailSafe();
+  setToggleLoading(false);
+  clearCurrentTabState();
+  renderToggle(currentEnabledState);
 });
 
 function clearCurrentTabState() {
   currentHost = null;
   currentTabId = null;
+  currentTabUrl = "";
   currentReloadNeededReason = "";
   if (dynamicHostLabelEl) {
     dynamicHostLabelEl.textContent = t("popupNoActiveTab");
@@ -141,17 +162,34 @@ async function init() {
   maybeOpenFirstPopupWelcome();
   showInitialPopupShell();
 
+  let hostEnrichmentPromise = Promise.resolve();
+  let panelDataPromise = Promise.resolve();
   try {
     await hydrateFromLocalCache();
-    await refreshEntitlement();
-    await resolveActiveHost();
-    await refreshRuntimeNoticeState();
-    if (!paywalled) {
-      await Promise.all([refreshFilteringState(), refreshFilterCatalog()]);
-    }
+    hostEnrichmentPromise = resolveActiveHost()
+      .catch((error) => {
+        console.warn("Active tab enrichment failed", error);
+        clearCurrentTabState();
+      });
+    panelDataPromise = hostEnrichmentPromise
+      .then(() => refreshPopupPanelData())
+      .catch(async (error) => {
+        console.warn("Popup panel data refresh failed", error);
+        await Promise.allSettled([
+          refreshEntitlement(),
+          refreshFilteringState(),
+          refreshRuntimeNoticeState()
+        ]);
+      });
+    await Promise.allSettled([
+      panelDataPromise,
+      refreshFilterCatalog()
+    ]);
   } finally {
+    clearPopupLoadingFailSafe();
     setToggleLoading(false);
   }
+  await hostEnrichmentPromise;
 }
 
 function setDocumentLanguage() {
@@ -173,6 +211,36 @@ function maybeOpenFirstPopupWelcome() {
     });
   } catch (_error) {
     // ignore
+  }
+}
+
+async function sendRuntimeMessageWithTimeout(message, {
+  timeoutMs = RUNTIME_MESSAGE_TIMEOUT_MS,
+} = {}) {
+  return runWithTimeout(() => chrome.runtime.sendMessage(message), {
+    timeoutMs,
+    label: `runtime message timeout: ${message?.what || "unknown"}`
+  });
+}
+
+async function runWithTimeout(task, {
+  timeoutMs = RUNTIME_MESSAGE_TIMEOUT_MS,
+  label = "operation timeout"
+} = {}) {
+  let timeoutId = null;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(task),
+      new Promise((_, reject) => {
+        timeoutId = self.setTimeout(() => {
+          reject(new Error(label));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== null) {
+      self.clearTimeout(timeoutId);
+    }
   }
 }
 
@@ -207,20 +275,29 @@ function showInitialPopupShell() {
   if (expiredOverlayEl) {
     expiredOverlayEl.hidden = true;
   }
+  clearCurrentTabState();
+  renderToggle(currentEnabledState);
+  renderFilterCatalog(null);
   setToggleLoading(true);
-  if (statusLabel) {
-    statusLabel.textContent = t("subscriptionStatusLoading");
-    statusLabel.className = "status-text";
+  schedulePopupLoadingFailSafe();
+}
+
+function clearPopupLoadingFailSafe() {
+  if (popupLoadingFailSafeId === null) {
+    return;
   }
-  if (statsCardEl) {
-    statsCardEl.classList.add("paused");
-  }
-  if (safetyStatusEl) {
-    safetyStatusEl.textContent = t("uiLoading");
-  }
-  for (const label of metricLabelEls) {
-    label.textContent = t("uiLoading");
-  }
+  self.clearTimeout(popupLoadingFailSafeId);
+  popupLoadingFailSafeId = null;
+}
+
+function schedulePopupLoadingFailSafe() {
+  clearPopupLoadingFailSafe();
+  popupLoadingFailSafeId = self.setTimeout(() => {
+    popupLoadingFailSafeId = null;
+    clearCurrentTabState();
+    setToggleLoading(false);
+    renderToggle(currentEnabledState);
+  }, POPUP_LOADING_FAILSAFE_MS);
 }
 
 const toFiniteNumber = (value) => {
@@ -307,10 +384,13 @@ async function hydrateFromLocalCache() {
   let cachedEntitlement = null;
   let cachedDefaultMode = null;
   try {
-    const cached = await chrome.storage.local.get([
+    const cached = await runWithTimeout(() => chrome.storage.local.get([
       ENTITLEMENT_LOCAL_STORAGE_KEY,
       FILTERING_MODE_STORAGE_KEY
-    ]);
+    ]), {
+      timeoutMs: POPUP_STORAGE_TIMEOUT_MS,
+      label: "popup local cache read timeout"
+    });
     cachedEntitlement = deriveStatusFromStoredEntitlement(cached?.[ENTITLEMENT_LOCAL_STORAGE_KEY]);
     cachedDefaultMode = deriveDefaultFilteringModeFromCache(cached?.[FILTERING_MODE_STORAGE_KEY]);
   } catch (_error) {
@@ -545,13 +625,24 @@ function wireEvents() {
         licenseStatusEl.className = "status-note";
         licenseStatusEl.hidden = false;
       }
+      let nextStatus = null;
+      let replaceError = null;
       try {
-        await chrome.runtime.sendMessage({ what: "replaceDevice" });
+        nextStatus = await sendRuntimeMessageWithTimeout(
+          { what: "replaceDevice" },
+          { timeoutMs: LICENSE_RUNTIME_MESSAGE_TIMEOUT_MS }
+        );
+        if (nextStatus?.error) {
+          throw new Error(String(nextStatus.error));
+        }
       } catch (error) {
-        console.error("Device replace failed", error);
+        replaceError = error;
       }
       useThisDeviceButton.disabled = false;
-      await refreshEntitlement();
+      await refreshEntitlement(nextStatus);
+      if (replaceError && entitlementStatus?.status !== "paid") {
+        console.error("Device replace failed", replaceError);
+      }
     });
   }
 
@@ -601,29 +692,47 @@ function wireEvents() {
         expiredOverlayStatusEl.className = "status-note";
         expiredOverlayStatusEl.hidden = false;
       }
+      let nextStatus = null;
+      let replaceError = null;
       try {
-        await chrome.runtime.sendMessage({ what: "replaceDevice" });
+        nextStatus = await sendRuntimeMessageWithTimeout(
+          { what: "replaceDevice" },
+          { timeoutMs: LICENSE_RUNTIME_MESSAGE_TIMEOUT_MS }
+        );
+        if (nextStatus?.error) {
+          throw new Error(String(nextStatus.error));
+        }
       } catch (error) {
-        console.error("Device replace failed", error);
+        replaceError = error;
       }
       expiredUseThisDeviceButtonEl.disabled = false;
-      await refreshEntitlement();
+      await refreshEntitlement(nextStatus);
+      if (replaceError && entitlementStatus?.status !== "paid") {
+        console.error("Device replace failed", replaceError);
+      }
     });
   }
 }
 
 async function resolveActiveHost() {
   try {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tabs = await runWithTimeout(() => chrome.tabs.query({ active: true, currentWindow: true }), {
+      timeoutMs: POPUP_ACTIVE_TAB_TIMEOUT_MS,
+      label: "popup active tab query timeout"
+    });
     const active = tabs && tabs[0];
     currentTabId = active?.id ?? null;
+    currentHost = null;
+    currentTabUrl = "";
     if (active?.url) {
       const url = new URL(active.url);
       currentHost = url.hostname;
+      currentTabUrl = url.toString();
     }
   } catch (_error) {
     currentHost = null;
     currentTabId = null;
+    currentTabUrl = "";
   }
 
   if (dynamicHostLabelEl) {
@@ -654,7 +763,7 @@ async function refreshRuntimeNoticeState() {
     return;
   }
   try {
-    const state = await chrome.runtime.sendMessage({
+    const state = await sendRuntimeMessageWithTimeout({
       what: "getTabReloadNeededState",
       tabId: currentTabId
     });
@@ -665,6 +774,37 @@ async function refreshRuntimeNoticeState() {
     console.warn("Failed to read tab reload-needed state", error);
     currentReloadNeededReason = "";
   }
+  renderRuntimeNotice();
+}
+
+async function refreshPopupPanelData() {
+  let panelData = null;
+  try {
+    panelData = await sendRuntimeMessageWithTimeout({
+      what: "popupPanelData",
+      tabId: currentTabId,
+      hostname: currentHost || ""
+    });
+  } catch (error) {
+    console.warn("Popup panel data read failed", error);
+    throw error;
+  }
+
+  const nextDefaultMode = Number(panelData?.defaultFilteringMode);
+  if (Number.isFinite(nextDefaultMode)) {
+    defaultFilteringMode = nextDefaultMode;
+    currentEnabledState = nextDefaultMode !== MODE_NONE;
+  }
+
+  if (panelData?.entitlementStatus && typeof panelData.entitlementStatus === "object") {
+    applyEntitlementStatus(panelData.entitlementStatus);
+  } else {
+    renderToggle(currentEnabledState);
+  }
+
+  currentReloadNeededReason = typeof panelData?.reloadNeededState?.reason === "string"
+    ? panelData.reloadNeededState.reason
+    : "";
   renderRuntimeNotice();
 }
 
@@ -1001,16 +1141,18 @@ function applyEntitlementStatus(status) {
   }
 }
 
-async function refreshEntitlement() {
-  let nextStatus;
-  try {
-    nextStatus = await chrome.runtime.sendMessage({ what: "getEntitlementStatus" });
-  } catch (error) {
-    console.warn("Entitlement check failed", error);
-    // distinguishes network error from explicit expiry
-    nextStatus = { status: "error", lastError: "Network Error" };
+async function refreshEntitlement(nextStatus = null) {
+  let resolvedStatus = nextStatus;
+  if (!resolvedStatus || typeof resolvedStatus !== "object") {
+    try {
+      resolvedStatus = await sendRuntimeMessageWithTimeout({ what: "getEntitlementStatus" });
+    } catch (error) {
+      console.warn("Entitlement check failed", error);
+      resolvedStatus = entitlementStatus || { status: "error", lastError: "Network Error" };
+    }
   }
-  applyEntitlementStatus(nextStatus);
+  applyEntitlementStatus(resolvedStatus);
+  return entitlementStatus;
 }
 
 async function activateLicense() {
@@ -1036,18 +1178,21 @@ async function activateLicenseKey(key, { statusEl } = {}) {
     statusEl.hidden = false;
   }
 
+  let nextStatus = null;
+  let activationError = null;
   try {
-    await chrome.runtime.sendMessage({ what: "setLicenseKey", licenseKey: normalized });
-  } catch (error) {
-    if (statusEl) {
-      statusEl.textContent = t("licenseStatusActivationFailed");
-      statusEl.className = "status-note";
-      statusEl.hidden = false;
+    nextStatus = await sendRuntimeMessageWithTimeout(
+      { what: "setLicenseKey", licenseKey: normalized },
+      { timeoutMs: LICENSE_RUNTIME_MESSAGE_TIMEOUT_MS }
+    );
+    if (nextStatus?.error) {
+      throw new Error(String(nextStatus.error));
     }
-    console.error("License activation failed", error);
+  } catch (error) {
+    activationError = error;
   }
 
-  await refreshEntitlement();
+  await refreshEntitlement(nextStatus);
   if (entitlementStatus?.status === "paid") {
     await Promise.all([refreshFilteringState(), refreshFilterCatalog()]);
     if (statusEl && statusEl.hidden === false) {
@@ -1069,6 +1214,10 @@ async function activateLicenseKey(key, { statusEl } = {}) {
     return;
   }
 
+  if (activationError) {
+    console.error("License activation failed", activationError);
+  }
+
   statusEl.textContent =
     entitlementStatus?.licenseKeyPresent
       ? t("licenseStatusVerifyLater")
@@ -1079,15 +1228,14 @@ async function activateLicenseKey(key, { statusEl } = {}) {
 
 async function refreshFilteringState() {
   try {
-    const defaultMode = await chrome.runtime.sendMessage({ what: "getDefaultFilteringMode" });
+    const defaultMode = await sendRuntimeMessageWithTimeout({ what: "getDefaultFilteringMode" });
     defaultFilteringMode = Number(defaultMode);
     if (!Number.isFinite(defaultFilteringMode)) {
       defaultFilteringMode = MODE_OPTIMAL;
     }
     currentEnabledState = defaultFilteringMode !== MODE_NONE;
   } catch (_error) {
-    defaultFilteringMode = MODE_OPTIMAL;
-    currentEnabledState = true;
+    currentEnabledState = defaultFilteringMode !== MODE_NONE;
   }
   renderToggle(currentEnabledState);
 }

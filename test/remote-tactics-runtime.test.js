@@ -7,6 +7,10 @@ const remoteTacticsSource = await fs.readFile(
   new URL('../js/scripting/remote-tactics.js', import.meta.url),
   'utf8'
 );
+const remoteTacticsBootstrapSource = await fs.readFile(
+  new URL('../js/scripting/remote-tactics-bootstrap.js', import.meta.url),
+  'utf8'
+);
 
 const PAGE_URL = 'https://www.example.com/watch';
 const DEFAULT_TACTICS = [
@@ -289,6 +293,16 @@ const cloneValue = value => (
     : structuredClone(value)
 );
 
+const createDeferred = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+
 const resolveUrl = input => {
   const raw = input instanceof FakeRequest ? input.url : String(input || '');
   return new URL(raw, PAGE_URL).toString();
@@ -383,6 +397,102 @@ const createHarness = ({
     sentRequests,
     FakeXMLHttpRequest,
     timers,
+  };
+};
+
+const createBootstrapHarness = () => {
+  const document = new FakeEventTarget();
+  const configs = [];
+  const getQueue = [];
+  const storageChangeListeners = [];
+  const context = {
+    JSON,
+    Promise,
+    structuredClone,
+    console,
+    document,
+    CustomEvent: FakeCustomEvent,
+    browser: null,
+    chrome: null,
+    location: { hostname: 'www.example.com' },
+    self: null,
+  };
+
+  document.addEventListener('td-remote-tactics-config', event => {
+    configs.push(JSON.parse(JSON.stringify(event?.detail || null)));
+  });
+
+  const storage = {
+    local: {
+      get() {
+        const next = getQueue.shift();
+        if (next) {
+          return next.promise;
+        }
+        return Promise.resolve({ communityBundlePublicTactics: [] });
+      },
+    },
+    onChanged: {
+      addListener(listener) {
+        storageChangeListeners.push(listener);
+      },
+      removeListener(listener) {
+        const index = storageChangeListeners.indexOf(listener);
+        if (index >= 0) {
+          storageChangeListeners.splice(index, 1);
+        }
+      },
+    },
+  };
+
+  context.browser = { storage };
+  context.chrome = { storage };
+  context.self = Object.assign(new FakeEventTarget(), {
+    JSON,
+    Promise,
+    structuredClone,
+    console,
+    document,
+    CustomEvent: FakeCustomEvent,
+    browser: context.browser,
+    chrome: context.chrome,
+    location: context.location,
+  });
+  context.globalThis = context.self;
+
+  return {
+    configs,
+    context,
+    load() {
+      vm.runInNewContext(remoteTacticsBootstrapSource, context, {
+        filename: 'remote-tactics-bootstrap.js',
+      });
+      return context.self.TalonRemoteTacticsBootstrapController;
+    },
+    enqueueRead(tactics) {
+      const deferred = createDeferred();
+      getQueue.push({
+        promise: deferred.promise,
+        resolve() {
+          const json = JSON.stringify(tactics);
+          deferred.resolve({
+            communityBundlePublicTactics: vm.runInNewContext(json, context),
+          });
+        },
+      });
+      return getQueue[getQueue.length - 1];
+    },
+    notifyStorageChange(oldValue, newValue) {
+      const changes = {
+        communityBundlePublicTactics: {
+          oldValue: JSON.parse(JSON.stringify(oldValue)),
+          newValue: JSON.parse(JSON.stringify(newValue)),
+        },
+      };
+      for (const listener of storageChangeListeners) {
+        listener(changes, 'local');
+      }
+    },
   };
 };
 
@@ -604,4 +714,40 @@ test('remote tactics stop restores native globals and allows a clean reinstall',
   assert.notEqual(harness.context.fetch, harness.originalFetch);
   assert.notEqual(harness.context.XMLHttpRequest, harness.FakeXMLHttpRequest);
   assert.equal(harness.document.listenerCount('td-remote-tactics-config'), 1);
+});
+
+test('remote tactics bootstrap drops stale in-flight reads after cache invalidation', async () => {
+  const harness = createBootstrapHarness();
+  const firstTactics = [
+    { id: 'old', hosts: ['=www.example.com'] },
+  ];
+  const secondTactics = [
+    { id: 'new', hosts: ['=www.example.com'] },
+  ];
+
+  const firstRead = harness.enqueueRead(firstTactics);
+  const controller = harness.load();
+
+  harness.notifyStorageChange(firstTactics, secondTactics);
+  const secondRead = harness.enqueueRead(secondTactics);
+  const refreshPromise = controller.refresh({ requestId: 2 });
+
+  secondRead.resolve();
+  const refreshed = await refreshPromise;
+  await flushMicrotasks();
+
+  assert.equal(refreshed.length, 1);
+  assert.equal(refreshed[0].id, 'new');
+  assert.equal(harness.configs.length, 1);
+  assert.equal(harness.configs[0].requestId, 2);
+  assert.equal(harness.configs[0].tactics[0].id, 'new');
+
+  firstRead.resolve();
+  await flushMicrotasks();
+
+  assert.equal(
+    harness.configs.length,
+    1,
+    'stale in-flight reads should not dispatch outdated tactics after invalidation'
+  );
 });

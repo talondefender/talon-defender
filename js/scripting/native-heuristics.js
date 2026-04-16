@@ -807,7 +807,8 @@
         ensureStaysHidden(wrapper);
     };
 
-    const rehideObserved = new WeakSet();
+    let rehideObserved = new WeakSet();
+    let rehideObservers = new Set();
     const ensureStaysHidden = container => {
         if (container instanceof Element === false) { return; }
         if (rehideObserved.has(container)) { return; }
@@ -816,6 +817,7 @@
             const obs = new MutationObserver(() => {
                 if (container.isConnected === false) {
                     obs.disconnect();
+                    rehideObservers.delete(obs);
                     return;
                 }
                 if (isVisible(container)) {
@@ -827,6 +829,7 @@
                 attributes: true,
                 attributeFilter: ['style', 'class', 'hidden', 'aria-hidden'],
             });
+            rehideObservers.add(obs);
         } catch {
         }
     };
@@ -960,6 +963,7 @@
         seenLabels = new WeakSet();
         hiddenContainers = new WeakSet();
         iframeCandidates = new WeakSet();
+        rehideObserved = new WeakSet();
         hideCount = 0;
         strongHideCount = 0;
         aggressionBoost = 0;
@@ -979,6 +983,10 @@
             observer.disconnect();
             observerConnected = false;
         }
+        for (const obs of rehideObservers) {
+            try { obs.disconnect(); } catch { }
+        }
+        rehideObservers.clear();
         if (processTimer !== undefined) {
             try { self.cancelAnimationFrame(processTimer); } catch { }
             processTimer = undefined;

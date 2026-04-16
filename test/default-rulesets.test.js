@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import {
   applyDefaultRulesetFlagsToDetails,
   getDefaultRulesetIdsFromRuleResources,
+  RULESET_SELECTION_STATE_VERSION,
   reconcileDefaultRulesetPatch,
 } from '../js/default-rulesets.js';
 
@@ -200,6 +201,24 @@ test('default ruleset migration preserves customized profiles and later user opt
 
   assert.equal(optedOutAfterMigration.changed, false);
   assert.equal(optedOutAfterMigration.patchedEnabledRulesets.includes('annoyances-overlays'), false);
+});
+
+test('legacy ruleset selections reset once to the canonical install defaults', () => {
+  const patched = reconcileDefaultRulesetPatch({
+    currentEnabledRulesets: [
+      'annoyances-cookies',
+      'annoyances-overlays',
+    ],
+    storedDefaultRulesetIds: EXPECTED_DEFAULT_IDS,
+    nextDefaultRulesetIds: EXPECTED_DEFAULT_IDS,
+    rulesetSelectionVersion: 0,
+  });
+
+  assert.equal(patched.changed, true);
+  assert.equal(patched.resetToDefaults, true);
+  assert.equal(patched.storageChanged, true);
+  assert.equal(patched.rulesetSelectionVersion, RULESET_SELECTION_STATE_VERSION);
+  assert.deepEqual(patched.patchedEnabledRulesets, EXPECTED_DEFAULT_IDS);
 });
 
 test('source ruleset metadata matches manifest defaults for bundled rulesets', async () => {

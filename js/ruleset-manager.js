@@ -520,12 +520,18 @@ async function patchDefaultRulesets() {
         currentEnabledRulesets: rulesetConfig.enabledRulesets,
         storedDefaultRulesetIds: oldDefaultIds,
         nextDefaultRulesetIds: newDefaultIds,
+        rulesetSelectionVersion: rulesetConfig.rulesetSelectionVersion,
     });
     localWrite('defaultRulesetIds', newDefaultIds);
-    if ( patched.changed === false ) { return false; }
-    ubolLog(`Patched rulesets: ${rulesetConfig.enabledRulesets} => ${patched.patchedEnabledRulesets}`);
-    rulesetConfig.enabledRulesets = patched.patchedEnabledRulesets;
-    return true;
+    rulesetConfig.rulesetSelectionVersion = patched.rulesetSelectionVersion;
+    if ( patched.changed ) {
+        const logLabel = patched.resetToDefaults
+            ? 'Reset rulesets to install defaults'
+            : 'Patched rulesets';
+        ubolLog(`${logLabel}: ${rulesetConfig.enabledRulesets} => ${patched.patchedEnabledRulesets}`);
+        rulesetConfig.enabledRulesets = patched.patchedEnabledRulesets;
+    }
+    return patched.changed || patched.storageChanged;
 }
 
 /******************************************************************************/

@@ -265,13 +265,19 @@ export async function readFilteringModeDetails(bypassCache = false) {
             }
         }
     }
-    filteringModesToDNR(userModes);
-    sessionWrite('filteringModeDetails', serializeModeDetails(userModes));
     readFilteringModeDetails.cache = userModes;
     return userModes;
 }
 
 /******************************************************************************/
+
+export async function reconcileFilteringModeDetails() {
+    const details = await readFilteringModeDetails(true);
+    await writeFilteringModeDetails(details);
+    return details;
+}
+
+/**/
 
 async function writeFilteringModeDetails(afterDetails) {
     await filteringModesToDNR(afterDetails);
@@ -307,8 +313,7 @@ export async function getFilteringModeDetails(serializable = false) {
 }
 
 export async function setFilteringModeDetails(details) {
-    await localWrite('filteringModeDetails', serializeModeDetails(details));
-    await readFilteringModeDetails(true);
+    await writeFilteringModeDetails(details);
 }
 
 /******************************************************************************/

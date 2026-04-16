@@ -169,7 +169,6 @@ test('remote scriptlet registration canonicalizes duplicate entries and scopes i
   );
 
   assert.match(source, /canonicalizeCommunityScriptlets\(remoteScriptlets\)/);
-  assert.match(source, /targetHostnames = applyCompatibilityHostExclusions\(/);
   assert.match(source, /remote-scriptlet\.\$\{world\.toLowerCase\(\)\}\.\$\{baseId\}/);
 });
 
@@ -213,4 +212,20 @@ test('remote cosmetics registration splits broad and host-gated lanes', async ()
   assert.match(remoteCosmeticsSource, /collectRegisteredRemoteCosmeticHostnames\(/);
   assert.match(remoteCosmeticsSource, /const hostMatches = exactMatchesFromHostnames\(targetHostnames\);/);
   assert.equal(remoteCosmeticsSource.includes("id: 'remote-cosmetics'"), false);
+});
+
+test('scripting manager no longer registers YouTube or Postmedia exact-host compatibility lanes', async () => {
+  const source = await fs.readFile(
+    new URL('../js/scripting-manager.js', import.meta.url),
+    'utf8'
+  );
+
+  assert.doesNotMatch(source, /applyCompatibilityHostExclusions/);
+  assert.doesNotMatch(source, /youtubeWatchOwnerProfile/);
+  assert.doesNotMatch(source, /TALON_NATIONALPOST_ANTI_ADBLOCK_PATH/);
+  assert.doesNotMatch(source, /TALON_FINANCIALPOST_COMPATIBILITY_PATH/);
+  assert.doesNotMatch(source, /TALON_FINANCIALPOST_ANTI_ADBLOCK_PATH/);
+  assert.doesNotMatch(source, /registerNationalPostAntiAdblock/);
+  assert.doesNotMatch(source, /registerFinancialPostCompatibility/);
+  assert.doesNotMatch(source, /registerFinancialPostAntiAdblock/);
 });

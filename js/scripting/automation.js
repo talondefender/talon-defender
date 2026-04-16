@@ -7,6 +7,7 @@ const DIRECTIVES_PATH = 'automation/directives.json';
 const PUBLIC_REMOTE_DIRECTIVES_KEY = 'communityBundlePublicDirectives';
 const PRIVATE_REMOTE_DIRECTIVES_KEY = 'communityBundlePrivateDirectives';
 const LEGACY_REMOTE_DIRECTIVES_KEY = 'communityBundleDirectives';
+const RULESET_CONFIG_KEY = 'rulesetConfig';
 
 const runtime = self.browser?.runtime || self.chrome?.runtime;
 const getURL = runtime?.getURL?.bind(runtime) || (p => p);
@@ -15,18 +16,59 @@ const guard = self.TalonBreakageGuard;
 const blockHints = self.TalonBlockHintsController;
 const AUTOMATION_MARK_ATTR = 'data-ubol-automation';
 const AUTOMATION_STYLE_MARKER_ATTR = 'data-ubol-automation-style';
+const AUTOMATION_READY_MARK_ATTR = 'data-ubol-flag-talon-automation-controller';
 const shadowController = self.TalonShadowRootController;
 const shadowRootsChangedEvent = shadowController?.ROOTS_CHANGED_EVENT || 'talon-shadow-roots-changed';
 const DEFAULT_REAPPLY_DELAYS_MS = Object.freeze([ 0, 500, 2000, 10000, 30000 ]);
 const REAPPLY_RESET_AFTER_MS = 5 * 60 * 1000;
 
+const setAutomationReadyMarker = enabled => {
+    const root = document.documentElement;
+    if (
+        root === null ||
+        typeof root !== 'object' ||
+        typeof root.setAttribute !== 'function'
+    ) {
+        return;
+    }
+    try {
+        if ( enabled ) {
+            root.setAttribute(AUTOMATION_READY_MARK_ATTR, '1');
+        } else {
+            root.removeAttribute(AUTOMATION_READY_MARK_ATTR);
+        }
+    } catch {
+    }
+};
+
 if ( self.TalonAutomationController ) {
+    setAutomationReadyMarker(true);
     self.TalonAutomationController.refresh().catch(( ) => {});
     return;
 }
 
 let directivesPromise;
 let remoteDirectivesPromise;
+let enabledRulesetsPromise;
+
+const normalizeRulesetId = value => {
+    if ( typeof value !== 'string' ) { return ''; }
+    const normalized = value.trim();
+    return normalized === '' ? '' : normalized;
+};
+
+const normalizeRulesetIds = values => {
+    if ( Array.isArray(values) === false ) { return []; }
+    const out = [];
+    const seen = new Set();
+    for ( const value of values ) {
+        const id = normalizeRulesetId(value);
+        if ( id === '' || seen.has(id) ) { continue; }
+        seen.add(id);
+        out.push(id);
+    }
+    return out;
+};
 
 const mergeDirectiveArrays = (...inputs) => {
     const out = [];
@@ -90,6 +132,44 @@ const loadDirectives = ( ) => {
         })
         .catch(( ) => []);
     return directivesPromise;
+};
+
+const readEnabledRulesets = bin => {
+    const hasConfig = bin !== null &&
+        typeof bin === 'object' &&
+        Object.prototype.hasOwnProperty.call(bin, RULESET_CONFIG_KEY);
+    if ( hasConfig === false ) { return null; }
+    const config = bin[RULESET_CONFIG_KEY];
+    if ( config === null || typeof config !== 'object' ) { return null; }
+    const enabled = Array.isArray(config.enabledRulesets)
+        ? config.enabledRulesets
+        : null;
+    if ( enabled === null ) { return null; }
+    return new Set(normalizeRulesetIds(enabled));
+};
+
+const loadEnabledRulesets = ( ) => {
+    if ( enabledRulesetsPromise !== undefined ) { return enabledRulesetsPromise; }
+    if ( storage?.get === undefined ) {
+        enabledRulesetsPromise = Promise.resolve(null);
+        return enabledRulesetsPromise;
+    }
+    try {
+        const maybePromise = storage.get(RULESET_CONFIG_KEY);
+        if ( maybePromise?.then ) {
+            enabledRulesetsPromise = maybePromise.then(readEnabledRulesets).catch(( ) => null);
+            return enabledRulesetsPromise;
+        }
+    } catch {
+    }
+    enabledRulesetsPromise = new Promise(resolve => {
+        try {
+            storage.get(RULESET_CONFIG_KEY, bin => resolve(readEnabledRulesets(bin)));
+        } catch {
+            resolve(null);
+        }
+    });
+    return enabledRulesetsPromise;
 };
 
 const hostname = (self.location && self.location.hostname || '').toLowerCase();
@@ -161,6 +241,13 @@ const hostMatchesDirective = directive => {
     return false;
 };
 
+const rulesetsMatchDirective = (directive, enabledRulesets) => {
+    const requiredRulesets = normalizeRulesetIds(directive?.requiresRulesets);
+    if ( requiredRulesets.length === 0 ) { return true; }
+    if ( enabledRulesets instanceof Set === false ) { return true; }
+    return requiredRulesets.every(id => enabledRulesets.has(id));
+};
+
 const isVisible = el => {
     if ( el instanceof Element === false ) { return false; }
     const style = self.getComputedStyle(el);
@@ -214,9 +301,30 @@ const styleIdForDirective = id =>
 
 const escapeAttrValue = value => String(value || '').replace(/["\\]/g, '\\$&');
 
-const buildHideStyleText = id => {
-    const attrSelector = `[${AUTOMATION_MARK_ATTR}="${escapeAttrValue(id)}"]`;
-    return `${attrSelector}{display:none!important;visibility:hidden!important;}`;
+const buildHideStyleText = directive => {
+    const id = directive?.id || 'directive';
+    const selectors = [];
+    if ( directive?.directStyle === true ) {
+        if ( Array.isArray(directive.selectors) ) {
+            selectors.push(...directive.selectors);
+        }
+        if ( directive?.fallbackAction === 'hide' && Array.isArray(directive.fallbackSelectors) ) {
+            selectors.push(...directive.fallbackSelectors);
+        }
+    } else {
+        selectors.push(`[${AUTOMATION_MARK_ATTR}="${escapeAttrValue(id)}"]`);
+    }
+    const dedupedSelectors = [];
+    const seen = new Set();
+    for ( const selector of selectors ) {
+        if ( typeof selector !== 'string' ) { continue; }
+        const normalized = selector.trim();
+        if ( normalized === '' || seen.has(normalized) ) { continue; }
+        seen.add(normalized);
+        dedupedSelectors.push(normalized);
+    }
+    if ( dedupedSelectors.length === 0 ) { return ''; }
+    return `${dedupedSelectors.join(',')}{display:none!important;visibility:hidden!important;}`;
 };
 
 const documentStyleMap = new Map();
@@ -327,10 +435,10 @@ const collectActiveHideStyles = directives => {
     for ( const directive of directives || [] ) {
         const id = directive?.id || '(unknown)';
         if ( directive?.action === 'hide' ) {
-            out.set(styleIdForDirective(id), buildHideStyleText(id));
+            out.set(styleIdForDirective(id), buildHideStyleText(directive));
         }
         if ( directive?.fallbackAction === 'hide' ) {
-            out.set(styleIdForDirective(id), buildHideStyleText(id));
+            out.set(styleIdForDirective(id), buildHideStyleText(directive));
         }
     }
     return out;
@@ -655,6 +763,7 @@ const stop = async ( ) => {
 const refresh = async ( ) => {
     remoteDirectivesPromise = undefined;
     directivesPromise = undefined;
+    enabledRulesetsPromise = undefined;
 
     await guard?.whenReady?.();
     if ( guard?.shouldRunSubsystem?.('automation') === false ) {
@@ -663,8 +772,15 @@ const refresh = async ( ) => {
     }
 
     const directives = await loadDirectives();
-    activeDirectives = directives
-        .filter(hostMatchesDirective)
+    const hostMatchedDirectives = directives.filter(hostMatchesDirective);
+    const requiresRulesetGate = hostMatchedDirectives.some(directive =>
+        normalizeRulesetIds(directive?.requiresRulesets).length !== 0
+    );
+    const enabledRulesets = requiresRulesetGate
+        ? await loadEnabledRulesets()
+        : null;
+    activeDirectives = hostMatchedDirectives
+        .filter(directive => rulesetsMatchDirective(directive, enabledRulesets))
         .map(directive => ({ ...directive }))
         .filter(directive => guard?.shouldAllowDirective?.(directive) !== false);
 
@@ -697,6 +813,18 @@ self.TalonAutomationController = {
     refresh,
     stop,
 };
+setAutomationReadyMarker(true);
+
+const storageEvents =
+    self.browser?.storage?.onChanged ||
+    self.chrome?.storage?.onChanged;
+storageEvents?.addListener?.((changes, areaName) => {
+    if ( areaName !== 'local' ) { return; }
+    if ( changes instanceof Object === false ) { return; }
+    if ( changes[RULESET_CONFIG_KEY] === undefined ) { return; }
+    enabledRulesetsPromise = undefined;
+    self.TalonAutomationController.refresh().catch(( ) => {});
+});
 
 self.TalonAutomationController.refresh().catch(( ) => {});
 

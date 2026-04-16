@@ -7,6 +7,14 @@
     const hostname = (self.location?.hostname || '').trim().toLowerCase();
     const exactHost = hostname === '' ? '' : `=${hostname}`;
     const storage = self.browser?.storage?.local || self.chrome?.storage?.local;
+    const storageEvents =
+        self.browser?.storage?.onChanged ||
+        self.chrome?.storage?.onChanged;
+
+    let cachedTactics = [];
+    let cacheLoaded = false;
+    let pendingRead = null;
+    let cacheGeneration = 0;
 
     const cloneValue = value => {
         try {
@@ -14,6 +22,13 @@
         } catch {
         }
         return value;
+    };
+
+    const invalidateCache = () => {
+        cacheGeneration += 1;
+        cachedTactics = [];
+        cacheLoaded = false;
+        pendingRead = null;
     };
 
     const dispatchConfig = (tactics, requestId = 0) => {
@@ -39,27 +54,54 @@
     };
 
     const readStoredTactics = () => {
+        if ( cacheLoaded ) {
+            return Promise.resolve(cloneValue(cachedTactics));
+        }
+        if ( pendingRead instanceof Promise ) {
+            return pendingRead.then(tactics => cloneValue(tactics));
+        }
         if ( storage?.get === undefined ) {
             return Promise.resolve([]);
         }
-        try {
-            const maybePromise = storage.get(STORAGE_KEY);
-            if ( maybePromise?.then ) {
-                return maybePromise.then(bin => selectHostTactics(bin?.[STORAGE_KEY]));
-            }
-        } catch {
-        }
-        return new Promise(resolve => {
+        const generation = cacheGeneration;
+        const commitTactics = tactics => {
+            if ( generation !== cacheGeneration ) { return tactics; }
+            cachedTactics = tactics;
+            cacheLoaded = true;
+            return tactics;
+        };
+        const request = (async () => {
             try {
-                storage.get(STORAGE_KEY, bin => resolve(selectHostTactics(bin?.[STORAGE_KEY])));
+                const maybePromise = storage.get(STORAGE_KEY);
+                if ( maybePromise?.then ) {
+                    return commitTactics(
+                        selectHostTactics((await maybePromise)?.[STORAGE_KEY])
+                    );
+                }
             } catch {
-                resolve([]);
+            }
+            return new Promise(resolve => {
+                try {
+                    storage.get(STORAGE_KEY, bin => {
+                        resolve(commitTactics(selectHostTactics(bin?.[STORAGE_KEY])));
+                    });
+                } catch {
+                    resolve([]);
+                }
+            });
+        })();
+        pendingRead = request.finally(() => {
+            if ( pendingRead === request ) {
+                pendingRead = null;
             }
         });
+        return pendingRead.then(tactics => cloneValue(tactics));
     };
 
     const readAndDispatch = async ({ requestId = 0 } = {}) => {
+        const generation = cacheGeneration;
         const tactics = await readStoredTactics().catch(() => []);
+        if ( generation !== cacheGeneration ) { return tactics; }
         dispatchConfig(tactics, requestId);
         return tactics;
     };
@@ -93,8 +135,17 @@
     document.addEventListener(REQUEST_EVENT, requestEventListener, true);
     document.addEventListener(HIT_EVENT, hitEventListener, true);
 
+    const storageChangedListener = (changes, areaName) => {
+        if ( areaName !== 'local' ) { return; }
+        if ( changes instanceof Object === false ) { return; }
+        if ( changes[STORAGE_KEY] === undefined ) { return; }
+        invalidateCache();
+    };
+    storageEvents?.addListener?.(storageChangedListener);
+
     self.TalonRemoteTacticsBootstrapController = {
         refresh(options = {}) {
+            invalidateCache();
             return readAndDispatch({
                 requestId: Number(options?.requestId) || 0,
             });
@@ -103,6 +154,10 @@
             try {
                 document.removeEventListener(REQUEST_EVENT, requestEventListener, true);
                 document.removeEventListener(HIT_EVENT, hitEventListener, true);
+            } catch {
+            }
+            try {
+                storageEvents?.removeListener?.(storageChangedListener);
             } catch {
             }
             try {

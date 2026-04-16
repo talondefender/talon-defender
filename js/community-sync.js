@@ -617,6 +617,7 @@ const sanitizeCommunityDirectives = (
             .filter(selector => isSafeMutationSelector(selector, {
                 requireKnownConsent: d.category === 'consent',
             }));
+        const requiresRulesets = sanitizeStringArray(d.requiresRulesets, 8);
         const protectedHosts = sanitizedHosts.filter(patternCouldMatchProtectedDomain);
         if ( protectedHosts.length !== 0 ) {
             if ( action !== 'hide' ) { continue; }
@@ -626,7 +627,7 @@ const sanitizeCommunityDirectives = (
         }
         if ( fallbackAction && fallbackAction !== 'hide' ) { continue; }
         if ( fallbackAction === 'hide' && fallbackSelectors.length === 0 ) { continue; }
-        out.push({
+        const directive = {
             id,
             category: typeof d.category === 'string' ? d.category.trim() : 'annoyances',
             hosts: sanitizedHosts,
@@ -638,7 +639,11 @@ const sanitizeCommunityDirectives = (
             maxApplies: Number.isFinite(Number(d.maxApplies))
                 ? Number(d.maxApplies)
                 : undefined,
-        });
+        };
+        if ( requiresRulesets.length !== 0 ) {
+            directive.requiresRulesets = requiresRulesets;
+        }
+        out.push(directive);
         if ( out.length >= maxEntries ) { break; }
     }
     return out.length === 0 ? null : out;

@@ -10,6 +10,14 @@ const automationSource = await fs.readFile(
   new URL('../js/scripting/automation.js', import.meta.url),
   'utf8'
 );
+const nativeHeuristicsSource = await fs.readFile(
+  new URL('../js/scripting/native-heuristics.js', import.meta.url),
+  'utf8'
+);
+const postHideCleanupSource = await fs.readFile(
+  new URL('../js/scripting/post-hide-cleanup.js', import.meta.url),
+  'utf8'
+);
 
 const readDirectives = async () => JSON.parse(await fs.readFile(directivesPath, 'utf8'));
 
@@ -112,8 +120,10 @@ class FakeNode extends FakeEventTarget {
 class FakeElement extends FakeNode {
   constructor(tagName = 'div', ownerDocument = null) {
     super(ownerDocument);
+    this.nodeType = 1;
     this.tagName = String(tagName || 'div').toUpperCase();
     this.attributes = new Map();
+    this.dataset = {};
     this.style = new FakeStyleDeclaration();
     this.textContent = '';
     this.id = '';
@@ -168,6 +178,38 @@ class FakeElement extends FakeNode {
     return this.querySelectorAll(selector)[0] || null;
   }
 
+  matches(selector) {
+    return matchesSelectorList(this, selector);
+  }
+
+  closest(selector) {
+    let current = this;
+    while (current instanceof FakeElement) {
+      if (matchesSelectorList(current, selector)) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return null;
+  }
+
+  get parentElement() {
+    return this.parentNode instanceof FakeElement ? this.parentNode : null;
+  }
+
+  get childElementCount() {
+    return (this.children || []).filter(node => node instanceof FakeElement).length;
+  }
+
+  get isConnected() {
+    let current = this;
+    while (current) {
+      if (current instanceof FakeDocument) { return true; }
+      current = current.parentNode;
+    }
+    return false;
+  }
+
   getBoundingClientRect() {
     return {
       width: this.width,
@@ -189,6 +231,7 @@ class FakeHTMLStyleElement extends FakeElement {
 class FakeDocumentFragment extends FakeNode {
   constructor(ownerDocument = null) {
     super(ownerDocument);
+    this.nodeType = 11;
     this.host = null;
   }
 
@@ -204,6 +247,7 @@ class FakeDocumentFragment extends FakeNode {
 class FakeDocument extends FakeNode {
   constructor() {
     super(null);
+    this.nodeType = 9;
     this.ownerDocument = this;
     this.readyState = 'complete';
     this.documentElement = new FakeElement('html', this);
@@ -238,15 +282,18 @@ class FakeMutationObserver {
   constructor(callback, registry) {
     this.callback = callback;
     this.connected = false;
+    this.targets = [];
     registry.push(this);
   }
 
-  observe() {
+  observe(target) {
     this.connected = true;
+    this.targets.push(target);
   }
 
   disconnect() {
     this.connected = false;
+    this.targets = [];
   }
 }
 
@@ -340,6 +387,9 @@ const matchesSingleSelector = (element, selector) => {
   return true;
 };
 
+const matchesSelectorList = (element, selector) =>
+  splitSelectorList(selector).some(part => matchesSingleSelector(element, part));
+
 const querySelectorAllWithin = (root, selector) => {
   const selectors = splitSelectorList(selector);
   if (selectors.length === 0) { return []; }
@@ -378,7 +428,35 @@ const readAutomationHiddenIds = root => {
   return hiddenIds;
 };
 
-const createAutomationHarness = ({ directives, hostname = 'example.com' } = {}) => {
+const isHiddenByAutomationStyle = (root, element) => {
+  if (element instanceof FakeElement === false) { return false; }
+  const hiddenIds = readAutomationHiddenIds(root);
+  const automationMarker = element.getAttribute?.('data-ubol-automation');
+  if (typeof automationMarker === 'string' && hiddenIds.has(automationMarker)) {
+    return true;
+  }
+  const styles = querySelectorAllWithin(root, 'style');
+  const rulePattern = /([^{}]+)\{display:none!important;visibility:hidden!important;\}/g;
+  for (const style of styles) {
+    const cssText = String(style.textContent || '');
+    for (const match of cssText.matchAll(rulePattern)) {
+      const selector = String(match[1] || '').trim();
+      if (selector === '' || selector.includes('[data-ubol-automation=')) { continue; }
+      try {
+        const matched = querySelectorAllWithin(root, selector);
+        if (matched.includes(element)) { return true; }
+      } catch {
+      }
+    }
+  }
+  return false;
+};
+
+const createAutomationHarness = ({
+  directives,
+  hostname = 'example.com',
+  storageData = {},
+} = {}) => {
   let currentTime = 0;
   let nextTimerId = 1;
   const timers = new Map();
@@ -411,10 +489,7 @@ const createAutomationHarness = ({ directives, hostname = 'example.com' } = {}) 
 
   const getComputedStyle = element => {
     const scope = getRootScope(element);
-    const hiddenIds = scope ? readAutomationHiddenIds(scope) : new Set();
-    const automationMarker = element?.getAttribute?.('data-ubol-automation');
-    const hiddenByAutomation =
-      typeof automationMarker === 'string' && hiddenIds.has(automationMarker);
+    const hiddenByAutomation = scope ? isHiddenByAutomationStyle(scope, element) : false;
     return {
       display: element?.style?.display || (hiddenByAutomation ? 'none' : 'block'),
       visibility: element?.style?.visibility || (hiddenByAutomation ? 'hidden' : 'visible'),
@@ -531,12 +606,37 @@ const createAutomationHarness = ({ directives, hostname = 'example.com' } = {}) 
     json: async () => directives,
   });
 
+  const localStorageData = structuredClone(storageData);
+  const storageChangeListeners = [];
   const runtime = {
     getURL: input => input,
   };
+  const readStorage = key => {
+    if (key === null || key === undefined) {
+      return { ...localStorageData };
+    }
+    if (Array.isArray(key)) {
+      return Object.fromEntries(key.map(entry => [entry, localStorageData[entry]]));
+    }
+    if (typeof key === 'string') {
+      return { [key]: localStorageData[key] };
+    }
+    return { ...localStorageData };
+  };
   const storage = {
+    onChanged: {
+      addListener(listener) {
+        storageChangeListeners.push(listener);
+      },
+      removeListener(listener) {
+        const index = storageChangeListeners.indexOf(listener);
+        if (index >= 0) {
+          storageChangeListeners.splice(index, 1);
+        }
+      },
+    },
     local: {
-      get: async () => ({}),
+      get: async key => readStorage(key),
     },
   };
   const browser = { runtime, storage };
@@ -610,6 +710,20 @@ const createAutomationHarness = ({ directives, hostname = 'example.com' } = {}) 
     async settle() {
       await settle();
     },
+    async setStorageLocal(updates) {
+      const changes = {};
+      for (const [key, value] of Object.entries(updates || {})) {
+        changes[key] = {
+          oldValue: localStorageData[key],
+          newValue: value,
+        };
+        localStorageData[key] = value;
+      }
+      for (const listener of storageChangeListeners) {
+        listener(changes, 'local');
+      }
+      await settle();
+    },
     isHidden(element) {
       const style = getComputedStyle(element);
       return style.display === 'none' || style.visibility === 'hidden';
@@ -646,6 +760,64 @@ test('generic consent automation includes supported CMP families', async () => {
   assert.ok(
     consentManager.selectors.includes('.cmpboxinner'),
     'consentmanager-hide should target consentmanager inner shells'
+  );
+  assert.deepEqual(
+    consentManager.requiresRulesets,
+    ['annoyances-overlays'],
+    'consent automation should follow the pop-up/banner ruleset gate'
+  );
+});
+
+test('guardian exact-host automation covers Sourcepoint consent, sign-in gate hydration, and both reader-revenue support prompts', async () => {
+  const directives = await readDirectives();
+  const byId = new Map(directives.map(entry => [entry.id, entry]));
+
+  const guardianConsent = byId.get('guardian-sourcepoint-hide');
+  assert.ok(guardianConsent, 'missing guardian-sourcepoint-hide directive');
+  assert.deepEqual(guardianConsent.hosts, ['=www.theguardian.com']);
+  assert.deepEqual(guardianConsent.requiresRulesets, ['annoyances-overlays']);
+  assert.ok(
+    guardianConsent.selectors.includes('div[id^="sp_message_container"]'),
+    'guardian consent directive should target the Sourcepoint message container'
+  );
+  assert.ok(
+    guardianConsent.selectors.includes('iframe[title="The Guardian consent message"]'),
+    'guardian consent directive should target the Guardian consent iframe'
+  );
+
+  const guardianSignInGate = byId.get('guardian-sign-in-gate-hide');
+  assert.ok(guardianSignInGate, 'missing guardian-sign-in-gate-hide directive');
+  assert.deepEqual(guardianSignInGate.hosts, ['=www.theguardian.com']);
+  assert.deepEqual(guardianSignInGate.requiresRulesets, ['annoyances-overlays']);
+  assert.equal(guardianSignInGate.directStyle, true);
+  assert.deepEqual(guardianSignInGate.selectors, ['#sign-in-gate']);
+
+  const guardianStickySupport = byId.get('guardian-sticky-support-hide');
+  assert.ok(guardianStickySupport, 'missing guardian-sticky-support-hide directive');
+  assert.deepEqual(guardianStickySupport.hosts, ['=www.theguardian.com']);
+  assert.deepEqual(guardianStickySupport.requiresRulesets, ['annoyances-overlays']);
+  assert.equal(guardianStickySupport.directStyle, true);
+  assert.ok(
+    guardianStickySupport.selectors.includes('gu-island[name="StickyBottomBanner"]'),
+    'guardian sticky support directive should target the sticky bottom banner island'
+  );
+  assert.ok(
+    guardianStickySupport.selectors.includes('aside:has(gu-island[name="StickyBottomBanner"])'),
+    'guardian sticky support directive should collapse the banner host aside as well'
+  );
+
+  const guardianBodyEndSupport = byId.get('guardian-body-end-support-hide');
+  assert.ok(guardianBodyEndSupport, 'missing guardian-body-end-support-hide directive');
+  assert.deepEqual(guardianBodyEndSupport.hosts, ['=www.theguardian.com']);
+  assert.deepEqual(guardianBodyEndSupport.requiresRulesets, ['annoyances-overlays']);
+  assert.equal(guardianBodyEndSupport.directStyle, true);
+  assert.ok(
+    guardianBodyEndSupport.selectors.includes('gu-island[name="SlotBodyEnd"]'),
+    'guardian body-end support directive should target the SlotBodyEnd island'
+  );
+  assert.ok(
+    guardianBodyEndSupport.selectors.includes('#slot-body-end'),
+    'guardian body-end support directive should target the rendered article-end support slot'
   );
 });
 
@@ -713,6 +885,32 @@ test('automation hide styles are mirrored into existing and newly discovered sha
   assert.equal(harness.isHidden(secondBanner), true);
 });
 
+test('direct-style hide directives apply selector-based CSS without waiting for element marking', async () => {
+  const harness = createAutomationHarness({
+    directives: [
+      {
+        id: 'direct-hide',
+        hosts: ['*'],
+        action: 'hide',
+        directStyle: true,
+        selectors: ['#banner'],
+      },
+    ],
+  });
+  const banner = harness.createElement({ id: 'banner', width: 200, height: 120 });
+
+  await harness.load();
+
+  assert.equal(harness.isHidden(banner), true);
+  assert.equal(banner.getAttribute('data-ubol-automation'), null);
+  const style = harness.readStyle(
+    harness.document,
+    'ubol-automation-style-direct-hide'
+  );
+  assert.ok(style);
+  assert.match(String(style.textContent || ''), /#banner\{display:none!important;visibility:hidden!important;\}/);
+});
+
 test('automation stop removes document and shadow-root hide styles', async () => {
   const harness = createAutomationHarness({
     directives: [
@@ -751,6 +949,70 @@ test('automation stop removes document and shadow-root hide styles', async () =>
   );
   assert.equal(harness.isHidden(documentBanner), false);
   assert.equal(harness.isHidden(shadowBanner), false);
+});
+
+test('automation directives honor required rulesets after the stored ruleset config changes and automation refreshes', async () => {
+  const harness = createAutomationHarness({
+    directives: [
+      {
+        id: 'gated-hide',
+        hosts: ['*'],
+        action: 'hide',
+        selectors: ['.banner'],
+        requiresRulesets: ['annoyances-overlays'],
+      },
+    ],
+    storageData: {
+      rulesetConfig: {
+        enabledRulesets: ['easylist'],
+      },
+    },
+  });
+  const banner = harness.createElement({ className: 'banner' });
+
+  const controller = await harness.load();
+  assert.equal(
+    harness.isHidden(banner),
+    false,
+    'directive should stay inactive while its required ruleset is disabled'
+  );
+
+  await harness.setStorageLocal({
+    rulesetConfig: {
+      enabledRulesets: ['easylist', 'annoyances-overlays'],
+    },
+  });
+  await controller.refresh();
+  await harness.settle();
+
+  assert.equal(
+    harness.isHidden(banner),
+    true,
+    'directive should apply after the required ruleset becomes enabled'
+  );
+});
+
+test('automation directives stay gated until rulesetConfig has been initialized', async () => {
+  const harness = createAutomationHarness({
+    directives: [
+      {
+        id: 'gated-hide-uninitialized',
+        hosts: ['*'],
+        action: 'hide',
+        selectors: ['.banner'],
+        requiresRulesets: ['annoyances-overlays'],
+      },
+    ],
+  });
+  const banner = harness.createElement({ className: 'banner' });
+
+  await harness.load();
+
+  assert.equal(
+    harness.isHidden(banner),
+    false,
+    'missing rulesetConfig should not guess that optional rulesets are enabled'
+  );
 });
 
 test('default automation retry backoff continues past three applies and resets after inactivity', async () => {
@@ -841,5 +1103,505 @@ test('explicit maxApplies still hard-stops a directive after the configured limi
     harness.isHidden(third),
     false,
     'explicit maxApplies should still stop the directive permanently'
+  );
+});
+
+const createContentScriptHarness = ({
+  source,
+  fetchJson = {},
+  storageData = {},
+  hostname = 'example.com',
+  shouldRun = true,
+  protection = {
+    category: '',
+    allowedRiskTier: 3,
+    matchedBy: '',
+  },
+} = {}) => {
+  let currentTime = 0;
+  let nextTimerId = 1;
+  let nextAnimationFrameId = 10000;
+  const timers = new Map();
+  const animationFrames = new Map();
+  const mutationObservers = [];
+  const document = new FakeDocument();
+  const messages = [];
+  const shadowRoots = [];
+  let scheduledAnimationFrameCount = 0;
+
+  const setTimeoutFn = (fn, delay = 0) => {
+    const id = nextTimerId++;
+    timers.set(id, {
+      callback: fn,
+      dueAt: currentTime + Math.max(0, Number(delay) || 0),
+    });
+    return id;
+  };
+
+  const clearTimeoutFn = id => {
+    timers.delete(id);
+  };
+
+  const requestAnimationFrameFn = fn => {
+    const id = nextAnimationFrameId++;
+    scheduledAnimationFrameCount += 1;
+    animationFrames.set(id, fn);
+    return id;
+  };
+
+  const cancelAnimationFrameFn = id => {
+    animationFrames.delete(id);
+  };
+
+  const runDueTimers = () => {
+    let ran = false;
+    while (true) {
+      const dueEntries = Array.from(timers.entries())
+        .filter(([, timer]) => timer.dueAt <= currentTime)
+        .sort((a, b) => a[1].dueAt - b[1].dueAt || a[0] - b[0]);
+      if (dueEntries.length === 0) { break; }
+      for (const [id, timer] of dueEntries) {
+        if (timers.has(id) === false) { continue; }
+        timers.delete(id);
+        timer.callback();
+        ran = true;
+      }
+    }
+    return ran;
+  };
+
+  const runAnimationFrames = () => {
+    if (animationFrames.size === 0) { return false; }
+    const callbacks = Array.from(animationFrames.values());
+    animationFrames.clear();
+    callbacks.forEach(callback => callback(currentTime));
+    return callbacks.length !== 0;
+  };
+
+  const countDueTimers = () =>
+    Array.from(timers.values()).filter(timer => timer.dueAt <= currentTime).length;
+
+  const flushMicrotasks = async () => {
+    for (let i = 0; i < 6; i += 1) {
+      await Promise.resolve();
+    }
+  };
+
+  const settle = async () => {
+    for (let i = 0; i < 30; i += 1) {
+      await flushMicrotasks();
+      const ranTimers = runDueTimers();
+      const ranFrames = runAnimationFrames();
+      await flushMicrotasks();
+      if (
+        ranTimers === false &&
+        ranFrames === false &&
+        countDueTimers() === 0 &&
+        animationFrames.size === 0
+      ) {
+        return;
+      }
+    }
+    throw new Error('content-script harness did not settle');
+  };
+
+  const getComputedStyle = element => ({
+    display: element?.style?.display || 'block',
+    visibility: element?.style?.visibility || 'visible',
+    opacity: element?.style?.opacity || '1',
+    overflow: element?.style?.overflow || 'visible',
+    position: element?.style?.position || 'static',
+    top: element?.style?.top || 'auto',
+    zIndex: element?.style?.zIndex || '0',
+  });
+
+  const runtime = {
+    getURL: input => input,
+    sendMessage: async message => {
+      messages.push(structuredClone(message));
+      return {};
+    },
+  };
+
+  const localStorageData = structuredClone(storageData);
+  const readStorage = key => {
+    if (key === null || key === undefined) {
+      return { ...localStorageData };
+    }
+    if (Array.isArray(key)) {
+      return Object.fromEntries(key.map(entry => [entry, localStorageData[entry]]));
+    }
+    if (typeof key === 'string') {
+      return { [key]: localStorageData[key] };
+    }
+    return { ...localStorageData };
+  };
+
+  const storage = {
+    local: {
+      get: async key => readStorage(key),
+      set: async updates => {
+        Object.assign(localStorageData, updates || {});
+      },
+    },
+  };
+
+  const guard = {
+    RISK_TIERS: { medium: 2, high: 3 },
+    whenReady: async () => {},
+    shouldRunSubsystem: () => shouldRun,
+    canMutateElement: () => ({ allowed: true }),
+    isLikelyPrimaryContent: () => false,
+    getProtection: () => ({ ...protection }),
+    registrableDomain: value => String(value || '').trim().toLowerCase(),
+    isProtectedSurface: () => false,
+    auditAfterMutation: () => {},
+  };
+
+  const blockHints = {
+    noteElement: () => {},
+    hasRecentHint: () => false,
+    hasRecentNetworkHit: () => false,
+  };
+
+  const shadowController = {
+    ROOTS_CHANGED_EVENT: 'talon-shadow-roots-changed',
+    enumerateRoots() {
+      return shadowRoots.slice();
+    },
+    rescanNow() {},
+    scheduleRescan() {},
+    registerRoot(root) {
+      if (shadowRoots.includes(root)) { return; }
+      shadowRoots.push(root);
+    },
+  };
+
+  const selfTarget = new FakeEventTarget();
+  Object.assign(selfTarget, {
+    browser: { runtime, storage },
+    chrome: { runtime, storage },
+    document,
+    location: { hostname },
+    getComputedStyle,
+    requestAnimationFrame: requestAnimationFrameFn,
+    cancelAnimationFrame: cancelAnimationFrameFn,
+    setTimeout: setTimeoutFn,
+    clearTimeout: clearTimeoutFn,
+    performance: {
+      now: () => currentTime,
+    },
+    Date: class extends Date {
+      static now() {
+        return currentTime;
+      }
+    },
+    Element: FakeElement,
+    DocumentFragment: FakeDocumentFragment,
+    MutationObserver: class extends FakeMutationObserver {
+      constructor(callback) {
+        super(callback, mutationObservers);
+      }
+    },
+    CustomEvent: FakeCustomEvent,
+    TalonBreakageGuard: guard,
+    TalonBlockHintsController: blockHints,
+    TalonShadowRootController: shadowController,
+    innerHeight: 900,
+    innerWidth: 1440,
+    scrollTo() {},
+  });
+
+  const context = {
+    console,
+    document,
+    self: selfTarget,
+    globalThis: null,
+    browser: selfTarget.browser,
+    chrome: selfTarget.chrome,
+    fetch: async () => ({
+      ok: true,
+      json: async () => structuredClone(fetchJson),
+    }),
+    setTimeout: setTimeoutFn,
+    clearTimeout: clearTimeoutFn,
+    requestAnimationFrame: requestAnimationFrameFn,
+    cancelAnimationFrame: cancelAnimationFrameFn,
+    performance: selfTarget.performance,
+    Date: selfTarget.Date,
+    Element: FakeElement,
+    DocumentFragment: FakeDocumentFragment,
+    MutationObserver: selfTarget.MutationObserver,
+    CustomEvent: FakeCustomEvent,
+    TalonBreakageGuard: guard,
+    TalonBlockHintsController: blockHints,
+    TalonShadowRootController: shadowController,
+    location: selfTarget.location,
+  };
+  context.globalThis = context;
+
+  const createElement = ({
+    tagName = 'div',
+    className = '',
+    id = '',
+    textContent = '',
+    attrs = {},
+    parent = document.body,
+    width = 10,
+    height = 10,
+  } = {}) => {
+    const element = document.createElement(tagName);
+    element.className = className;
+    element.id = id;
+    element.textContent = textContent;
+    element.width = width;
+    element.height = height;
+    for (const [name, value] of Object.entries(attrs)) {
+      element.setAttribute(name, value);
+    }
+    parent?.append?.(element);
+    return element;
+  };
+
+  return {
+    document,
+    messages,
+    mutationObservers,
+    shadowController,
+    createElement,
+    async load() {
+      vm.runInNewContext(source, context, { filename: 'content-script.js' });
+      await settle();
+      return (
+        selfTarget.TalonNativeHeuristicsController ||
+        selfTarget.TalonPostHideCleanupController
+      );
+    },
+    async settle() {
+      await settle();
+    },
+    triggerObserver(index, records) {
+      const observer = mutationObservers[index];
+      if (!observer || observer.connected !== true) { return; }
+      observer.callback(records);
+    },
+    watchQueries(node) {
+      const original = node.querySelectorAll.bind(node);
+      let count = 0;
+      node.querySelectorAll = selector => {
+        count += 1;
+        return original(selector);
+      };
+      return {
+        get count() {
+          return count;
+        },
+        restore() {
+          node.querySelectorAll = original;
+        },
+      };
+    },
+    getScheduledAnimationFrameCount() {
+      return scheduledAnimationFrameCount;
+    },
+    countConnectedObservers() {
+      return mutationObservers.filter(observer => observer.connected === true).length;
+    },
+    isHidden(element) {
+      const style = getComputedStyle(element);
+      return style.display === 'none' || style.visibility === 'hidden';
+    },
+  };
+};
+
+test('native heuristics keeps added-node scans incremental and batches mutation bursts into one frame', async () => {
+  const harness = createContentScriptHarness({
+    source: nativeHeuristicsSource,
+    fetchJson: {
+      disableHosts: [],
+      labelRegexes: ['sponsored'],
+      labelSelectors: ['.sponsored-label'],
+      widgetSelectors: [],
+      containerStopSelectors: ['article'],
+      maxLabelTextLength: 40,
+      minContainerHeight: 60,
+      minContainerWidth: 120,
+      minScore: 1,
+      minScoreLowConfidence: 1,
+    },
+  });
+
+  await harness.load();
+
+  const article = harness.createElement({
+    tagName: 'article',
+    className: 'ad-slot',
+    width: 300,
+    height: 250,
+  });
+  const label = harness.createElement({
+    tagName: 'span',
+    className: 'sponsored-label',
+    textContent: 'Sponsored',
+    parent: article,
+    width: 20,
+    height: 10,
+  });
+  void label;
+
+  const documentQueries = harness.watchQueries(harness.document);
+  const bodyQueries = harness.watchQueries(harness.document.body);
+  const articleQueries = harness.watchQueries(article);
+  await harness.settle();
+  const baselineDocumentQueries = documentQueries.count;
+  const baselineBodyQueries = bodyQueries.count;
+  const baselineArticleQueries = articleQueries.count;
+  const beforeFrames = harness.getScheduledAnimationFrameCount();
+
+  harness.triggerObserver(0, [{ addedNodes: [article], removedNodes: [] }]);
+  harness.triggerObserver(0, [{ addedNodes: [article], removedNodes: [] }]);
+  await harness.settle();
+
+  assert.equal(
+    bodyQueries.count - baselineBodyQueries,
+    0,
+    'native heuristics should not fall back to a full body text scan for added-node mutations'
+  );
+  assert.ok(documentQueries.count - baselineDocumentQueries <= 2);
+  assert.ok(articleQueries.count - baselineArticleQueries >= 3);
+  assert.equal(
+    harness.getScheduledAnimationFrameCount() - beforeFrames,
+    1,
+    'native heuristics should batch a mutation burst into one animation frame'
+  );
+  assert.equal(harness.isHidden(article), true);
+
+  documentQueries.restore();
+  bodyQueries.restore();
+  articleQueries.restore();
+});
+
+test('native heuristics stop disconnects keep-hidden observers created for hidden containers', async () => {
+  const harness = createContentScriptHarness({
+    source: nativeHeuristicsSource,
+    fetchJson: {
+      disableHosts: [],
+      labelRegexes: ['sponsored'],
+      labelSelectors: ['.sponsored-label'],
+      widgetSelectors: [],
+      containerStopSelectors: ['article'],
+      maxLabelTextLength: 40,
+      minContainerHeight: 60,
+      minContainerWidth: 120,
+      minScore: 1,
+      minScoreLowConfidence: 1,
+    },
+  });
+
+  const controller = await harness.load();
+
+  const article = harness.createElement({
+    tagName: 'article',
+    className: 'ad-slot',
+    width: 300,
+    height: 250,
+  });
+  harness.createElement({
+    tagName: 'span',
+    className: 'sponsored-label',
+    textContent: 'Sponsored',
+    parent: article,
+    width: 20,
+    height: 10,
+  });
+
+  harness.triggerObserver(0, [{ addedNodes: [article], removedNodes: [] }]);
+  await harness.settle();
+
+  assert.equal(harness.isHidden(article), true);
+  assert.equal(
+    harness.countConnectedObservers(),
+    2,
+    'native heuristics should have one document observer and one keep-hidden observer'
+  );
+
+  await controller.stop();
+  await harness.settle();
+
+  assert.equal(
+    harness.countConnectedObservers(),
+    0,
+    'native heuristics stop should disconnect both the main observer and keep-hidden observers'
+  );
+});
+
+test('post-hide cleanup keeps added-node scans incremental and batches mutation bursts into one frame', async () => {
+  const harness = createContentScriptHarness({
+    source: postHideCleanupSource,
+  });
+
+  await harness.load();
+
+  const wrapper = harness.createElement({
+    tagName: 'section',
+    width: 320,
+    height: 260,
+  });
+  const slot = harness.createElement({
+    className: 'ad-slot',
+    parent: wrapper,
+    width: 300,
+    height: 250,
+  });
+
+  const documentQueries = harness.watchQueries(harness.document);
+  const wrapperQueries = harness.watchQueries(wrapper);
+  const beforeFrames = harness.getScheduledAnimationFrameCount();
+
+  harness.triggerObserver(0, [{ addedNodes: [wrapper], removedNodes: [] }]);
+  harness.triggerObserver(0, [{ addedNodes: [wrapper], removedNodes: [] }]);
+  await harness.settle();
+
+  assert.equal(documentQueries.count, 0);
+  assert.ok(wrapperQueries.count >= 1);
+  assert.equal(
+    harness.getScheduledAnimationFrameCount() - beforeFrames,
+    1,
+    'post-hide cleanup should batch a mutation burst into one animation frame'
+  );
+  assert.equal(harness.isHidden(slot), true);
+
+  documentQueries.restore();
+  wrapperQueries.restore();
+});
+
+test('post-hide cleanup stop disconnects the observer and cancels pending frame work', async () => {
+  const harness = createContentScriptHarness({
+    source: postHideCleanupSource,
+  });
+
+  const controller = await harness.load();
+
+  const wrapper = harness.createElement({
+    tagName: 'section',
+    width: 320,
+    height: 260,
+  });
+  const slot = harness.createElement({
+    className: 'ad-slot',
+    parent: wrapper,
+    width: 300,
+    height: 250,
+  });
+
+  harness.triggerObserver(0, [{ addedNodes: [wrapper], removedNodes: [] }]);
+  await controller.stop();
+  await harness.settle();
+
+  assert.equal(harness.countConnectedObservers(), 0);
+  assert.equal(
+    harness.isHidden(slot),
+    false,
+    'stop should cancel queued cleanup work before it mutates the page'
   );
 });

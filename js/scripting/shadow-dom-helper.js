@@ -29,6 +29,8 @@ let rescanTimer;
 let observerConnected = false;
 const observedRoots = new Set();
 const postLoadTimers = new Set();
+let pendingAddedNodes = [];
+let pendingFullRescan = false;
 
 const rootsEqual = (left, right) => {
     if ( left.length !== right.length ) { return false; }
@@ -53,10 +55,8 @@ const dispatchRootsChanged = roots => {
     }
 };
 
-const syncObservers = roots => {
-    shadowMutationObserver.disconnect();
-    observedRoots.clear();
-
+const observeDocument = () => {
+    if ( observerConnected ) { return; }
     try {
         shadowMutationObserver.observe(document, {
             childList: true,
@@ -66,7 +66,21 @@ const syncObservers = roots => {
     } catch {
         observerConnected = false;
     }
+};
 
+const syncObservers = roots => {
+    const shouldReconnect =
+        observerConnected === false ||
+        Array.from(observedRoots).some(root => roots.includes(root) === false);
+    if ( shouldReconnect ) {
+        try {
+            shadowMutationObserver.disconnect();
+        } catch {
+        }
+        observedRoots.clear();
+        observerConnected = false;
+    }
+    observeDocument();
     for ( const root of roots ) {
         if ( root instanceof DocumentFragment === false ) { continue; }
         if ( observedRoots.has(root) ) { continue; }
@@ -109,25 +123,67 @@ const scanTree = (root, out, seenRoots) => {
     }
 };
 
+const applyKnownRoots = nextRoots => {
+    if ( rootsEqual(knownRoots, nextRoots) ) {
+        syncObservers(knownRoots);
+        return false;
+    }
+    knownRoots = nextRoots;
+    syncObservers(knownRoots);
+    dispatchRootsChanged(knownRoots);
+    return true;
+};
+
 const rescanNow = ( ) => {
     if ( rescanTimer !== undefined ) {
         try { clearTimeout(rescanTimer); } catch { }
         rescanTimer = undefined;
     }
-
+    pendingAddedNodes = [];
+    pendingFullRescan = false;
     const nextRoots = [];
     const seenRoots = new Set();
     scanTree(document, nextRoots, seenRoots);
-
-    if ( rootsEqual(knownRoots, nextRoots) ) {
-        syncObservers(knownRoots);
-        return knownRoots.slice();
-    }
-
-    knownRoots = nextRoots;
-    syncObservers(knownRoots);
-    dispatchRootsChanged(knownRoots);
+    applyKnownRoots(nextRoots);
     return knownRoots.slice();
+};
+
+const scanAddedNodeTree = node => {
+    if ( node instanceof Element === false && node instanceof DocumentFragment === false ) {
+        return false;
+    }
+    const nextRoots = knownRoots.slice();
+    const seenRoots = new Set(nextRoots);
+    if ( node instanceof Element ) {
+        try {
+            const ownRoot = getOpenOrClosedShadowRoot(node);
+            if ( ownRoot instanceof DocumentFragment && seenRoots.has(ownRoot) === false ) {
+                seenRoots.add(ownRoot);
+                nextRoots.push(ownRoot);
+                scanTree(ownRoot, nextRoots, seenRoots);
+            }
+        } catch {
+        }
+    }
+    scanTree(node, nextRoots, seenRoots);
+    return applyKnownRoots(nextRoots);
+};
+
+const flushPendingRescan = () => {
+    rescanTimer = undefined;
+    if ( pendingFullRescan ) {
+        rescanNow();
+        return;
+    }
+    const addedNodes = pendingAddedNodes.slice();
+    pendingAddedNodes = [];
+    let changed = false;
+    for ( const node of addedNodes ) {
+        changed = scanAddedNodeTree(node) || changed;
+    }
+    if ( changed === false ) {
+        syncObservers(knownRoots);
+    }
 };
 
 const scheduleRescan = (delay = RESCAN_DELAY_MS) => {
@@ -136,10 +192,7 @@ const scheduleRescan = (delay = RESCAN_DELAY_MS) => {
         if ( wait !== 0 ) { return; }
         try { clearTimeout(rescanTimer); } catch { }
     }
-    rescanTimer = self.setTimeout(( ) => {
-        rescanTimer = undefined;
-        rescanNow();
-    }, wait);
+    rescanTimer = self.setTimeout(flushPendingRescan, wait);
 };
 
 const schedulePostLoadRescans = ( ) => {
@@ -147,13 +200,23 @@ const schedulePostLoadRescans = ( ) => {
     for ( const delay of POST_LOAD_RESCAN_DELAYS_MS ) {
         const timer = self.setTimeout(( ) => {
             postLoadTimers.delete(timer);
+            pendingFullRescan = true;
             scheduleRescan(0);
         }, delay);
         postLoadTimers.add(timer);
     }
 };
 
-const shadowMutationObserver = new MutationObserver(( ) => {
+const shadowMutationObserver = new MutationObserver(mutations => {
+    for ( const mutation of mutations ) {
+        if ( mutation.removedNodes?.length ) {
+            pendingFullRescan = true;
+        }
+        if ( pendingFullRescan ) { continue; }
+        for ( const node of mutation.addedNodes || [] ) {
+            pendingAddedNodes.push(node);
+        }
+    }
     scheduleRescan();
 });
 
@@ -166,15 +229,20 @@ self.TalonShadowRootController = {
     scheduleRescan,
 };
 
+observeDocument();
+
 if ( document.readyState === 'loading' ) {
     document.addEventListener('DOMContentLoaded', () => {
+        pendingFullRescan = true;
         scheduleRescan(0);
     }, { once: true });
 } else {
+    pendingFullRescan = true;
     scheduleRescan(0);
 }
 
 self.addEventListener?.('load', () => {
+    pendingFullRescan = true;
     scheduleRescan(0);
     schedulePostLoadRescans();
 }, { once: true });

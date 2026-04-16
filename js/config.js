@@ -30,6 +30,7 @@ import {
 
 export const rulesetConfig = {
     version: '',
+    rulesetSelectionVersion: 0,
     enabledRulesets: [],
     autoReload: true,
     showBlockedCount: false,

@@ -4,6 +4,8 @@ const normalizeRulesetId = value => {
     return normalized === '' ? '' : normalized;
 };
 
+export const RULESET_SELECTION_STATE_VERSION = 1;
+
 const uniqueRulesetIds = values => {
     const out = [];
     const seen = new Set();
@@ -47,10 +49,30 @@ export function reconcileDefaultRulesetPatch({
     currentEnabledRulesets = [],
     storedDefaultRulesetIds = [],
     nextDefaultRulesetIds = [],
+    rulesetSelectionVersion = RULESET_SELECTION_STATE_VERSION,
 } = {}) {
     const current = uniqueRulesetIds(currentEnabledRulesets);
     const stored = uniqueRulesetIds(storedDefaultRulesetIds);
     const next = uniqueRulesetIds(nextDefaultRulesetIds);
+    const currentSet = new Set(current);
+
+    if ( rulesetSelectionVersion !== RULESET_SELECTION_STATE_VERSION ) {
+        const nextSet = new Set(next);
+        const changed =
+            current.length !== next.length ||
+            next.some(id => currentSet.has(id) === false);
+        return {
+            storedDefaultRulesetIds: stored,
+            nextDefaultRulesetIds: next,
+            addedDefaultRulesets: next.filter(id => currentSet.has(id) === false),
+            removedDefaultRulesets: current.filter(id => nextSet.has(id) === false),
+            patchedEnabledRulesets: next,
+            changed,
+            resetToDefaults: true,
+            storageChanged: true,
+            rulesetSelectionVersion: RULESET_SELECTION_STATE_VERSION,
+        };
+    }
 
     const storedSet = new Set(stored);
     const nextSet = new Set(next);
@@ -63,7 +85,6 @@ export function reconcileDefaultRulesetPatch({
     toRemove.forEach(id => patched.delete(id));
 
     const patchedEnabledRulesets = Array.from(patched);
-    const currentSet = new Set(current);
     const changed =
         current.length !== patchedEnabledRulesets.length ||
         patchedEnabledRulesets.some(id => currentSet.has(id) === false);
@@ -75,5 +96,8 @@ export function reconcileDefaultRulesetPatch({
         removedDefaultRulesets: toRemove,
         patchedEnabledRulesets,
         changed,
+        resetToDefaults: false,
+        storageChanged: false,
+        rulesetSelectionVersion: RULESET_SELECTION_STATE_VERSION,
     };
 }

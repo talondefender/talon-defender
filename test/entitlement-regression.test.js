@@ -189,9 +189,15 @@ test('background entitlement handlers keep runtime-only refresh and replace-devi
 
   assert.match(source, /if \( runtimeOnly !== true \)/);
   assert.match(source, /shouldForceCommunitySyncAfterEntitlementRefresh/);
+  assert.match(source, /function queueEntitlementOpenTabRefresh\(\)/);
   assert.match(
     source,
-    /case 'replaceDevice':[\s\S]*?enforceEntitlement\(\{ verify: false \}\)/
+    /case 'replaceDevice':[\s\S]*?refreshEntitlement\(\{ verify: false \}\)[\s\S]*?refreshOpenTabsOnEntitled: false,[\s\S]*?queueEntitlementOpenTabRefresh\(\)/
   );
+  assert.match(
+    source,
+    /case 'setLicenseKey':[\s\S]*?refreshEntitlement\(\{ verify: true, forceVerify: true \}\)[\s\S]*?refreshOpenTabsOnEntitled: false,[\s\S]*?queueEntitlementOpenTabRefresh\(\)/
+  );
+  assert.match(source, /callback\(await formatEntitlementStatusResponse\(status\)\);/);
   assert.match(source, /case 'getInjectableSyncDiagnostics'/);
 });
