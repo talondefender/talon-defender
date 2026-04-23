@@ -55,6 +55,7 @@ import {
 
 import {
     broadcastMessage,
+    createOverlaySessionStore,
     gotoURL,
     hasBroadHostPermissions,
     hostnamesFromMatches,
@@ -1243,9 +1244,13 @@ const senderOriginFrom = sender => {
     return '';
 };
 
-const isTrustedExtensionSender = sender => {
+const isExtensionRuntimeSender = sender => {
     const senderId = typeof sender?.id === 'string' ? sender.id : '';
-    if (senderId !== '' && senderId !== runtime.id) { return false; }
+    return senderId === '' || senderId === runtime.id;
+};
+
+const isTrustedExtensionSender = sender => {
+    if (isExtensionRuntimeSender(sender) === false) { return false; }
     const origin = senderOriginFrom(sender);
     if (origin === '') { return false; }
     return origin.toLowerCase() === UBOL_ORIGIN;
@@ -1275,6 +1280,7 @@ let startupComplete = false;
 let startupCoreReady = false;
 let popupWarmupRecoveryPromise;
 let installWelcomeAllowlistReadyPromise;
+const overlaySessions = createOverlaySessionStore();
 
 const AUTO_GENERIC_HIGH_KEY = 'autoGenericHighHosts';
 const AUTO_GENERIC_HIGH_MAX = 200;
@@ -2645,6 +2651,29 @@ function onMessage(request, sender, callback) {
 
     switch (what) {
 
+        case 'registerOverlaySession': {
+            if (isEntitled() === false) {
+                callback({ ok: false, error: 'subscription_required' });
+                return true;
+            }
+            if (isExtensionRuntimeSender(sender) === false) {
+                callback({ ok: false, error: 'invalid_sender' });
+                return true;
+            }
+            if (Number.isInteger(tabId) === false || Number.isInteger(frameId) === false) {
+                callback({ ok: false, error: 'invalid_sender' });
+                return true;
+            }
+            callback(overlaySessions.register({
+                token: request.token,
+                file: request.file,
+                pageUrl: request.pageUrl,
+                tabId,
+                frameId,
+            }));
+            return true;
+        }
+
         case 'insertCSS': {
             if (isEntitled() === false) { return false; }
             if (frameId === false) { return false; }
@@ -3012,6 +3041,19 @@ function onMessage(request, sender, callback) {
     if (isTrustedExtensionSender(sender) === false) { return false; }
 
     switch (what) {
+
+        case 'claimOverlaySession': {
+            if (isEntitled() === false) {
+                callback({ ok: false, error: 'subscription_required' });
+                return true;
+            }
+            callback(overlaySessions.claim({
+                token: request.token,
+                file: request.file,
+                pageUrl: request.pageUrl,
+            }));
+            return true;
+        }
 
         case 'applyRulesets': {
             const enabledRulesets = sanitizeRulesetIds(request.enabledRulesets);

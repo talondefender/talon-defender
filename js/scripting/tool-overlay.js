@@ -126,6 +126,30 @@ self.ubolOverlay = {
         }
     },
 
+    createSessionToken() {
+        try {
+            const bytes = new Uint8Array(16);
+            self.crypto.getRandomValues(bytes);
+            return Array.from(bytes, byte =>
+                byte.toString(16).padStart(2, '0')
+            ).join('');
+        } catch {
+        }
+        return '';
+    },
+
+    async registerSession(file) {
+        const token = this.createSessionToken();
+        if ( token === '' ) { return ''; }
+        const response = await this.sendMessage({
+            what: 'registerOverlaySession',
+            token,
+            file,
+            pageUrl: this.url.href,
+        });
+        return response?.ok === true ? token : '';
+    },
+
     onMessage(wrapped) {
         // Response to script-initiated message?
         if ( typeof wrapped?.fromScriptId === 'number' ) {
@@ -313,37 +337,51 @@ self.ubolOverlay = {
             const frame = document.createElement('iframe');
             const secretAttr = this.secretAttr;
             frame.setAttribute(secretAttr, '');
+            const abortInstall = ( ) => {
+                frame.onload = null;
+                frame.remove();
+                resolve(false);
+            };
             const onLoad = ( ) => {
                 frame.onload = null;
-                frame.setAttribute(`${secretAttr}-loaded`, '');
-                const channel = new MessageChannel();
-                const port = channel.port1;
-                port.onmessage = ev => {
-                    self.ubolOverlay &&
-                        self.ubolOverlay.onMessage(ev.data || {})
-                };
-                port.onmessageerror = ( ) => {
-                    self.ubolOverlay &&
-                        self.ubolOverlay.onMessage({ what: 'quitTool' })
-                };
-                const realURL = new URL(dynamicURL);
-                realURL.hostname =
-                    self.ubolOverlay.webext.i18n.getMessage('@@extension_id');
-                frame.contentWindow.postMessage(
-                    {
-                        what: 'startOverlay',
-                        url: document.baseURI,
-                        width: self.innerWidth,
-                        height: self.innerHeight,
-                    },
-                    realURL.origin,
-                    [ channel.port2 ]
-                );
-                frame.contentWindow.focus();
-                self.ubolOverlay.onmessage = onmessage;
-                self.ubolOverlay.port = port;
-                self.ubolOverlay.frame = frame;
-                resolve(true);
+                Promise.resolve().then(async ( ) => {
+                    if ( self.ubolOverlay !== this ) { return abortInstall(); }
+                    const token = await this.registerSession(file);
+                    if ( token === '' ) { return abortInstall(); }
+                    frame.setAttribute(`${secretAttr}-loaded`, '');
+                    const channel = new MessageChannel();
+                    const port = channel.port1;
+                    port.onmessage = ev => {
+                        self.ubolOverlay &&
+                            self.ubolOverlay.onMessage(ev.data || {})
+                    };
+                    port.onmessageerror = ( ) => {
+                        self.ubolOverlay &&
+                            self.ubolOverlay.onMessage({ what: 'quitTool' })
+                    };
+                    const realURL = new URL(dynamicURL);
+                    realURL.hostname =
+                        self.ubolOverlay.webext.i18n.getMessage('@@extension_id');
+                    frame.contentWindow.postMessage(
+                        {
+                            what: 'startOverlay',
+                            capability: token,
+                            file,
+                            url: this.url.href,
+                            width: self.innerWidth,
+                            height: self.innerHeight,
+                        },
+                        realURL.origin,
+                        [ channel.port2 ]
+                    );
+                    frame.contentWindow.focus();
+                    self.ubolOverlay.onmessage = onmessage;
+                    self.ubolOverlay.port = port;
+                    self.ubolOverlay.frame = frame;
+                    resolve(true);
+                }).catch(( ) => {
+                    abortInstall();
+                });
             };
             if ( dynamicURL.protocol !== 'safari-web-extension:' ) {
                 frame.onload = ( ) => {

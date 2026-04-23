@@ -159,6 +159,13 @@ async function hasBroadHostPermissions() {
 
 const MAX_NAVIGATION_URL_LENGTH = 4096;
 const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
+const OVERLAY_SESSION_TOKEN_RE = /^[a-f0-9]{32}$/;
+const OVERLAY_SESSION_FILES = new Set([
+    '/picker-ui.html',
+    '/unpicker-ui.html',
+]);
+
+export const OVERLAY_SESSION_TTL_MS = 15 * 1000;
 
 const normalizeNavigationURL = url => {
     if ( typeof url !== 'string' ) { return null; }
@@ -184,6 +191,150 @@ const normalizeNavigationURL = url => {
     if ( pageURL.protocol !== 'https:' ) { return null; }
     return pageURL;
 };
+
+/******************************************************************************/
+
+export const normalizeOverlaySessionToken = value => {
+    if ( typeof value !== 'string' ) { return ''; }
+    const token = value.trim().toLowerCase();
+    return OVERLAY_SESSION_TOKEN_RE.test(token) ? token : '';
+};
+
+export const normalizeOverlaySessionFile = value => {
+    if ( typeof value !== 'string' ) { return ''; }
+    const file = value.trim();
+    return OVERLAY_SESSION_FILES.has(file) ? file : '';
+};
+
+export const normalizeOverlaySessionPageUrl = value => {
+    if ( typeof value !== 'string' ) { return ''; }
+    const trimmed = value.trim();
+    if ( trimmed === '' ) { return ''; }
+    if ( trimmed.length > MAX_NAVIGATION_URL_LENGTH ) { return ''; }
+    if ( CONTROL_CHARS_RE.test(trimmed) ) { return ''; }
+    try {
+        const pageURL = new URL(trimmed);
+        if ( pageURL.protocol !== 'http:' && pageURL.protocol !== 'https:' ) {
+            return '';
+        }
+        pageURL.username = '';
+        pageURL.password = '';
+        return pageURL.href;
+    } catch {
+    }
+    return '';
+};
+
+const normalizeOverlaySessionId = value => {
+    const id = Number(value);
+    return Number.isInteger(id) && id >= 0 ? id : -1;
+};
+
+export function createOverlaySessionStore({
+    now = ( ) => Date.now(),
+    ttlMs = OVERLAY_SESSION_TTL_MS,
+} = {}) {
+    const sessions = new Map();
+    const normalizedTtlMs = Math.max(
+        1000,
+        Math.floor(Number(ttlMs) || OVERLAY_SESSION_TTL_MS)
+    );
+    const currentTime = ( ) => Math.max(0, Math.floor(Number(now()) || 0));
+
+    const prune = (referenceTime = currentTime()) => {
+        for ( const [ token, session ] of sessions ) {
+            if ( session.expiresAt > referenceTime ) { continue; }
+            sessions.delete(token);
+        }
+        return sessions.size;
+    };
+
+    const normalizeSession = input => {
+        const token = normalizeOverlaySessionToken(input?.token);
+        const file = normalizeOverlaySessionFile(input?.file);
+        const pageUrl = normalizeOverlaySessionPageUrl(input?.pageUrl);
+        return {
+            token,
+            file,
+            pageUrl,
+            tabId: normalizeOverlaySessionId(input?.tabId),
+            frameId: normalizeOverlaySessionId(input?.frameId),
+        };
+    };
+
+    return {
+        register(input = {}) {
+            const createdAt = currentTime();
+            prune(createdAt);
+
+            const session = normalizeSession(input);
+            if (
+                session.token === '' ||
+                session.file === '' ||
+                session.pageUrl === '' ||
+                session.tabId === -1 ||
+                session.frameId === -1
+            ) {
+                return { ok: false, error: 'invalid_session' };
+            }
+            if ( sessions.has(session.token) ) {
+                return { ok: false, error: 'duplicate_token' };
+            }
+
+            const expiresAt = createdAt + normalizedTtlMs;
+            sessions.set(session.token, {
+                ...session,
+                createdAt,
+                expiresAt,
+            });
+            return { ok: true, expiresAt };
+        },
+
+        claim(input = {}) {
+            const claimedAt = currentTime();
+            const token = normalizeOverlaySessionToken(input?.token);
+            if ( token === '' ) {
+                return { ok: false, error: 'invalid_token' };
+            }
+            const entry = sessions.get(token);
+            if ( entry === undefined ) {
+                prune(claimedAt);
+                return { ok: false, error: 'unknown_token' };
+            }
+            sessions.delete(token);
+
+            if ( entry.expiresAt <= claimedAt ) {
+                return { ok: false, error: 'expired_token' };
+            }
+
+            const file = normalizeOverlaySessionFile(input?.file);
+            const pageUrl = normalizeOverlaySessionPageUrl(input?.pageUrl);
+            if ( file === '' || pageUrl === '' ) {
+                return { ok: false, error: 'invalid_session' };
+            }
+            if ( entry.file !== file || entry.pageUrl !== pageUrl ) {
+                return { ok: false, error: 'session_mismatch' };
+            }
+
+            return {
+                ok: true,
+                file: entry.file,
+                pageUrl: entry.pageUrl,
+                tabId: entry.tabId,
+                frameId: entry.frameId,
+            };
+        },
+
+        prune,
+        clear() {
+            sessions.clear();
+        },
+        get size() {
+            prune();
+            return sessions.size;
+        },
+    };
+}
 
 /******************************************************************************/
 

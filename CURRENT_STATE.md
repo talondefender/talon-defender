@@ -14,6 +14,7 @@ Runtime behavior now:
 - automation hide directives now apply across every matched selector in a directive, mirror their marker-based hide styles into discovered shadow roots and related fallback frames, and use a bounded retry backoff with inactivity reset instead of permanently stopping after three successful applies.
 - automation directives can now declare required bundled rulesets, so popup and consent fixes track the user-facing protection toggles instead of running outside the selected popup/overlay posture, and Guardian article pages now have exact-host automation coverage for the Sourcepoint consent wall, the inline `#sign-in-gate` registration interrupt, the sticky bottom `StickyBottomBanner` reader-revenue prompt, and the article-end `#slot-body-end` contribution ask, with those curated Guardian nuisance prompts now suppressed by direct selector CSS so article-surface mutation guards do not block them.
 - custom filter hostname walks now sanitize missing and non-string hostnames before slicing labels, preventing popup-panel and filtering lookups from crashing on `indexOf('.')` when a caller passes no hostname.
+- picker and unpicker overlay startup now uses a one-time background capability claim before the web-accessible overlay page accepts its `MessagePort`.
 
 Entitlement behavior now:
 - the free trial is `7` days from first initialization
@@ -75,6 +76,7 @@ Community bundle behavior now:
 
 Release posture now:
 - this workspace is the only public-safe source surface
+- the manifest keeps `<all_urls>` because blocking, cosmetic filtering, strict-block navigation, picker/unpicker, and per-site protection checks must apply on arbitrary user-visited pages.
 - the Chrome source manifest now pins the Chrome Web Store public key so unpacked Chrome loads keep the published extension id and storage namespace
 - Chrome and Edge release scripts also refresh `../Talon Defender Latest/`
 - `npm run release:gate` runs unit tests, public-safe and release-hygiene audits, production/dependency audits, Chrome and Edge package validation, public source packaging, and the Chrome smoke test when Chrome is available

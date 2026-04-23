@@ -62,6 +62,46 @@ test('manifest permissions stay limited to the reviewed blocker surface', async 
   assert.equal(manifest.permissions.includes('cookies'), false);
 });
 
+test('picker overlay startup requires a one-time background capability claim', async () => {
+  const backgroundSource = await readSource('js/background.js');
+  const contentOverlaySource = await readSource('js/scripting/tool-overlay.js');
+  const frameOverlaySource = await readSource('js/tool-overlay-ui.js');
+  const utilsSource = await readSource('js/utils.js');
+
+  const untrustedBoundary = backgroundSource.indexOf('// Does not require trusted origin.');
+  const trustedBoundary = backgroundSource.indexOf('// Does require trusted origin.');
+  const registerCase = backgroundSource.indexOf("case 'registerOverlaySession'");
+  const claimCase = backgroundSource.indexOf("case 'claimOverlaySession'");
+
+  assert.ok(untrustedBoundary !== -1);
+  assert.ok(trustedBoundary !== -1);
+  assert.ok(registerCase > untrustedBoundary && registerCase < trustedBoundary);
+  assert.ok(claimCase > trustedBoundary);
+  assert.match(backgroundSource, /const overlaySessions = createOverlaySessionStore\(\);/);
+  assert.match(backgroundSource, /isExtensionRuntimeSender\(sender\) === false/);
+  assert.match(backgroundSource, /overlaySessions\.register\(\{/);
+  assert.match(backgroundSource, /overlaySessions\.claim\(\{/);
+
+  assert.match(contentOverlaySource, /createSessionToken\(\)/);
+  assert.match(contentOverlaySource, /self\.crypto\.getRandomValues\(bytes\);/);
+  assert.match(contentOverlaySource, /what: 'registerOverlaySession'/);
+  assert.match(contentOverlaySource, /capability: token/);
+  assert.match(contentOverlaySource, /file,/);
+  assert.match(contentOverlaySource, /pageUrl: this\.url\.href/);
+
+  assert.match(frameOverlaySource, /const TOKEN_RE = \/\^\[a-f0-9\]\{32\}\$\/;/);
+  assert.match(frameOverlaySource, /what: 'claimOverlaySession'/);
+  assert.match(frameOverlaySource, /pageUrl: url/);
+  assert.match(frameOverlaySource, /globalThis\.removeEventListener\('message', onStartMessage\);/);
+  assert.doesNotMatch(frameOverlaySource, /\{ once: true \}/);
+
+  assert.match(utilsSource, /const OVERLAY_SESSION_TOKEN_RE = \/\^\[a-f0-9\]\{32\}\$\/;/);
+  assert.match(utilsSource, /export function createOverlaySessionStore/);
+  assert.match(utilsSource, /sessions\.delete\(token\);/);
+  assert.match(utilsSource, /entry\.expiresAt <= claimedAt/);
+  assert.match(utilsSource, /entry\.file !== file \|\| entry\.pageUrl !== pageUrl/);
+});
+
 test('youtube watch registration excludes invasive response mutators on the signed-in web surface', async () => {
   const source = await readSource('js/scripting-manager.js');
   const hostScopedExclusionsMatch = source.match(

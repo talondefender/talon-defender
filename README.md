@@ -33,6 +33,9 @@ Current product summary:
 Store review notes:
 - public Chrome and Edge packages and the public source archive exclude the non-shipped tactic interpreter artifacts
 - package and source-release validation fail if tactic interpreter artifacts, runtime registration IDs, or public tactic storage keys appear in public artifacts
+- remote community bundles are signed JSON configuration only; they cannot deliver remote JavaScript, WASM, or arbitrary command payloads
+- `<all_urls>` is required for the reviewed blocker surface: DNR blocking, cosmetic filtering, strict-block navigation, picker/unpicker, and per-site protection checks on user-visited pages
+- picker and unpicker web-accessible overlay pages must claim a one-time background capability before accepting a `MessagePort`
 - license keys are stored locally only; sync storage accepts only sync-safe activation token metadata when the API provides it
 
 Key commands:

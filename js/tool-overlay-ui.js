@@ -24,6 +24,44 @@ import { sendMessage } from './ext.js';
 
 /******************************************************************************/
 
+const TOKEN_RE = /^[a-f0-9]{32}$/;
+
+const normalizeOverlayStartURL = value => {
+    if ( typeof value !== 'string' ) { return ''; }
+    try {
+        const url = new URL(value);
+        if ( url.protocol !== 'http:' && url.protocol !== 'https:' ) {
+            return '';
+        }
+        url.username = '';
+        url.password = '';
+        return url.href;
+    } catch {
+    }
+    return '';
+};
+
+const normalizeOverlayDimension = value => {
+    const dimension = Number(value);
+    if ( Number.isFinite(dimension) === false ) { return null; }
+    if ( dimension < 0 || dimension > 100000 ) { return null; }
+    return Math.floor(dimension);
+};
+
+const isUsableMessagePort = port =>
+    port instanceof Object &&
+    typeof port.postMessage === 'function';
+
+const rejectStartPort = port => {
+    try {
+        port.postMessage({ what: 'quitTool' });
+        port.close?.();
+    } catch {
+    }
+};
+
+/******************************************************************************/
+
 export const toolOverlay = {
     url: new URL('about:blank'),
     svgRoot: qs$('svg#overlay'),
@@ -34,12 +72,46 @@ export const toolOverlay = {
 
     start(onmessage) {
         this.onmessage = onmessage;
-        globalThis.addEventListener('message', ev => {
+        const onStartMessage = async ev => {
             const msg = ev.data || {};
             if ( msg.what !== 'startOverlay' ) { return; }
             if ( Array.isArray(ev.ports) === false ) { return; }
-            if ( ev.ports.length === 0 ) { return; }
-            toolOverlay.port = ev.ports[0];
+            if ( ev.ports.length !== 1 ) { return; }
+            const port = ev.ports[0];
+            if ( isUsableMessagePort(port) === false ) { return; }
+            const capability = typeof msg.capability === 'string'
+                ? msg.capability.trim().toLowerCase()
+                : '';
+            const file = typeof msg.file === 'string' ? msg.file.trim() : '';
+            const url = normalizeOverlayStartURL(msg.url);
+            const width = normalizeOverlayDimension(msg.width);
+            const height = normalizeOverlayDimension(msg.height);
+            if (
+                TOKEN_RE.test(capability) === false ||
+                file === '' ||
+                url === '' ||
+                width === null ||
+                height === null
+            ) {
+                rejectStartPort(port);
+                return;
+            }
+            const claim = await sendMessage({
+                what: 'claimOverlaySession',
+                token: capability,
+                file,
+                pageUrl: url,
+            });
+            if ( claim?.ok !== true ) {
+                rejectStartPort(port);
+                return;
+            }
+            if ( toolOverlay.port !== null ) {
+                rejectStartPort(port);
+                return;
+            }
+            globalThis.removeEventListener('message', onStartMessage);
+            toolOverlay.port = port;
             toolOverlay.port.onmessage = ev => {
                 this.onMessage(ev.data || {});
             };
@@ -52,12 +124,13 @@ export const toolOverlay = {
                 dom.on('aside #move', 'touchstart', this.eatTouchEvent);
             }
             this.onMessage({ what: 'startTool',
-                url: msg.url,
-                width: msg.width,
-                height: msg.height,
+                url,
+                width,
+                height,
             });
             dom.cl.remove(dom.body, 'loading');
-        }, { once: true });
+        };
+        globalThis.addEventListener('message', onStartMessage);
     },
 
     stop() {
