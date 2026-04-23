@@ -1,6 +1,6 @@
 {
   "name": "talon-defender-extension",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Talon Defender browser extension",
   "license": "GPL-3.0-or-later",
   "repository": {
@@ -9,9 +9,10 @@
   },
   "type": "module",
   "scripts": {
-    "test": "node --test test/auto-backoff.test.js test/automation-directives.test.js test/breakage-guard.test.js test/breakage-policy.test.js test/community-emergency-sync.test.js test/community-rule-sanitizer.test.js test/community-sync-application.test.js test/community-sync-diagnostics.test.js test/community-sync-logic.test.js test/community-tactics.test.js test/default-rulesets.test.js test/entitlement-regression.test.js test/injectable-registration.test.js test/options-ruleset-toggle-state.test.js test/public-safe-audit.test.js test/regional-rulesets.test.js test/remote-tactics-runtime.test.js test/runtime-errors.test.js test/runtime-hardening-source.test.js test/shadow-dom-helper.test.js test/single-flight.test.js test/site-key.test.js",
+    "test": "node --test test/auto-backoff.test.js test/automation-directives.test.js test/breakage-guard.test.js test/breakage-policy.test.js test/community-emergency-sync.test.js test/community-rule-sanitizer.test.js test/community-sync-application.test.js test/community-sync-diagnostics.test.js test/community-sync-logic.test.js test/community-tactics.test.js test/default-rulesets.test.js test/entitlement-regression.test.js test/injectable-registration.test.js test/options-ruleset-toggle-state.test.js test/public-safe-audit.test.js test/regional-rulesets.test.js test/remote-data-contract.test.js test/remote-tactics-runtime.test.js test/runtime-errors.test.js test/runtime-hardening-source.test.js test/shadow-dom-helper.test.js test/single-flight.test.js test/site-key.test.js",
     "audit:public-content": "node scripts/audit-public-content.mjs",
     "audit:public-safe": "node scripts/audit-public-safe.mjs && npm run audit:public-content",
+    "audit:release-hygiene": "node scripts/audit-release-hygiene.mjs",
     "update:public-suffix-data": "node scripts/update-public-suffix-data.mjs",
     "package:extension": "node scripts/package-extension.mjs",
     "package:extension:edge": "node scripts/package-edge-extension.mjs",
@@ -21,8 +22,8 @@
     "release:extension": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-extension.ps1",
     "release:extension:edge": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-edge-extension.ps1",
     "release:extension:all": "npm run release:extension && npm run release:extension:edge",
-    "lint": "npm test && npm run audit:public-safe && npm run package:extension && npm run validate:mv3-package",
-    "lint:edge": "npm test && npm run audit:public-safe && npm run package:extension:edge && npm run validate:mv3-package:edge",
+    "lint": "npm test && npm run audit:public-safe && npm run audit:release-hygiene && npm run package:extension && npm run validate:mv3-package",
+    "lint:edge": "npm test && npm run audit:public-safe && npm run audit:release-hygiene && npm run package:extension:edge && npm run validate:mv3-package:edge",
     "lint:strict": "npm run lint"
   },
   "devDependencies": {

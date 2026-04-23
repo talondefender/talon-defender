@@ -15,6 +15,89 @@ const targetDir = path.resolve(process.cwd(), getArgValue('--dir') || 'dist/exte
 
 const violations = [];
 
+const APPROVED_MANIFEST_PERMISSIONS = new Map([
+  ['alarms', 'Schedules entitlement checks, community sync retries, and lifecycle reminders.'],
+  ['declarativeNetRequest', 'Applies MV3 blocking, redirect, allow, and allow-all rules.'],
+  ['scripting', 'Registers packaged content scripts and packaged scriptlet interpreters.'],
+  ['storage', 'Stores user settings, entitlement state, diagnostics, and signed remote data.'],
+  ['webNavigation', 'Coordinates navigation-aware refresh and compatibility handling.'],
+]);
+
+const APPROVED_HOST_PERMISSIONS = new Map([
+  ['<all_urls>', 'Required for broad content-blocker coverage and permission-revocation handling.'],
+]);
+
+const GENERATED_PACKAGE_FILES = new Set([
+  'source-code.json',
+  'edge-build-target.json',
+]);
+
+const URL_ALLOWLIST = [
+  {
+    re: /^https:\/\/talondefender\.com(?:\/|$)/,
+    reason: 'owned website, legal, onboarding, and support links',
+  },
+  {
+    re: /^https:\/\/api\.talondefender\.com(?:\/|$)/,
+    reason: 'owned API endpoints for license verification and signed community data',
+  },
+  {
+    re: /^https:\/\/github\.com\/talondefender\/talon-defender(?:\/|$)/,
+    reason: 'public source-code metadata',
+  },
+  {
+    re: /^https:\/\/www\.youtube\.com\/watch(?:[?#]|$)/,
+    reason: 'bounded YouTube watch relay target normalization',
+  },
+  {
+    re: /^https:\/\/www\.youtube\.com$/,
+    reason: 'bounded YouTube origin validation',
+  },
+  {
+    re: /^https:\/\/www\.google\.(?:com|ca)\/pagead\/lvz$/,
+    reason: 'packaged DNR blocker match target, not a remote fetch endpoint',
+  },
+  {
+    re: /^https:\/\/example\.invalid\/$/,
+    reason: 'static invalid-domain parser fixture',
+  },
+  {
+    re: /^https:\/\/ublock0\.invalid\/$/,
+    reason: 'static invalid-domain parser fixture',
+  },
+  {
+    re: /^https:\/\/github\.com\/csstree\/csstree\/issues$/,
+    reason: 'third-party source-code diagnostic metadata',
+  },
+  {
+    re: /^http:\/\/json-schema\.org\/draft-03\/schema#$/,
+    reason: 'managed storage schema metadata',
+  },
+  {
+    re: /^http:\/\/www\.w3\.org\//,
+    reason: 'XML/SVG namespace URI',
+  },
+  {
+    re: /^http:\/\/www\.iab\.net\//,
+    reason: 'VAST/VMAP namespace URI',
+  },
+];
+
+const URL_METADATA_PATHS = [
+  /^rulesets\/ruleset-details\.json$/,
+  /^rulesets\/ruleset-license-policy\.json$/,
+  /^ATTRIBUTION\.md$/,
+  /^THIRD_PARTY_NOTICES\.md$/,
+  /^LICENSE\.txt$/,
+  /^css\/fonts\/Inter\/LICENSE\.txt$/,
+  /^lib\/codemirror\/README\.md$/,
+];
+
+const URL_DATA_PATHS = [
+  /^rulesets\//,
+  /^shared\/public-suffix-data\.js$/,
+];
+
 const addViolation = (filePath, message, line) => {
   if (line === undefined) {
     violations.push(`${filePath}: ${message}`);
@@ -72,6 +155,26 @@ const stripJsStringLiterals = (text) => {
   out = scrub(out, /`(?:\\.|[^`\\])*`/g);
   return out;
 };
+
+const stripHtmlComments = (text) =>
+  text.replace(/<!--[\s\S]*?-->/g, '');
+
+const stripCssComments = (text) =>
+  text.replace(/\/\*[\s\S]*?\*\//g, match => match.replace(/[^\r\n]/g, ' '));
+
+const isMetadataUrlPath = (relPath) =>
+  URL_METADATA_PATHS.some(re => re.test(relPath));
+
+const isDataUrlPath = (relPath) =>
+  URL_DATA_PATHS.some(re => re.test(relPath));
+
+const isApprovedRuntimeUrl = (url) =>
+  URL_ALLOWLIST.some(entry => entry.re.test(url));
+
+const normalizeUrlCandidate = (value) =>
+  String(value || '')
+    .replace(/[\\]+/g, '')
+    .replace(/[.,;:)>\]}]+$/g, '');
 
 const findMatches = (text, re) => {
   const out = [];
@@ -214,6 +317,46 @@ const checkSourceCodeLinkInUi = async () => {
     if (/id=["']sourceCodeLink["']/i.test(text) === false) {
       addViolation('options/attributions.html', 'Missing source-code link on attribution page');
     }
+  }
+};
+
+const checkPackagedFilesBackedBySource = async () => {
+  const files = await collectFiles(targetDir);
+  const repoRoot = process.cwd();
+  for (const absPath of files) {
+    const relPath = getRelPath(absPath);
+    if (GENERATED_PACKAGE_FILES.has(relPath)) { continue; }
+    if (relPath.startsWith('_metadata/')) { continue; }
+    const sourcePath = path.join(repoRoot, relPath);
+    if (await pathExists(sourcePath)) { continue; }
+    addViolation(relPath, 'Packaged file is not backed by a source file at the same public path');
+  }
+};
+
+const checkRemoteUrlReferences = async (absPath, { sourceKind = 'text' } = {}) => {
+  const relPath = getRelPath(absPath);
+  if (isMetadataUrlPath(relPath) || isDataUrlPath(relPath)) { return; }
+
+  const raw = await fs.readFile(absPath, 'utf8');
+  const text = sourceKind === 'js'
+    ? stripJsComments(raw)
+    : sourceKind === 'html'
+      ? stripHtmlComments(raw)
+      : sourceKind === 'css'
+        ? stripCssComments(raw)
+      : raw;
+
+  const urlRe = /\bhttps?:\/\/[^\s"'`<>\\]+/g;
+  for (const match of text.matchAll(urlRe)) {
+    if (match.index === undefined) { continue; }
+    const url = normalizeUrlCandidate(match[0]);
+    if (url === 'http://' || url === 'https://' || url.includes('${')) { continue; }
+    if (isApprovedRuntimeUrl(url)) { continue; }
+    addViolation(
+      relPath,
+      `Unclassified remote URL reference: ${url}`,
+      lineFromIndex(text, match.index)
+    );
   }
 };
 
@@ -415,6 +558,24 @@ const checkManifest = async () => {
   if (permissions.includes('webRequestBlocking')) {
     addViolation('manifest.json', 'Banned MV2-era permission present: webRequestBlocking');
   }
+  for (const permission of permissions) {
+    if (APPROVED_MANIFEST_PERMISSIONS.has(permission)) { continue; }
+    addViolation('manifest.json', `Unapproved manifest permission present: ${permission}`);
+  }
+  for (const permission of APPROVED_MANIFEST_PERMISSIONS.keys()) {
+    if (permissions.includes(permission)) { continue; }
+    addViolation('manifest.json', `Required approved manifest permission missing: ${permission}`);
+  }
+
+  const hostPermissions = Array.isArray(manifest.host_permissions) ? manifest.host_permissions : [];
+  for (const hostPermission of hostPermissions) {
+    if (APPROVED_HOST_PERMISSIONS.has(hostPermission)) { continue; }
+    addViolation('manifest.json', `Unapproved host permission present: ${hostPermission}`);
+  }
+  for (const hostPermission of APPROVED_HOST_PERMISSIONS.keys()) {
+    if (hostPermissions.includes(hostPermission)) { continue; }
+    addViolation('manifest.json', `Required approved host permission missing: ${hostPermission}`);
+  }
 
   const csp = manifest.content_security_policy;
   const cspValues = [];
@@ -588,8 +749,9 @@ const main = async () => {
     manifest = null;
   }
 
-await checkPackagedComplianceFiles();
-await checkAliasedScriptletAssets();
+  await checkPackagedComplianceFiles();
+  await checkAliasedScriptletAssets();
+  await checkPackagedFilesBackedBySource();
   if (manifest) {
     await checkSourceCodeMetadata(manifest);
     await checkRulesetLicensingPolicy(manifest);
@@ -609,10 +771,20 @@ await checkAliasedScriptletAssets();
     const ext = path.extname(absPath).toLowerCase();
     if (ext === '.html') {
       await checkHtmlFile(absPath);
+      await checkRemoteUrlReferences(absPath, { sourceKind: 'html' });
       continue;
     }
     if (ext === '.js') {
       await checkJsFile(absPath);
+      await checkRemoteUrlReferences(absPath, { sourceKind: 'js' });
+      continue;
+    }
+    if (ext === '.css') {
+      await checkRemoteUrlReferences(absPath, { sourceKind: 'css' });
+      continue;
+    }
+    if (['.json', '.xml', '.txt', '.md'].includes(ext)) {
+      await checkRemoteUrlReferences(absPath);
     }
   }
 

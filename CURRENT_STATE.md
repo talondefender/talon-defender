@@ -9,8 +9,7 @@ Runtime behavior now:
 - expired users can be reminded with `https://talondefender.com/trial-expired/` and a `trial_expired_reminder` source.
 - YouTube watch pages still have a manifest-declared `document_start` MAIN-world bootstrap script, and the public default now keeps its host-scoped enable cookie on for entitled `optimal` and `complete` users while private proof lanes can still override the cookie explicitly.
 - YouTube watch pages now also support an internal owner-profile switch for private proofing, so Talon can compare `talon-current`, `upstream-core`, and `upstream-core+talon-wins` ownership without changing the public product surface.
-- Edge same-tab YouTube follow-up watch clicks now prep the tab, hop through a neutral `about:blank` document, and then re-enter the target watch URL so the next watch document is not bootstrapped directly from the prior watch page context.
-- same-tab YouTube follow-up watch prep now caches a clean donor bootstrap envelope from a donor watch tab and seeds that envelope back into the target watch page at `document_start` before YouTube consumes the follow-up bootstrap state.
+- same-tab YouTube `/watch` clicks on `www.youtube.com` now force a fresh top-level document navigation through the public `native-heuristics` content script, so the player does not inherit a broken SPA follow-up state from the previous page context.
 - host grouping for auto-promotion and heuristic site comparisons now uses a packaged fail-closed site-key resolver so ccTLD hosts do not broaden to bare public suffixes such as `co.uk`.
 - automation hide directives now apply across every matched selector in a directive, mirror their marker-based hide styles into discovered shadow roots and related fallback frames, and use a bounded retry backoff with inactivity reset instead of permanently stopping after three successful applies.
 - automation directives can now declare required bundled rulesets, so popup and consent fixes track the user-facing protection toggles instead of running outside the selected popup/overlay posture, and Guardian article pages now have exact-host automation coverage for the Sourcepoint consent wall, the inline `#sign-in-gate` registration interrupt, the sticky bottom `StickyBottomBanner` reader-revenue prompt, and the article-end `#slot-body-end` contribution ask, with those curated Guardian nuisance prompts now suppressed by direct selector CSS so article-surface mutation guards do not block them.
@@ -35,7 +34,7 @@ Expired behavior now:
 - in practice, expired status suspends blocking until the user restores entitlement
 
 Bundled filtering surface now:
-- default rulesets enabled in the manifest are `ublock-filters`, `easylist`, `easyprivacy`, `annoyances-overlays`, `ublock-badware`, and `urlhaus-full`
+- default rulesets enabled in the manifest are `ublock-filters`, `easylist`, `easyprivacy`, `ublock-badware`, and `urlhaus-full`
 - entering complete mode now auto-enables the full bundled annoyance family: `annoyances-cookies`, `annoyances-notifications`, `annoyances-others`, `annoyances-overlays`, `annoyances-social`, and `annoyances-widgets`
 - the public Settings page now exposes an `Extra protection` toggle for the five non-default annoyance packs, so users no longer need to understand the hidden complete-mode concept
 - legacy or markerless ruleset selections now reset once to the canonical install defaults so reused Chrome storage cannot leave the public protection checkboxes blank, while later user checkbox changes persist normally across refreshes and restarts
@@ -45,6 +44,7 @@ Bundled filtering surface now:
 
 Community bundle behavior now:
 - the default bundle URL is `https://api.talondefender.com/v1/community/latest.bundle.json`
+- community bundles are signed JSON data only: they do not carry executable JavaScript or WASM, and they can only select packaged DNR behavior, packaged redirect resources, packaged cosmetics/heuristics/directives, packaged scriptlet tokens, and the packaged bounded JSON tactic interpreter
 - the extension now treats `latest.bundle.json` as the signed baseline lane and derives signed site-keyed overlay requests from the same community base URL, compiling `baseline + active overlays` back into the existing `communityBundle*` effective state consumed by DNR and injectables
 - schema `v4` community payloads can now also carry signed public `tactics`, stored as `communityBundlePublicTactics`, with baseline + overlay precedence merged by tactic `id`
 - the bundle must pass SHA-256 integrity validation and Ed25519 signature verification

@@ -398,6 +398,7 @@ js/scripting/shadow-dom-helper.js
 js/scripting/toolbar-icon.js
 js/scripting/tool-overlay.js
 js/scripting/unpicker.js
+js/scripting/youtube-watch-bootstrap.js
 js/scripting-manager.js
 js/single-flight.js
 js/site-key.js
@@ -1285,6 +1286,7 @@ rulesets/urlskip/annoyances-overlays.json
 rulesets/urlskip/ublock-filters.json
 scripts/audit-public-content.mjs
 scripts/audit-public-safe.mjs
+scripts/audit-release-hygiene.mjs
 scripts/package-edge-extension.mjs
 scripts/package-extension.mjs
 scripts/package-public-source.ps1
@@ -1314,6 +1316,7 @@ test/entitlement-regression.test.js
 test/injectable-registration.test.js
 test/public-safe-audit.test.js
 test/regional-rulesets.test.js
+test/remote-data-contract.test.js
 test/remote-tactics-runtime.test.js
 test/runtime-errors.test.js
 test/runtime-hardening-source.test.js
@@ -1353,6 +1356,8 @@ web_accessible_resources/noop-0.1s.mp3
 web_accessible_resources/noop-1s.mp4
 web_accessible_resources/noop-vast3.xml
 web_accessible_resources/noop-vmap1.xml
+web_accessible_resources/youtube-watch-relay.html
+web_accessible_resources/youtube-watch-relay.js
 web_accessible_resources/outbrain-widget.js
 web_accessible_resources/popads.js
 web_accessible_resources/prebid-ads.js

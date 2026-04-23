@@ -201,3 +201,37 @@ test('background entitlement handlers keep runtime-only refresh and replace-devi
   assert.match(source, /callback\(await formatEntitlementStatusResponse\(status\)\);/);
   assert.match(source, /case 'getInjectableSyncDiagnostics'/);
 });
+
+test('license storage disclosure assumptions stay true in clear and reveal flows', async () => {
+  const entitlementSource = await readText('../js/entitlement.js');
+  const optionsSource = await readText('../options/options.js');
+
+  assert.match(entitlementSource, /export async function clearLicenseKey\(\) \{/);
+  assert.match(
+    entitlementSource,
+    /const next = await writeEntitlement\(\{[\s\S]*licenseKey: '',[\s\S]*licenseKeyUpdatedMs: now,[\s\S]*lastVerifiedMs: 0,[\s\S]*licensePlan: '',[\s\S]*\}\);/
+  );
+  assert.match(
+    entitlementSource,
+    /writeEntitlementSync\(\{ licenseKey: '', licenseKeyUpdatedMs: now \}\)\.catch\(\(\) => \{ \}\);/
+  );
+  assert.match(optionsSource, /let licenseKeyRevealed = false;/);
+  assert.match(optionsSource, /licenseKeyLockedEl\.value = licenseKeyRevealed\s*\? storedLicenseKey\s*: maskLicenseKey\(storedLicenseKey\);/);
+  assert.match(optionsSource, /licenseRevealButton\.addEventListener\("click", \(\) => \{[\s\S]*licenseKeyRevealed = !licenseKeyRevealed;[\s\S]*updateLockedKeyDisplay\(\);/);
+});
+
+test('background startup message policy keeps popup warmup startup-safe and releases YouTube lab overrides once core startup is ready', async () => {
+  const source = await readText('../js/background.js');
+
+  assert.match(source, /let startupCoreReady = false;/);
+  assert.match(source, /function isStartupCoreReady\(\)/);
+  assert.match(source, /const STARTUP_SAFE_MESSAGE_TYPES = new Set\(\[/);
+  assert.match(source, /'popupWarmup'/);
+  assert.match(source, /const POST_STARTUP_ONLY_MESSAGE_TYPES = new Set\(\[/);
+  assert.match(source, /'setYouTubeWatchRuntimeLane'/);
+  assert.match(source, /'setYouTubeWatchOwnerProfile'/);
+  assert.match(source, /function shouldHandlePostStartupOnlyMessage\(request, sender\)/);
+  assert.match(source, /function shouldRejectPostStartupOnlyMessage\(request, sender\)/);
+  assert.match(source, /safeCallback\(buildPostStartupOnlyResponse\(\)\);/);
+  assert.match(source, /if \( shouldHandlePostStartupOnlyMessage\(request, sender\) \) \{/);
+});

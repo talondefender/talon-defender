@@ -28,12 +28,13 @@ Current product summary:
 - it now exposes a plain-language `Extra protection` toggle in Settings for the stronger non-default annoyance packs
 - it verifies paid licenses against the API
 - it falls into paywall mode when entitlement expires
-- while entitled, it can fetch a signed baseline community bundle from the API plus signed site-keyed overlay hotfixes derived from the same community base URL, with a 6-hour baseline success TTL, a 15-minute baseline failure retry path, per-site emergency overlay retries and negative-cache handling, stored-rule or packaged-fallback recovery when remote apply fails, rollback to the last-known-good compiled community state when remote extras cannot be activated cleanly, authoritative cleanup when the lane is disabled or invalid, immediate injectable refresh for signed cosmetics, heuristics, public directives, public scriptlets, and packaged bounded JSON-response tactics, uniform rejection of Talon-owned first-party host scopes across every remote lane, packaged-equivalent compatibility exclusions for remote scriptlets, proof-only state scrubbing when developer mode is off, recoverable content-script registration with persisted diagnostics, collision-safe remote scriptlet canonicalization, exact-host registration plus exact-host live refresh for the remote-tactics lane, a packaged `fetch`/`XMLHttpRequest` interpreter for signed `jsonPrune` and `jsonSet` tactics including empty array/object writes, and a narrow MV3-safe exception lane for `allow`, `allowAllRequests`, third-party packaged redirects, and exact-host first-party path-scoped packaged redirects
+- while entitled, it can fetch signed JSON community data from the API: a baseline bundle plus signed site-keyed overlay hotfixes derived from the same community base URL. The extension does not fetch or execute remote JavaScript or WASM; signed community data can only select packaged DNR rules, packaged redirect resources, packaged cosmetics/heuristics/directives, packaged scriptlet tokens, and the packaged bounded JSON-response tactic interpreter. The lane uses SHA-256 integrity, Ed25519 signatures, rollback to the last-known-good compiled state, authoritative cleanup when disabled or invalid, Talon-owned first-party host rejection, packaged compatibility exclusions, exact-host tactic registration, quota bounds, and retry/negative-cache handling.
 
 Key commands:
 - `npm test`
 - `npm run audit:public-content`
 - `npm run audit:public-safe` (`public-safe-allowlist.txt` is the exact release manifest)
+- `npm run audit:release-hygiene`
 - `npm run package:extension`
 - `npm run validate:mv3-package`
 - `npm run package:extension:edge`

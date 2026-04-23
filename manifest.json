@@ -53,7 +53,7 @@
       },
       {
         "id": "annoyances-overlays",
-        "enabled": true,
+        "enabled": false,
         "path": "/rulesets/main/annoyances-overlays.json"
       },
       {
@@ -241,7 +241,6 @@
   "options_page": "options/options.html",
   "permissions": [
     "alarms",
-    "cookies",
     "declarativeNetRequest",
     "scripting",
     "storage",
@@ -251,7 +250,7 @@
   "storage": {
     "managed_schema": "managed_storage.json"
   },
-  "version": "0.1.2",
+  "version": "0.1.3",
   "web_accessible_resources": [
     {
       "resources": [
@@ -321,6 +320,8 @@
         "web_accessible_resources/noop-vast3.xml",
         "web_accessible_resources/noop-0.1s.mp3",
         "web_accessible_resources/noop-1s.mp4",
+        "web_accessible_resources/youtube-watch-relay.html",
+        "web_accessible_resources/youtube-watch-relay.js",
         "web_accessible_resources/nobab2.js",
         "web_accessible_resources/chartbeat.js",
         "web_accessible_resources/noop.json",

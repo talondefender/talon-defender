@@ -165,7 +165,7 @@
     "id": "annoyances-overlays",
     "name": "EasyList/uBO - Overlay Notices",
     "group": "annoyances",
-    "enabled": true,
+    "enabled": false,
     "homeURL": "https://github.com/easylist/easylist#fanboy-lists",
     "filters": {
       "total": 468,

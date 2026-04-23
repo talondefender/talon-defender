@@ -11,6 +11,7 @@ Both store targets:
 
 What each release script does:
 - runs the quality gate for the target store
+- fails if packageable runtime files are untracked or missing from the public-safe release manifest
 - packages the extension from source
 - validates the unpacked MV3 package
 - keeps the Chrome package on the published extension id while the Edge package strips store-specific `key` and `update_url`

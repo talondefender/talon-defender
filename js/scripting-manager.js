@@ -55,6 +55,7 @@ const AUTO_PROMOTION_STATE_KEY = 'autoPromotionStateV2';
 const AUTO_BACKOFF_SUBSYSTEMS_KEY = 'autoBackoffSubsystemsV1';
 const AUTO_PROMOTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const INJECTABLE_SYNC_DIAGNOSTICS_KEY = 'injectableSyncDiagnosticsV1';
+const INJECTABLE_REGISTRATION_OPERATION_TIMEOUT_MS = 5000;
 const SUPPRESSIBLE_SUBSYSTEMS = Object.freeze([
     'nativeHeuristics',
     'automation',
@@ -74,6 +75,43 @@ const SCRIPTLET_PATH_ALIASES = new Map([
 const TALON_PUBLIC_SUFFIX_DATA_PATH = '/shared/public-suffix-data.js';
 const TALON_SHADOW_DOM_HELPER_PATH = '/js/scripting/shadow-dom-helper.js';
 const TALON_BLOCK_HINTS_PATH = '/js/scripting/block-hints.js';
+const GLOBAL_SCRIPTLET_EXCLUDED_HOSTNAMES = Object.freeze([
+    'www.youtube.com',
+]);
+const HOST_SCOPED_SCRIPTLET_EXCLUSIONS = new Map([
+    [
+        'www.youtube.com',
+        new Set([
+            'annoyances-overlays.json-prune',
+            'annoyances-overlays.set-constant',
+            'ublock-experimental.trusted-json-edit-xhr-request',
+            'ublock-experimental.trusted-json-edit-xhr-response',
+            'ublock-experimental.trusted-replace-node-text',
+            'ublock-filters.adjust-setTimeout',
+            'ublock-filters.json-prune',
+            'ublock-filters.json-prune-fetch-response',
+            'ublock-filters.json-prune-xhr-response',
+            'ublock-filters.remove-node-text',
+            'ublock-filters.set-constant',
+            'ublock-filters.trusted-edit-inbound-object',
+            'ublock-filters.trusted-json-edit-fetch-request',
+            'ublock-filters.trusted-replace-fetch-response',
+            'ublock-filters.trusted-json-edit-xhr-request',
+            'ublock-filters.trusted-replace-node-text',
+            'ublock-filters.trusted-replace-xhr-response',
+        ]),
+    ],
+]);
+
+const getScriptletExcludedHostnames = scriptletId => {
+    const excluded = [ ...GLOBAL_SCRIPTLET_EXCLUDED_HOSTNAMES ];
+    for ( const [ hostname, ids ] of HOST_SCOPED_SCRIPTLET_EXCLUSIONS ) {
+        if ( ids.has(scriptletId) ) {
+            excluded.push(hostname);
+        }
+    }
+    return Array.from(new Set(excluded));
+};
 
 const readOptionalLocalValue = async (key, fallbackValue, context) => {
     if ( browser.storage?.local?.get === undefined ) { return fallbackValue; }
@@ -705,6 +743,7 @@ function registerScriptlet(context, scriptletDetails) {
         for ( const [ token, details ] of scriptletList ) {
             const id = `${rulesetId}.${token}`;
             const registered = before.get(id);
+            const localExcludedHostnames = getScriptletExcludedHostnames(id);
 
             const matches = [];
             const excludeMatches = [];
@@ -723,6 +762,15 @@ function registerScriptlet(context, scriptletDetails) {
                     targetHostnames = ut.intersectHostnameIters(
                         details.hostnames,
                         permissionGrantedHostnames
+                    );
+                }
+            }
+            if ( localExcludedHostnames.length !== 0 ) {
+                if ( targetHostnames.includes('*') ) {
+                    excludeMatches.push(...ut.matchesFromHostnames(localExcludedHostnames));
+                } else {
+                    targetHostnames = targetHostnames.filter(
+                        hostname => localExcludedHostnames.includes(hostname) === false
                     );
                 }
             }
@@ -941,6 +989,70 @@ function registerNativeHeuristics(context) {
         context.toAdd.push(directive);
     }
 }
+
+/******************************************************************************/
+
+function registerYouTubeWatchBootstrap(context) {
+    const { before, filteringModeDetails } = context;
+    const registered = before.get('youtube-watch-bootstrap-main');
+    before.delete('youtube-watch-bootstrap-main'); // Important!
+
+    const { none, basic, optimal, complete } = filteringModeDetails;
+    const allowYoutube =
+        optimal.has('all-urls') ||
+        complete.has('all-urls') ||
+        optimal.has('www.youtube.com') ||
+        complete.has('www.youtube.com');
+
+    if (allowYoutube === false) {
+        if (registered !== undefined) {
+            context.toRemove.push('youtube-watch-bootstrap-main');
+        }
+        return;
+    }
+
+    const matches = exactMatchesFromHostnames([ 'www.youtube.com' ]);
+    const excludeMatches = [];
+    if (
+        none.has('all-urls') ||
+        basic.has('all-urls') ||
+        none.has('www.youtube.com') ||
+        basic.has('www.youtube.com')
+    ) {
+        pushExactExcludeMatches(excludeMatches, [ 'www.youtube.com' ]);
+    }
+
+    const directive = {
+        id: 'youtube-watch-bootstrap-main',
+        js: [ '/js/scripting/youtube-watch-bootstrap.js' ],
+        matches,
+        includeGlobs: [ '*://www.youtube.com/watch*' ],
+        allFrames: false,
+        runAt: 'document_start',
+        world: 'MAIN',
+    };
+    if (excludeMatches.length !== 0) {
+        directive.excludeMatches = excludeMatches;
+    }
+
+    if (registered === undefined) {
+        context.toAdd.push(directive);
+        return;
+    }
+
+    if (
+        ut.strArrayEq(registered.js, directive.js, false) === false ||
+        ut.strArrayEq(registered.matches, matches) === false ||
+        ut.strArrayEq(registered.includeGlobs, directive.includeGlobs) === false ||
+        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false ||
+        registered.world !== 'MAIN'
+    ) {
+        context.toRemove.push('youtube-watch-bootstrap-main');
+        context.toAdd.push(directive);
+    }
+}
+
+/******************************************************************************/
 
 function registerAutomation(context) {
     const { before, filteringModeDetails, subsystemSuppressionHostnames } = context;
@@ -1543,6 +1655,7 @@ const registerInjectablesImpl = async () => {
             ubolLog(`Registered ${entries.map(entry => entry.id)} content (css/js)`);
             await browser.scripting.registerContentScripts(entries);
         },
+        operationTimeoutMs: INJECTABLE_REGISTRATION_OPERATION_TIMEOUT_MS,
     });
     if ( result.ok === true ) {
         await Promise.all([

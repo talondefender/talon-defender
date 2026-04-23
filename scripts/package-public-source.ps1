@@ -150,6 +150,7 @@ $sourceItems = @(
   "test/community-tactics.test.js",
   "test/default-rulesets.test.js",
   "test/entitlement-regression.test.js",
+  "test/remote-data-contract.test.js",
   "unpicker-ui.html",
   "web_accessible_resources"
 )

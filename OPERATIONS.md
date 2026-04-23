@@ -7,6 +7,7 @@ Core verification:
 - `npm test`
 - `npm run audit:public-content`
 - `npm run audit:public-safe`
+- `npm run audit:release-hygiene`
 - update `public-safe-allowlist.txt` whenever a new tracked public file is intentionally added
 
 Packaging:

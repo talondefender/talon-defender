@@ -28,6 +28,7 @@ import {
     getDefaultFilteringMode,
     getFilteringMode,
     getFilteringModeDetails,
+    reconcileFilteringModeDetails as reconcileFilteringModeDetailsRaw,
     setDefaultFilteringMode as setDefaultFilteringModeRaw,
     setFilteringMode as setFilteringModeRaw,
     setFilteringModeDetails as setFilteringModeDetailsRaw,
@@ -1292,11 +1293,14 @@ let communityApplyQueue = Promise.resolve();
 let entitlementOpenTabRefreshPromise;
 const communityOverlaySyncInFlight = new Map();
 let startupComplete = false;
+let startupCoreReady = false;
+let popupWarmupRecoveryPromise;
+let installWelcomeAllowlistReadyPromise;
 
 const AUTO_GENERIC_HIGH_KEY = 'autoGenericHighHosts';
 const AUTO_GENERIC_HIGH_MAX = 200;
 const AUTO_PROMOTE_ENABLED = true;
-const TRUSTED_IMMEDIATE_MESSAGE_TYPES = new Set([
+const STARTUP_SAFE_MESSAGE_TYPES = new Set([
     'applyRulesets',
     'getDefaultFilteringMode',
     'getEntitlementStatus',
@@ -1311,11 +1315,19 @@ const TRUSTED_IMMEDIATE_MESSAGE_TYPES = new Set([
     'replaceDevice',
     'clearLicenseKey',
 ]);
+const POST_STARTUP_ONLY_MESSAGE_TYPES = new Set([
+    'setYouTubeWatchBootstrapEnabled',
+    'clearYouTubeWatchBootstrapOverride',
+    'setYouTubeWatchOwnerProfile',
+    'setYouTubeWatchRuntimeLane',
+    'clearYouTubeWatchRuntimeLaneOverride',
+]);
 const MAX_MESSAGE_CSS_LENGTH = 120000;
 const MAX_NAVIGATION_URL_LENGTH = 4096;
 const MAX_LICENSE_KEY_LENGTH = 512;
 const MAX_RULESETS_PER_REQUEST = 256;
 const MAX_MODE_HOSTS_PER_LEVEL = 4096;
+const POPUP_WARMUP_RECOVERY_TIMEOUT_MS = 4000;
 const RULESET_ID_RE = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 
 const sanitizeModeHostname = value => {
@@ -1393,11 +1405,141 @@ function isEntitled() {
     return shouldEnablePaywallForStatus(entitlementStatus) === false;
 }
 
+function isStartupCoreReady() {
+    return startupCoreReady === true || startupComplete === true;
+}
+
+function raceWithTimeout(task, timeoutMs, reason) {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const timeoutId = self.setTimeout(() => {
+            if ( settled ) { return; }
+            settled = true;
+            reject(new Error(reason));
+        }, timeoutMs);
+        Promise.resolve(task).then(result => {
+            if ( settled ) { return; }
+            settled = true;
+            self.clearTimeout(timeoutId);
+            resolve(result);
+        }, error => {
+            if ( settled ) { return; }
+            settled = true;
+            self.clearTimeout(timeoutId);
+            reject(error);
+        });
+    });
+}
+
+function normalizePopupWarmupLastError(injectableSyncDiagnostics, fallback = '') {
+    if ( typeof injectableSyncDiagnostics?.lastError === 'string' ) {
+        return injectableSyncDiagnostics.lastError;
+    }
+    return typeof fallback === 'string' ? fallback : '';
+}
+
+function buildPopupWarmupResponse({
+    fullyInitialized = isStartupCoreReady(),
+    injectableSyncReady = false,
+    injectableSyncDiagnostics = null,
+    injectableSyncLastError = '',
+} = {}) {
+    return {
+        ok: true,
+        fullyInitialized,
+        entitlementStatus: entitlementStatus?.status || 'trial',
+        paywalled: paywallActive === true,
+        injectableSyncReady,
+        injectableSyncUpdatedAt: Math.max(
+            0,
+            Number(injectableSyncDiagnostics?.updatedAt) || 0
+        ),
+        injectableSyncLastError: normalizePopupWarmupLastError(
+            injectableSyncDiagnostics,
+            injectableSyncLastError
+        ),
+    };
+}
+
+async function recoverStartupCoreFromPopupWarmup() {
+    if ( popupWarmupRecoveryPromise instanceof Promise ) {
+        return popupWarmupRecoveryPromise;
+    }
+    popupWarmupRecoveryPromise = raceWithTimeout(
+        syncInjectablesAndRefreshTabs({
+            runtimeOnly: false,
+            refreshOpenTabs: false,
+        }),
+        POPUP_WARMUP_RECOVERY_TIMEOUT_MS,
+        'popup warmup recovery timeout'
+    ).then(async syncResult => {
+        const registerResult = syncResult?.registerResult instanceof Object
+            ? syncResult.registerResult
+            : null;
+        const injectableSyncDiagnostics =
+            await readInjectableSyncDiagnostics().catch(() => null);
+        const injectableSyncReady =
+            injectableSyncDiagnostics?.ok === true ||
+            registerResult?.ok === true;
+        if ( injectableSyncReady ) {
+            startupCoreReady = true;
+        }
+        return {
+            syncResult,
+            injectableSyncDiagnostics,
+            injectableSyncReady,
+            injectableSyncLastError: normalizePopupWarmupLastError(
+                injectableSyncDiagnostics,
+                typeof registerResult?.lastError === 'string'
+                    ? registerResult.lastError
+                    : ''
+            ),
+        };
+    }).catch(reason => ({
+        syncResult: null,
+        injectableSyncDiagnostics: null,
+        injectableSyncReady: false,
+        injectableSyncLastError: `${reason}`,
+    })).finally(() => {
+        popupWarmupRecoveryPromise = undefined;
+    });
+    return popupWarmupRecoveryPromise;
+}
+
 function shouldHandleMessageBeforeFullInitialization(request, sender) {
     if ( request instanceof Object === false ) { return false; }
     const what = typeof request.what === 'string' ? request.what : '';
-    if ( TRUSTED_IMMEDIATE_MESSAGE_TYPES.has(what) === false ) { return false; }
+    if ( STARTUP_SAFE_MESSAGE_TYPES.has(what) === false ) { return false; }
     return isTrustedExtensionSender(sender);
+}
+
+function shouldRejectMessageUntilStartupComplete(request, sender) {
+    if ( request instanceof Object === false ) { return false; }
+    if ( isStartupCoreReady() ) { return false; }
+    if ( isTrustedExtensionSender(sender) === false ) { return false; }
+    const what = typeof request.what === 'string' ? request.what : '';
+    if ( what === '' ) { return false; }
+    return POST_STARTUP_ONLY_MESSAGE_TYPES.has(what);
+}
+
+function buildPostStartupOnlyResponse() {
+    return {
+        ok: false,
+        error: 'post_startup_only',
+    };
+}
+
+function shouldRejectPostStartupOnlyMessage(request, sender) {
+    return shouldRejectMessageUntilStartupComplete(request, sender);
+}
+
+function shouldHandlePostStartupOnlyMessage(request, sender) {
+    if ( request instanceof Object === false ) { return false; }
+    if ( isStartupCoreReady() === false ) { return false; }
+    if ( isTrustedExtensionSender(sender) === false ) { return false; }
+    const what = typeof request.what === 'string' ? request.what : '';
+    if ( what === '' ) { return false; }
+    return POST_STARTUP_ONLY_MESSAGE_TYPES.has(what);
 }
 
 async function setDefaultFilteringMode(afterLevel) {
@@ -1423,6 +1565,21 @@ async function setFilteringMode(hostname, afterLevel) {
 
 async function setFilteringModeDetails(details) {
     return setFilteringModeDetailsRaw(details);
+}
+
+async function reconcileFilteringModeDetails() {
+    return reconcileFilteringModeDetailsRaw();
+}
+
+function ensureInstallWelcomeAllowlistReady() {
+    if ( installWelcomeAllowlistReadyPromise instanceof Promise ) {
+        return installWelcomeAllowlistReadyPromise;
+    }
+    installWelcomeAllowlistReadyPromise = reconcileFilteringModeDetails().catch(reason => {
+        installWelcomeAllowlistReadyPromise = undefined;
+        throw reason;
+    });
+    return installWelcomeAllowlistReadyPromise;
 }
 
 async function syncWithBrowserPermissions() {
@@ -1493,7 +1650,7 @@ async function getFallbackEnabledRulesets() {
 }
 
 async function getReportedEnabledRulesets() {
-    if ( startupComplete === false ) {
+    if ( isStartupCoreReady() === false ) {
         return getFallbackEnabledRulesets();
     }
     try {
@@ -3217,11 +3374,50 @@ function onMessage(request, sender, callback) {
         }
 
         case 'popupWarmup': {
-            callback({
-                ok: true,
-                fullyInitialized: false,
-                entitlementStatus: entitlementStatus?.status || 'trial',
-                paywalled: paywallActive === true,
+            Promise.resolve().then(async () => {
+                let injectableSyncDiagnostics = isStartupCoreReady()
+                    ? await readInjectableSyncDiagnostics().catch(( ) => null)
+                    : null;
+                let injectableSyncReady = injectableSyncDiagnostics?.ok === true;
+                let injectableSyncLastError = normalizePopupWarmupLastError(
+                    injectableSyncDiagnostics
+                );
+
+                if ( injectableSyncReady === false ) {
+                    const recovery = await recoverStartupCoreFromPopupWarmup();
+                    injectableSyncDiagnostics =
+                        recovery?.injectableSyncDiagnostics ?? injectableSyncDiagnostics;
+                    injectableSyncReady =
+                        recovery?.injectableSyncReady === true ||
+                        injectableSyncDiagnostics?.ok === true;
+                    injectableSyncLastError =
+                        typeof recovery?.injectableSyncLastError === 'string' &&
+                        recovery.injectableSyncLastError !== ''
+                            ? recovery.injectableSyncLastError
+                            : normalizePopupWarmupLastError(
+                                injectableSyncDiagnostics,
+                                injectableSyncLastError
+                            );
+                }
+
+                if ( injectableSyncReady ) {
+                    startupCoreReady = true;
+                }
+
+                callback(buildPopupWarmupResponse({
+                    fullyInitialized: isStartupCoreReady(),
+                    injectableSyncReady,
+                    injectableSyncDiagnostics,
+                    injectableSyncLastError,
+                }));
+            }).catch(reason => {
+                ubolErr(`popupWarmup/${reason}`);
+                callback(buildPopupWarmupResponse({
+                    fullyInitialized: isStartupCoreReady(),
+                    injectableSyncReady: false,
+                    injectableSyncDiagnostics: null,
+                    injectableSyncLastError: `${reason}`,
+                }));
             });
             return true;
         }
@@ -3593,6 +3789,56 @@ async function startSession() {
 
 /******************************************************************************/
 
+async function runStartupRulesetMaintenance() {
+    const currentVersion = getCurrentVersion();
+    const isNewVersion = currentVersion !== rulesetConfig.version;
+    let defaultsPatched = false;
+    let regionalPatchResult = {
+        changed: false,
+        customized: false,
+        storageChanged: false,
+    };
+
+    await loadAdminConfig();
+
+    if (isNewVersion) {
+        ubolLog(`Version change: ${rulesetConfig.version} => ${currentVersion}`);
+        rulesetConfig.version = currentVersion;
+    }
+    defaultsPatched = await patchDefaultRulesets();
+    regionalPatchResult = await patchAutoRegionalRulesets();
+    if (isNewVersion || defaultsPatched || regionalPatchResult.changed) {
+        await saveRulesetConfig();
+    }
+
+    const shouldSyncRulesets = isNewVersion || defaultsPatched || regionalPatchResult.changed;
+    if (shouldSyncRulesets) {
+        const rulesetsUpdated = await enableRulesets(rulesetConfig.enabledRulesets);
+        if (rulesetsUpdated === undefined) {
+            if (isNewVersion) {
+                await updateDynamicRules();
+            } else {
+                await updateSessionRules();
+            }
+        }
+        await syncWithBrowserPermissions();
+        await ensureAnnoyancesForCompleteDefault().catch(ubolErr);
+
+        const reportedEnabledRulesets = await getReportedEnabledRulesets().catch(() =>
+            getStoredEnabledRulesetsSnapshot()
+        );
+        broadcastMessage({ enabledRulesets: reportedEnabledRulesets });
+    }
+
+    return {
+        isNewVersion,
+        defaultsPatched,
+        regionalPatchResult,
+    };
+}
+
+/******************************************************************************/
+
 async function applyPendingInstallRulesetReset() {
     const marker = await localRead(PENDING_INSTALL_RULESET_RESET_KEY).catch(() => null);
     if ( marker === null || marker === undefined ) { return false; }
@@ -3628,6 +3874,10 @@ async function applyPendingInstallRulesetReset() {
 async function start() {
     await loadRulesetConfig();
     await applyPendingInstallRulesetReset().catch(ubolErr);
+    if (process.wakeupRun) {
+        await runStartupRulesetMaintenance().catch(ubolErr);
+    }
+    await ensureInstallWelcomeAllowlistReady().catch(ubolErr);
     await initEntitlement().then(status => {
         entitlementStatus = status;
         scheduleEntitlementAlarms(entitlementStatus);
@@ -3655,6 +3905,10 @@ async function start() {
     // Prime dynamic registrations from cached state so popup state and warm
     // wakeups do not stall on empty content-script registration.
     await syncInjectablesAndRefreshTabs({ runtimeOnly: false }).catch(ubolErr);
+
+    // Core startup is ready once injectables are synced and extension-owned
+    // control pages can safely interact with the background worker.
+    startupCoreReady = true;
 
     if (process.wakeupRun === false) {
         await startSession();
@@ -3714,7 +3968,15 @@ runtime.onMessage.addListener((request, sender, callback) => {
         }
         if (handled !== true) { safeCallback(); }
     };
+    if ( shouldRejectPostStartupOnlyMessage(request, sender) ) {
+        safeCallback(buildPostStartupOnlyResponse());
+        return true;
+    }
     if ( shouldHandleMessageBeforeFullInitialization(request, sender) ) {
+        handleMessage();
+        return true;
+    }
+    if ( shouldHandlePostStartupOnlyMessage(request, sender) ) {
         handleMessage();
         return true;
     }
@@ -3745,6 +4007,15 @@ browser.commands.onCommand.addListener((...args) => {
     });
 });
 
+async function openInstallWelcomeAfterAllowlistReady(url) {
+    // Static rules can already be active on first install; wait only for the
+    // internal Talon allowlist, not for unrelated extension startup work.
+    await ensureInstallWelcomeAllowlistReady().catch(reason => {
+        ubolErr(`runtime.onInstalled/allowlist/${reason}`);
+    });
+    await gotoURL(url);
+}
+
 runtime.onInstalled.addListener((details) => {
     configureUninstallURL(`extension_${details?.reason || 'install'}`);
     if (details?.reason !== 'install') { return; }
@@ -3757,7 +4028,9 @@ runtime.onInstalled.addListener((details) => {
         queuedAt: Date.now(),
     }).catch(ubolErr);
     localRemove(FIRST_POPUP_WELCOME_SEEN_KEY).catch(ubolErr);
-    gotoURL(url).catch(ubolErr);
+    openInstallWelcomeAfterAllowlistReady(url).catch(reason => {
+        ubolErr(`runtime.onInstalled/welcome/${reason}`);
+    });
 });
 
 browser.alarms?.onAlarm.addListener(alarm => {

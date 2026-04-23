@@ -138,6 +138,51 @@ test('injectable registration surfaces failure after recovery retry is exhausted
   ]);
 });
 
+test('injectable registration recovers after a timed-out register call', async () => {
+  let registerCalls = 0;
+  const operations = [];
+
+  const result = await runInjectableRegistrationFlow({
+    buildPlan: async () => ({
+      toAdd: [
+        {
+          id: 'remote-cosmetics-global',
+          js: [
+            '/js/scripting/remote-cosmetics.js',
+            '/js/scripting/remote-cosmetics-global.js',
+          ],
+        },
+      ],
+      toRemove: [],
+    }),
+    listRegistered: async () => [],
+    unregisterContentScripts: async ids => {
+      operations.push({ type: 'unregister', ids: ids.slice() });
+    },
+    registerContentScripts: async entries => {
+      registerCalls += 1;
+      operations.push({ type: 'register', ids: entries.map(entry => entry.id) });
+      if (registerCalls === 1) {
+        return await new Promise(() => {});
+      }
+    },
+    operationTimeoutMs: 10,
+    now: () => 24681012,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.attemptedRecovery, true);
+  assert.equal(result.recovered, true);
+  assert.equal(result.updatedAt, 24681012);
+  assert.match(result.initialError, /initial\.registerContentScripts: initial\.registerContentScripts timed out after 10ms/);
+  assert.equal(result.lastError, '');
+  assert.equal(result.recoveryResetCount, 0);
+  assert.deepEqual(operations, [
+    { type: 'register', ids: ['remote-cosmetics-global'] },
+    { type: 'register', ids: ['remote-cosmetics-global'] },
+  ]);
+});
+
 test('remote scriptlet reload hints match open-tab frame URLs safely', () => {
   const hint = {
     before: [

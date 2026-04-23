@@ -2334,7 +2334,14 @@ test('user regex rules rebalance shared regex budget for community and session r
 
   const initialSession = await updateSessionRules();
   assert.equal(initialSession?.error, undefined);
-  assert.equal(dnrState.sessionRules.length, 3);
+  assert.equal(
+    dnrState.sessionRules.filter(rule => rule.priority === 29).length,
+    3
+  );
+  assert.equal(
+    dnrState.sessionRules.filter(rule => rule.condition?.regexFilter !== undefined).length,
+    3
+  );
 
   rulesetConfig.developerMode = true;
   await browserStub.storage.local.set({

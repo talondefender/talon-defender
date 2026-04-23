@@ -20,7 +20,6 @@ const EXPECTED_DEFAULT_IDS = [
   'ublock-filters',
   'easylist',
   'easyprivacy',
-  'annoyances-overlays',
   'ublock-badware',
   'urlhaus-full',
 ];
@@ -121,36 +120,36 @@ test('canonical default rulesets are derived from manifest rule resources', asyn
     manifest?.declarative_net_request?.rule_resources
   );
 
-  assert.equal(ids.includes('annoyances-overlays'), true);
+  assert.equal(ids.includes('annoyances-overlays'), false);
   assert.deepEqual(ids, EXPECTED_DEFAULT_IDS);
 });
 
 test('ruleset details can be synced to canonical default flags', () => {
   const synced = applyDefaultRulesetFlagsToDetails([
     { id: 'easylist', enabled: false },
-    { id: 'annoyances-overlays', enabled: false },
+    { id: 'annoyances-overlays', enabled: true },
     { id: 'custom-list', enabled: true },
   ], [
-    'easylist',
-    'annoyances-overlays',
+    'easylist'
   ]);
 
   assert.deepEqual(synced, [
     { id: 'easylist', enabled: true },
-    { id: 'annoyances-overlays', enabled: true },
+    { id: 'annoyances-overlays', enabled: false },
     { id: 'custom-list', enabled: false },
   ]);
 });
 
-test('default ruleset migration enables newly-defaulted rulesets on old profiles', () => {
+test('default ruleset migration disables formerly-default overlay rulesets on old profiles', () => {
   const previousDefaults = [
     'ublock-filters',
     'easylist',
     'easyprivacy',
+    'annoyances-overlays',
     'ublock-badware',
     'urlhaus-full',
   ];
-  const nextDefaults = previousDefaults.concat('annoyances-overlays');
+  const nextDefaults = previousDefaults.filter(id => id !== 'annoyances-overlays');
 
   const patched = reconcileDefaultRulesetPatch({
     currentEnabledRulesets: previousDefaults,
@@ -159,8 +158,8 @@ test('default ruleset migration enables newly-defaulted rulesets on old profiles
   });
 
   assert.equal(patched.changed, true);
-  assert.equal(patched.patchedEnabledRulesets.includes('annoyances-overlays'), true);
-  assert.deepEqual(patched.addedDefaultRulesets, ['annoyances-overlays']);
+  assert.equal(patched.patchedEnabledRulesets.includes('annoyances-overlays'), false);
+  assert.deepEqual(patched.removedDefaultRulesets, ['annoyances-overlays']);
 });
 
 test('default ruleset migration preserves customized profiles and later user opt-outs', () => {
@@ -168,10 +167,11 @@ test('default ruleset migration preserves customized profiles and later user opt
     'ublock-filters',
     'easylist',
     'easyprivacy',
+    'annoyances-overlays',
     'ublock-badware',
     'urlhaus-full',
   ];
-  const nextDefaults = previousDefaults.concat('annoyances-overlays');
+  const nextDefaults = previousDefaults.filter(id => id !== 'annoyances-overlays');
 
   const customized = reconcileDefaultRulesetPatch({
     currentEnabledRulesets: [
@@ -185,13 +185,14 @@ test('default ruleset migration preserves customized profiles and later user opt
   });
 
   assert.equal(customized.patchedEnabledRulesets.includes('easyprivacy'), false);
-  assert.equal(customized.patchedEnabledRulesets.includes('annoyances-overlays'), true);
+  assert.equal(customized.patchedEnabledRulesets.includes('annoyances-overlays'), false);
 
-  const optedOutAfterMigration = reconcileDefaultRulesetPatch({
+  const optedInAfterMigration = reconcileDefaultRulesetPatch({
     currentEnabledRulesets: [
       'ublock-filters',
       'easylist',
       'easyprivacy',
+      'annoyances-overlays',
       'ublock-badware',
       'urlhaus-full',
     ],
@@ -199,8 +200,8 @@ test('default ruleset migration preserves customized profiles and later user opt
     nextDefaultRulesetIds: nextDefaults,
   });
 
-  assert.equal(optedOutAfterMigration.changed, false);
-  assert.equal(optedOutAfterMigration.patchedEnabledRulesets.includes('annoyances-overlays'), false);
+  assert.equal(optedInAfterMigration.changed, false);
+  assert.equal(optedInAfterMigration.patchedEnabledRulesets.includes('annoyances-overlays'), true);
 });
 
 test('legacy ruleset selections reset once to the canonical install defaults', () => {
@@ -219,6 +220,55 @@ test('legacy ruleset selections reset once to the canonical install defaults', (
   assert.equal(patched.storageChanged, true);
   assert.equal(patched.rulesetSelectionVersion, RULESET_SELECTION_STATE_VERSION);
   assert.deepEqual(patched.patchedEnabledRulesets, EXPECTED_DEFAULT_IDS);
+});
+
+test('ruleset manager persists rewritten default ids before returning the patch result', async () => {
+  const source = await readText('../js/ruleset-manager.js');
+
+  assert.match(source, /await localWrite\('defaultRulesetIds', newDefaultIds\);/);
+});
+
+test('background applies startup ruleset maintenance on wakeup runs before skipping the full session path', async () => {
+  const source = await readText('../js/background.js');
+
+  assert.match(source, /async function runStartupRulesetMaintenance\(\)/);
+  assert.match(source, /if \(process\.wakeupRun\) \{\s*await runStartupRulesetMaintenance\(\)\.catch\(ubolErr\);\s*\}/s);
+  assert.match(source, /if \(process\.wakeupRun === false\) \{\s*await startSession\(\);\s*\} else \{/s);
+});
+
+test('background materializes filtering-mode DNR before first-install welcome opens', async () => {
+  const source = await readText('../js/background.js');
+  const startBlock = source.slice(
+    source.indexOf('async function start() {'),
+    source.indexOf('/******************************************************************************/', source.indexOf('async function start() {'))
+  );
+  const installBlock = source.slice(
+    source.indexOf('runtime.onInstalled.addListener'),
+    source.indexOf('browser.alarms?.onAlarm.addListener', source.indexOf('runtime.onInstalled.addListener'))
+  );
+
+  assert.match(source, /reconcileFilteringModeDetails as reconcileFilteringModeDetailsRaw/);
+  assert.match(source, /let installWelcomeAllowlistReadyPromise;/);
+  assert.match(
+    source,
+    /function ensureInstallWelcomeAllowlistReady\(\) \{[\s\S]*installWelcomeAllowlistReadyPromise = reconcileFilteringModeDetails\(\)\.catch/
+  );
+  assert.match(
+    startBlock,
+    /await ensureInstallWelcomeAllowlistReady\(\)\.catch\(ubolErr\);[\s\S]*await syncInjectablesAndRefreshTabs\(\{ runtimeOnly: false \}\)\.catch\(ubolErr\);/
+  );
+  assert.match(
+    source,
+    /async function openInstallWelcomeAfterAllowlistReady\(url\) \{[\s\S]*await ensureInstallWelcomeAllowlistReady\(\)\.catch\(reason => \{[\s\S]*await gotoURL\(url\);/
+  );
+  assert.doesNotMatch(
+    source,
+    /async function openInstallWelcomeAfterAllowlistReady\(url\) \{[\s\S]*await isFullyInitialized;/
+  );
+  assert.match(
+    installBlock,
+    /openInstallWelcomeAfterAllowlistReady\(url\)\.catch\(reason => \{/
+  );
 });
 
 test('source ruleset metadata matches manifest defaults for bundled rulesets', async () => {

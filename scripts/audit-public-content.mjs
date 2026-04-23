@@ -21,6 +21,7 @@ const allowedTestFiles = new Set([
   "test/options-ruleset-toggle-state.test.js",
   "test/public-safe-audit.test.js",
   "test/regional-rulesets.test.js",
+  "test/remote-data-contract.test.js",
   "test/remote-tactics-runtime.test.js",
   "test/runtime-errors.test.js",
   "test/runtime-hardening-source.test.js",

@@ -21,6 +21,35 @@ const errorMessageFrom = (stage, reason) => {
     return `${stage}: ${message}`;
 };
 
+const invokeWithTimeout = async ({
+    operation,
+    timeoutMs = 0,
+    stage = 'operation',
+}) => {
+    if ( typeof operation !== 'function' ) {
+        throw new TypeError('operation must be a function');
+    }
+    const effectiveTimeoutMs = Math.max(0, Number(timeoutMs) || 0);
+    if ( effectiveTimeoutMs === 0 ) {
+        return operation();
+    }
+    let timer;
+    try {
+        return await Promise.race([
+            Promise.resolve().then(() => operation()),
+            new Promise((_, reject) => {
+                timer = globalThis.setTimeout(() => {
+                    reject(new Error(`${stage} timed out after ${effectiveTimeoutMs}ms`));
+                }, effectiveTimeoutMs);
+            }),
+        ]);
+    } finally {
+        if ( timer !== undefined ) {
+            globalThis.clearTimeout(timer);
+        }
+    }
+};
+
 const buildFailureResult = ({
     now = Date.now,
     attemptedRecovery = false,
@@ -78,6 +107,7 @@ const applyPlan = async ({
     unregisterContentScripts,
     registerContentScripts,
     now,
+    operationTimeoutMs,
 }) => {
     const {
         toAdd,
@@ -87,7 +117,11 @@ const applyPlan = async ({
     } = normalizePlan(plan);
     if ( toRemove.length !== 0 ) {
         try {
-            await unregisterContentScripts(toRemove);
+            await invokeWithTimeout({
+                operation: () => unregisterContentScripts(toRemove),
+                timeoutMs: operationTimeoutMs,
+                stage: `${phase}.unregisterContentScripts`,
+            });
         } catch (reason) {
             return buildFailureResult({
                 now,
@@ -104,7 +138,11 @@ const applyPlan = async ({
     }
     if ( toAdd.length !== 0 ) {
         try {
-            await registerContentScripts(toAdd);
+            await invokeWithTimeout({
+                operation: () => registerContentScripts(toAdd),
+                timeoutMs: operationTimeoutMs,
+                stage: `${phase}.registerContentScripts`,
+            });
         } catch (reason) {
             return buildFailureResult({
                 now,
@@ -128,9 +166,20 @@ const applyPlan = async ({
     });
 };
 
-const buildPlanSafe = async ({ buildPlan, phase, now }) => {
+const buildPlanSafe = async ({
+    buildPlan,
+    phase,
+    now,
+    operationTimeoutMs,
+}) => {
     try {
-        return normalizePlan(await buildPlan());
+        return normalizePlan(
+            await invokeWithTimeout({
+                operation: () => buildPlan(),
+                timeoutMs: operationTimeoutMs,
+                stage: `${phase}.buildPlan`,
+            })
+        );
     } catch (reason) {
         return buildFailureResult({
             now,
@@ -145,6 +194,7 @@ export async function runInjectableRegistrationFlow({
     unregisterContentScripts,
     registerContentScripts,
     now = Date.now,
+    operationTimeoutMs = 0,
 } = {}) {
     if ( typeof buildPlan !== 'function' ) {
         throw new TypeError('buildPlan must be a function');
@@ -159,7 +209,12 @@ export async function runInjectableRegistrationFlow({
         throw new TypeError('registerContentScripts must be a function');
     }
 
-    const initialPlan = await buildPlanSafe({ buildPlan, phase: 'initial', now });
+    const initialPlan = await buildPlanSafe({
+        buildPlan,
+        phase: 'initial',
+        now,
+        operationTimeoutMs,
+    });
     if ( initialPlan.ok === false ) { return initialPlan; }
 
     const initialResult = await applyPlan({
@@ -168,12 +223,17 @@ export async function runInjectableRegistrationFlow({
         unregisterContentScripts,
         registerContentScripts,
         now,
+        operationTimeoutMs,
     });
     if ( initialResult.ok ) { return initialResult; }
 
     let registered;
     try {
-        registered = await listRegistered();
+        registered = await invokeWithTimeout({
+            operation: () => listRegistered(),
+            timeoutMs: operationTimeoutMs,
+            stage: 'recovery.listRegisteredContentScripts',
+        });
     } catch (reason) {
         return buildFailureResult({
             now,
@@ -192,7 +252,11 @@ export async function runInjectableRegistrationFlow({
     const recoveryIds = normalizeIds(registered);
     if ( recoveryIds.length !== 0 ) {
         try {
-            await unregisterContentScripts(recoveryIds);
+            await invokeWithTimeout({
+                operation: () => unregisterContentScripts(recoveryIds),
+                timeoutMs: operationTimeoutMs,
+                stage: 'recovery.unregisterAllContentScripts',
+            });
         } catch (reason) {
             return buildFailureResult({
                 now,
@@ -210,7 +274,12 @@ export async function runInjectableRegistrationFlow({
         }
     }
 
-    const recoveryPlan = await buildPlanSafe({ buildPlan, phase: 'recovery', now });
+    const recoveryPlan = await buildPlanSafe({
+        buildPlan,
+        phase: 'recovery',
+        now,
+        operationTimeoutMs,
+    });
     if ( recoveryPlan.ok === false ) {
         return buildFailureResult({
             now,
@@ -227,6 +296,7 @@ export async function runInjectableRegistrationFlow({
         unregisterContentScripts,
         registerContentScripts,
         now,
+        operationTimeoutMs,
     });
     if ( recoveryResult.ok ) {
         return buildSuccessResult({

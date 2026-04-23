@@ -67,6 +67,8 @@ const COMMUNITY_RULES_BASE_RULE_ID = 6000000;
 const COMMUNITY_RULES_RANGE = 1000000; // 6,000,000–6,999,999
 const COMMUNITY_RULES_MAX = 3500;
 const COMMUNITY_RESERVED_HEADROOM = 250;
+const YOUTUBE_AD_RULES_BASE_RULE_ID = SPECIAL_RULES_REALM + 1000;
+const YOUTUBE_AD_RULES_PRIORITY = STRICTBLOCK_PRIORITY + 2;
 
 const countRegexRules = rules => {
     if ( Array.isArray(rules) === false ) { return 0; }
@@ -133,6 +135,12 @@ const isStrictBlockRule = rule => {
     }
     return false;
 };
+
+const isYouTubeAdSessionRule = rule => (
+    Number.isInteger(rule?.id) &&
+    rule.id >= YOUTUBE_AD_RULES_BASE_RULE_ID &&
+    rule.id < YOUTUBE_AD_RULES_BASE_RULE_ID + 100
+);
 
 /******************************************************************************/
 
@@ -378,6 +386,112 @@ async function updateStrictBlockRules(currentRules, addRules, removeRuleIds) {
     ubolLog(`Add 1 DNR session rule with ${allExcluded.length} for excluded strict-block domains`);
 }
 
+async function updateYouTubeAdSessionRules(currentRules, addRules, removeRuleIds) {
+    for ( const rule of currentRules ) {
+        if ( isYouTubeAdSessionRule(rule) === false ) { continue; }
+        removeRuleIds.push(rule.id);
+    }
+
+    addRules.push(
+        {
+            id: YOUTUBE_AD_RULES_BASE_RULE_ID,
+            priority: YOUTUBE_AD_RULES_PRIORITY,
+            action: {
+                type: 'redirect',
+                redirect: {
+                    extensionPath: '/web_accessible_resources/doubleclick_instream_ad_status.js',
+                },
+            },
+            condition: {
+                initiatorDomains: [ 'youtube.com' ],
+                resourceTypes: [ 'script' ],
+                urlFilter: '||static.doubleclick.net/instream/ad_status.js',
+            },
+        },
+        {
+            id: YOUTUBE_AD_RULES_BASE_RULE_ID + 1,
+            priority: YOUTUBE_AD_RULES_PRIORITY,
+            action: { type: 'block' },
+            condition: {
+                initiatorDomains: [ 'youtube.com' ],
+                urlFilter: '||googleads.g.doubleclick.net/pagead/',
+            },
+        },
+        {
+            id: YOUTUBE_AD_RULES_BASE_RULE_ID + 2,
+            priority: YOUTUBE_AD_RULES_PRIORITY,
+            action: { type: 'block' },
+            condition: {
+                initiatorDomains: [ 'youtube.com' ],
+                urlFilter: '||ad.doubleclick.net/ddm/',
+            },
+        },
+        {
+            id: YOUTUBE_AD_RULES_BASE_RULE_ID + 3,
+            priority: YOUTUBE_AD_RULES_PRIORITY,
+            action: { type: 'block' },
+            condition: {
+                initiatorDomains: [ 'youtube.com' ],
+                urlFilter: '||pagead2.googlesyndication.com/activeview_ext',
+            },
+        },
+        {
+            id: YOUTUBE_AD_RULES_BASE_RULE_ID + 4,
+            priority: YOUTUBE_AD_RULES_PRIORITY,
+            action: { type: 'block' },
+            condition: {
+                initiatorDomains: [ 'youtube.com' ],
+                urlFilter: '||pagead2.googlesyndication.com/pagead/',
+            },
+        },
+        {
+            id: YOUTUBE_AD_RULES_BASE_RULE_ID + 5,
+            priority: YOUTUBE_AD_RULES_PRIORITY,
+            action: { type: 'block' },
+            condition: {
+                initiatorDomains: [ 'youtube.com' ],
+                urlFilter: '||tpc.googlesyndication.com/pagead/',
+            },
+        },
+        {
+            id: YOUTUBE_AD_RULES_BASE_RULE_ID + 6,
+            priority: YOUTUBE_AD_RULES_PRIORITY,
+            action: { type: 'block' },
+            condition: {
+                initiatorDomains: [ 'youtube.com' ],
+                urlFilter: '||ade.googlesyndication.com/',
+            },
+        },
+        {
+            id: YOUTUBE_AD_RULES_BASE_RULE_ID + 7,
+            priority: YOUTUBE_AD_RULES_PRIORITY,
+            action: { type: 'block' },
+            condition: {
+                initiatorDomains: [ 'youtube.com' ],
+                urlFilter: '||youtube.com/pagead/',
+            },
+        },
+        {
+            id: YOUTUBE_AD_RULES_BASE_RULE_ID + 8,
+            priority: YOUTUBE_AD_RULES_PRIORITY,
+            action: { type: 'block' },
+            condition: {
+                initiatorDomains: [ 'youtube.com' ],
+                urlFilter: '|https://www.google.com/pagead/lvz',
+            },
+        },
+        {
+            id: YOUTUBE_AD_RULES_BASE_RULE_ID + 9,
+            priority: YOUTUBE_AD_RULES_PRIORITY,
+            action: { type: 'block' },
+            condition: {
+                initiatorDomains: [ 'youtube.com' ],
+                urlFilter: '|https://www.google.ca/pagead/lvz',
+            },
+        },
+    );
+}
+
 async function excludeFromStrictBlock(hostname, permanent) {
     if ( typeof hostname !== 'string' || hostname === '' ) { return; }
     const readFn = permanent ? localRead : sessionRead;
@@ -418,12 +532,17 @@ async function updateSessionRules() {
         dnr.getDynamicRules(),
     ]);
     await updateStrictBlockRules(currentRules, addRulesUnfiltered, removeRuleIds);
+    await updateYouTubeAdSessionRules(currentRules, addRulesUnfiltered, removeRuleIds);
     if ( addRulesUnfiltered.length === 0 && removeRuleIds.length === 0 ) { return; }
     const maxRegexCount = dnr.MAX_NUMBER_OF_REGEX_RULES * 0.80;
     const dynamicRegexCount = countRegexRules(currentDynamicRules);
     let regexCount = dynamicRegexCount;
     let ruleId = 1;
     for ( const rule of addRulesUnfiltered ) {
+        if ( Number.isInteger(rule.id) && rule.id > 0 ) {
+            if ( rule?.condition.regexFilter ) { regexCount += 1; }
+            continue;
+        }
         if ( rule?.condition.regexFilter ) { regexCount += 1; }
         rule.id = regexCount < maxRegexCount ? ruleId++ : 0;
     }
@@ -522,7 +641,7 @@ async function patchDefaultRulesets() {
         nextDefaultRulesetIds: newDefaultIds,
         rulesetSelectionVersion: rulesetConfig.rulesetSelectionVersion,
     });
-    localWrite('defaultRulesetIds', newDefaultIds);
+    await localWrite('defaultRulesetIds', newDefaultIds);
     rulesetConfig.rulesetSelectionVersion = patched.rulesetSelectionVersion;
     if ( patched.changed ) {
         const logLabel = patched.resetToDefaults
