@@ -6,10 +6,12 @@ import {
   DEFAULT_TRIAL_PERIOD_MS,
   TRIAL_REMINDER_INITIAL_DELAY_MS,
   TRIAL_REMINDER_INTERVAL_MS,
+  buildActivationTokenSyncPatch,
   computeEntitlementState,
   getTrialReminderWhen,
   isHardDenyErrorCode,
   normalizeAndValidateLicenseKey,
+  sanitizeEntitlementSyncState,
   shouldForceCommunitySyncAfterEntitlementRefresh,
   shouldEnablePaywallForStatus,
   shouldRecordTrialReminderShown,
@@ -136,6 +138,68 @@ test('setLicenseKey validation trims valid keys and rejects invalid payloads', (
   assert.equal(boundary.key.length, 512);
 });
 
+test('entitlement sync state strips raw license keys and keeps valid activation tokens only', () => {
+  const now = Date.UTC(2026, 2, 4, 16, 0, 0, 0);
+
+  assert.deepEqual(
+    sanitizeEntitlementSyncState({
+      trialStartMs: now - 1000,
+      licenseKey: 'TD-RAW-SHOULD-NOT-SYNC',
+      licenseKeyUpdatedMs: now,
+      activationToken: ' activation-token ',
+      activationTokenExpiresAtMs: now + 60_000,
+      activationTokenUpdatedMs: now,
+      deviceId: 'device-1',
+      deviceLabel: 'Desktop',
+    }, { now }),
+    {
+      trialStartMs: now - 1000,
+      activationToken: 'activation-token',
+      activationTokenExpiresAtMs: now + 60_000,
+      activationTokenUpdatedMs: now,
+      deviceId: 'device-1',
+      deviceLabel: 'Desktop',
+    }
+  );
+
+  assert.deepEqual(
+    sanitizeEntitlementSyncState({
+      licenseKey: 'TD-RAW-SHOULD-NOT-SYNC',
+      activationToken: 'expired-token',
+      activationTokenExpiresAtMs: now - 1,
+    }, { now }),
+    {}
+  );
+});
+
+test('verify responses can produce sync-safe activation token patches', () => {
+  const now = Date.UTC(2026, 2, 4, 16, 0, 0, 0);
+
+  assert.deepEqual(
+    buildActivationTokenSyncPatch({
+      activationToken: 'token-1',
+      activationTokenExpiresAtMs: now + 3600_000,
+      deviceId: 'device-1',
+      deviceLabel: 'Laptop',
+    }, { now }),
+    {
+      activationToken: 'token-1',
+      activationTokenExpiresAtMs: now + 3600_000,
+      activationTokenUpdatedMs: now,
+      deviceId: 'device-1',
+      deviceLabel: 'Laptop',
+    }
+  );
+
+  assert.deepEqual(
+    buildActivationTokenSyncPatch({
+      activationToken: 'token-1',
+      activationTokenExpiresAtMs: now - 1,
+    }, { now }),
+    {}
+  );
+});
+
 test('paywall toggles only for expired status', () => {
   assert.equal(shouldEnablePaywallForStatus({ status: 'trial' }), false);
   assert.equal(shouldEnablePaywallForStatus({ status: 'paid' }), false);
@@ -202,19 +266,21 @@ test('background entitlement handlers keep runtime-only refresh and replace-devi
   assert.match(source, /case 'getInjectableSyncDiagnostics'/);
 });
 
-test('license storage disclosure assumptions stay true in clear and reveal flows', async () => {
+test('license storage keeps raw keys local and clears sync-safe activation tokens', async () => {
   const entitlementSource = await readText('../js/entitlement.js');
   const optionsSource = await readText('../options/options.js');
 
   assert.match(entitlementSource, /export async function clearLicenseKey\(\) \{/);
   assert.match(
     entitlementSource,
-    /const next = await writeEntitlement\(\{[\s\S]*licenseKey: '',[\s\S]*licenseKeyUpdatedMs: now,[\s\S]*lastVerifiedMs: 0,[\s\S]*licensePlan: '',[\s\S]*\}\);/
+    /const next = await writeEntitlement\(\{[\s\S]*licenseKey: '',[\s\S]*licenseKeyUpdatedMs: now,[\s\S]*lastVerifiedMs: 0,[\s\S]*licensePlan: '',[\s\S]*activationToken: '',[\s\S]*activationTokenExpiresAtMs: 0,[\s\S]*\}\);/
   );
   assert.match(
     entitlementSource,
-    /writeEntitlementSync\(\{ licenseKey: '', licenseKeyUpdatedMs: now \}\)\.catch\(\(\) => \{ \}\);/
+    /writeEntitlementSync\(\{[\s\S]*activationToken: '',[\s\S]*activationTokenExpiresAtMs: 0,[\s\S]*activationTokenUpdatedMs: now,[\s\S]*\}\)\.catch\(\(\) => \{ \}\);/
   );
+  assert.doesNotMatch(entitlementSource, /writeEntitlementSync\(\{[\s\S]*licenseKey:/);
+  assert.match(entitlementSource, /sanitizeEntitlementSyncState/);
   assert.match(optionsSource, /let licenseKeyRevealed = false;/);
   assert.match(optionsSource, /licenseKeyLockedEl\.value = licenseKeyRevealed\s*\? storedLicenseKey\s*: maskLicenseKey\(storedLicenseKey\);/);
   assert.match(optionsSource, /licenseRevealButton\.addEventListener\("click", \(\) => \{[\s\S]*licenseKeyRevealed = !licenseKeyRevealed;[\s\S]*updateLockedKeyDisplay\(\);/);

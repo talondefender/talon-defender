@@ -101,3 +101,72 @@ export function reconcileDefaultRulesetPatch({
         rulesetSelectionVersion: RULESET_SELECTION_STATE_VERSION,
     };
 }
+
+export const getRulesetStaticRuleCount = details => {
+    if ( details instanceof Object === false ) { return 0; }
+    const plain = Number(details?.rules?.plain);
+    if ( Number.isFinite(plain) && plain > 0 ) { return Math.ceil(plain); }
+    const total = Number(details?.rules?.total);
+    if ( Number.isFinite(total) && total > 0 ) { return Math.ceil(total); }
+    return 0;
+};
+
+export const planStaticRulesetQuotaChange = ({
+    beforeIds = new Set(),
+    enableRulesetIds = [],
+    disableRulesetIds = [],
+    rulesetDetails = new Map(),
+    availableStaticRuleCount,
+    maxEnabledStaticRulesets,
+} = {}) => {
+    const beforeSet = beforeIds instanceof Set
+        ? beforeIds
+        : new Set(Array.isArray(beforeIds) ? beforeIds : []);
+    const enableIds = Array.isArray(enableRulesetIds) ? enableRulesetIds : [];
+    const disableIds = Array.isArray(disableRulesetIds) ? disableRulesetIds : [];
+    const enabledAfterCount = beforeSet.size - disableIds.length + enableIds.length;
+    const enabledLimit = Number(maxEnabledStaticRulesets);
+    if (
+        Number.isFinite(enabledLimit) &&
+        enabledLimit > 0 &&
+        enabledAfterCount > enabledLimit
+    ) {
+        return {
+            ok: false,
+            error: 'static_ruleset_count_limit',
+            enabledAfterCount,
+            maxEnabledStaticRulesets: enabledLimit,
+        };
+    }
+
+    const freedStaticRuleCount = disableIds.reduce((total, id) => (
+        total + getRulesetStaticRuleCount(rulesetDetails.get(id))
+    ), 0);
+    const requiredStaticRuleCount = enableIds.reduce((total, id) => (
+        total + getRulesetStaticRuleCount(rulesetDetails.get(id))
+    ), 0);
+    const available = Number(availableStaticRuleCount);
+    const projectedAvailableStaticRuleCount = Number.isFinite(available)
+        ? available + freedStaticRuleCount
+        : Infinity;
+    if ( requiredStaticRuleCount > projectedAvailableStaticRuleCount ) {
+        return {
+            ok: false,
+            error: 'static_ruleset_quota_exceeded',
+            requiredStaticRuleCount,
+            availableStaticRuleCount: Math.max(0, Number(availableStaticRuleCount) || 0),
+            freedStaticRuleCount,
+            projectedAvailableStaticRuleCount,
+        };
+    }
+
+    return {
+        ok: true,
+        requiredStaticRuleCount,
+        availableStaticRuleCount: Number.isFinite(available) ? available : null,
+        freedStaticRuleCount,
+        projectedAvailableStaticRuleCount,
+        enabledAfterCount,
+        maxEnabledStaticRulesets: Number.isFinite(enabledLimit) ? enabledLimit : null,
+    };
+};

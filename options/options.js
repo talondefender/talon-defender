@@ -12,6 +12,7 @@ import {
 import { readSourceCodeInfo } from "../shared/source-code.js";
 import {
   applyRulesetToggleChange,
+  formatRulesetApplyError,
   getRulesetToggleState,
   normalizeEnabledRulesets,
 } from "./ruleset-toggle-state.js";
@@ -737,7 +738,7 @@ async function setRulesetsEnabled(ids, enabled) {
     timeoutMs: 4000
   });
   if (result?.error) {
-    throw new Error(String(result.error));
+    throw new Error(formatRulesetApplyError(result));
   }
   if (Array.isArray(result?.enabledRulesets)) {
     enabledRulesets = new Set(normalizeEnabledRulesets(result.enabledRulesets));

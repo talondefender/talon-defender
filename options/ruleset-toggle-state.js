@@ -46,3 +46,14 @@ export function applyRulesetToggleChange(currentEnabledRulesets, toggleRulesets,
   }
   return Array.from(next);
 }
+
+export function formatRulesetApplyError(result) {
+  const quota = result?.staticRuleQuota instanceof Object ? result.staticRuleQuota : null;
+  if (result?.error === "static_ruleset_quota_exceeded" && quota !== null) {
+    return `Chrome rule limit: needs ${quota.requiredStaticRuleCount || 0}, available ${quota.projectedAvailableStaticRuleCount || quota.availableStaticRuleCount || 0}`;
+  }
+  if (result?.error === "static_ruleset_count_limit" && quota !== null) {
+    return `Chrome ruleset limit: ${quota.enabledAfterCount || 0}/${quota.maxEnabledStaticRulesets || 0}`;
+  }
+  return String(result?.error || "ruleset_error");
+}

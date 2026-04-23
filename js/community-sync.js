@@ -30,14 +30,6 @@ import {
     normalizeCommunitySyncTtlHours,
 } from './community-sync-logic.js';
 import {
-    COMMUNITY_TACTIC_BASELINE_MAX,
-    COMMUNITY_TACTIC_COMPILED_MAX,
-    COMMUNITY_TACTIC_OVERLAY_MAX,
-    collectCommunityTacticHostnames,
-    mergeCommunityTactics,
-    sanitizeCommunityTactics,
-} from './community-tactics.js';
-import {
     COMMUNITY_RULE_SCHEMA_VERSION_LEGACY,
     COMMUNITY_RULE_SCHEMA_VERSION_REQUEST_TACTICS,
     COMMUNITY_RULE_SCHEMA_VERSION_TACTICS,
@@ -76,7 +68,6 @@ const STORAGE_KEYS = {
     heuristics: 'communityBundleHeuristics',
     publicDirectives: 'communityBundlePublicDirectives',
     publicScriptlets: 'communityBundlePublicScriptlets',
-    publicTactics: 'communityBundlePublicTactics',
     privateDirectives: 'communityBundlePrivateDirectives',
     privateScriptlets: 'communityBundlePrivateScriptlets',
     lastAttempt: 'communityBundleLastAttempt',
@@ -91,7 +82,6 @@ const BASELINE_STORAGE_KEYS = {
     heuristics: 'communityBaselineHeuristicsV1',
     publicDirectives: 'communityBaselinePublicDirectivesV1',
     publicScriptlets: 'communityBaselinePublicScriptletsV1',
-    publicTactics: 'communityBaselinePublicTacticsV1',
 };
 const OVERLAY_STORAGE_KEYS = {
     index: 'communityOverlayIndexV1',
@@ -120,7 +110,6 @@ const COMMUNITY_OVERLAY_MAX_COSMETIC_SELECTORS = 200;
 const COMMUNITY_OVERLAY_MAX_DIRECTIVES = 20;
 const COMMUNITY_OVERLAY_MAX_SCRIPTLETS = 20;
 const COMMUNITY_OVERLAY_MAX_HEURISTIC_REGEXES = 10;
-const COMMUNITY_OVERLAY_MAX_TACTICS = COMMUNITY_TACTIC_OVERLAY_MAX;
 const COMMUNITY_PRIVATE_ONLY_KEYS = [
     STORAGE_KEYS.privateDirectives,
     STORAGE_KEYS.privateScriptlets,
@@ -140,7 +129,6 @@ const COMMUNITY_ROLLBACK_SNAPSHOT_KEYS = [
     STORAGE_KEYS.heuristics,
     STORAGE_KEYS.publicDirectives,
     STORAGE_KEYS.publicScriptlets,
-    STORAGE_KEYS.publicTactics,
     STORAGE_KEYS.privateDirectives,
     STORAGE_KEYS.privateScriptlets,
     BASELINE_STORAGE_KEYS.meta,
@@ -149,7 +137,6 @@ const COMMUNITY_ROLLBACK_SNAPSHOT_KEYS = [
     BASELINE_STORAGE_KEYS.heuristics,
     BASELINE_STORAGE_KEYS.publicDirectives,
     BASELINE_STORAGE_KEYS.publicScriptlets,
-    BASELINE_STORAGE_KEYS.publicTactics,
     OVERLAY_STORAGE_KEYS.index,
     OVERLAY_STORAGE_KEYS.payloads,
     STORAGE_KEYS.lastAttempt,
@@ -432,18 +419,6 @@ const countProtectedDirectives = input => {
     return total;
 };
 
-const countProtectedTactics = input => {
-    if ( Array.isArray(input) === false ) { return 0; }
-    let total = 0;
-    for ( const tactic of input ) {
-        if ( tactic instanceof Object === false ) { continue; }
-        const hosts = Array.isArray(tactic.hosts) ? tactic.hosts : [];
-        if ( hosts.some(patternCouldMatchProtectedDomain) === false ) { continue; }
-        total += 1;
-    }
-    return total;
-};
-
 const sanitizeStringArray = (input, limit, maxLen = 256) => {
     if ( Array.isArray(input) === false ) { return []; }
     const out = [];
@@ -652,14 +627,6 @@ const sanitizeCommunityDirectives = (
 const sanitizeCommunityScriptlets = (input, { maxEntries = 120 } = {}) =>
     canonicalizeCommunityScriptlets(input, { maxEntries });
 
-const sanitizeCommunityTacticsForStorage = (input, {
-    maxEntries = COMMUNITY_TACTIC_COMPILED_MAX,
-    schemaVersion = COMMUNITY_RULE_SCHEMA_VERSION_LEGACY,
-} = {}) => sanitizeCommunityTactics(input, {
-    maxEntries,
-    schemaVersion,
-});
-
 const sortObjectEntries = object => Object.fromEntries(
     Object.entries(object || {}).sort(([ left ], [ right ]) => left.localeCompare(right))
 );
@@ -703,7 +670,6 @@ const sanitizeCommunityPayloadForStorage = (
         maxCosmeticSelectors = 250,
         maxDirectives = 80,
         maxScriptlets = 120,
-        maxTactics = COMMUNITY_TACTIC_COMPILED_MAX,
         maxHeuristicRegexes = COMMUNITY_HEURISTIC_SELECTOR_MAX,
     } = {}
 ) => {
@@ -727,13 +693,6 @@ const sanitizeCommunityPayloadForStorage = (
         publicScriptlets: sanitizeCommunityScriptlets(input?.scriptlets, {
             maxEntries: maxScriptlets,
         }),
-        publicTactics: sanitizeCommunityTacticsForStorage(
-            input?.tactics ?? input?.publicTactics,
-            {
-                maxEntries: maxTactics,
-                schemaVersion: sanitizedRules.schemaVersion,
-            }
-        ),
     };
 };
 
@@ -910,9 +869,6 @@ const normalizeOverlayPayload = (input = {}) => {
         publicScriptlets: Array.isArray(input.publicScriptlets)
             ? structuredClone(input.publicScriptlets)
             : null,
-        publicTactics: Array.isArray(input.publicTactics)
-            ? structuredClone(input.publicTactics)
-            : null,
     };
 };
 
@@ -969,9 +925,6 @@ const buildCompiledCommunityState = ({
             publicScriptlets: Array.isArray(source?.publicScriptlets)
                 ? structuredClone(source.publicScriptlets)
                 : null,
-            publicTactics: Array.isArray(source?.publicTactics)
-                ? structuredClone(source.publicTactics)
-                : null,
             tacticsDroppedAtCompile: 0,
             activeOverlayCount: overlays.length,
         };
@@ -984,9 +937,6 @@ const buildCompiledCommunityState = ({
         if ( Array.isArray(source.rules) === false ) { continue; }
         rules.push(...structuredClone(source.rules));
     }
-    const mergedTactics = mergeCommunityTactics(sources, {
-        maxEntries: COMMUNITY_TACTIC_COMPILED_MAX,
-    });
     return {
         schemaVersion: highestSchemaVersion,
         rules,
@@ -994,8 +944,7 @@ const buildCompiledCommunityState = ({
         heuristics: mergeCommunityHeuristics(sources),
         publicDirectives: mergeCommunityDirectives(sources),
         publicScriptlets: mergeCommunityScriptlets(sources),
-        publicTactics: mergedTactics.tactics,
-        tacticsDroppedAtCompile: mergedTactics.dropped,
+        tacticsDroppedAtCompile: 0,
         activeOverlayCount: overlays.length,
     };
 };
@@ -1111,7 +1060,6 @@ const readCommunityBaselineState = async () => {
         heuristics,
         publicDirectives,
         publicScriptlets,
-        publicTactics,
     ] = await Promise.all([
         localRead(BASELINE_STORAGE_KEYS.meta),
         localRead(BASELINE_STORAGE_KEYS.rules),
@@ -1119,7 +1067,6 @@ const readCommunityBaselineState = async () => {
         localRead(BASELINE_STORAGE_KEYS.heuristics),
         localRead(BASELINE_STORAGE_KEYS.publicDirectives),
         localRead(BASELINE_STORAGE_KEYS.publicScriptlets),
-        localRead(BASELINE_STORAGE_KEYS.publicTactics),
     ]);
     return {
         meta: meta instanceof Object ? meta : {},
@@ -1130,7 +1077,6 @@ const readCommunityBaselineState = async () => {
         heuristics: heuristics instanceof Object ? heuristics : null,
         publicDirectives: Array.isArray(publicDirectives) ? publicDirectives : null,
         publicScriptlets: Array.isArray(publicScriptlets) ? publicScriptlets : null,
-        publicTactics: Array.isArray(publicTactics) ? publicTactics : null,
     };
 };
 
@@ -1174,7 +1120,6 @@ const ensureCommunityBaselineMigration = async () => {
         heuristics,
         publicDirectives,
         publicScriptlets,
-        publicTactics,
     ] = await Promise.all([
         localRead(STORAGE_KEYS.meta),
         localRead(STORAGE_KEYS.rules),
@@ -1182,7 +1127,6 @@ const ensureCommunityBaselineMigration = async () => {
         localRead(STORAGE_KEYS.heuristics),
         localRead(STORAGE_KEYS.publicDirectives),
         localRead(STORAGE_KEYS.publicScriptlets),
-        localRead(STORAGE_KEYS.publicTactics),
     ]);
     if (
         meta instanceof Object === false &&
@@ -1190,8 +1134,7 @@ const ensureCommunityBaselineMigration = async () => {
         cosmetics instanceof Object === false &&
         heuristics instanceof Object === false &&
         Array.isArray(publicDirectives) === false &&
-        Array.isArray(publicScriptlets) === false &&
-        Array.isArray(publicTactics) === false
+        Array.isArray(publicScriptlets) === false
     ) {
         return false;
     }
@@ -1207,10 +1150,6 @@ const ensureCommunityBaselineMigration = async () => {
         localWrite(
             BASELINE_STORAGE_KEYS.publicScriptlets,
             Array.isArray(publicScriptlets) ? publicScriptlets : null
-        ),
-        localWrite(
-            BASELINE_STORAGE_KEYS.publicTactics,
-            Array.isArray(publicTactics) ? publicTactics : null
         ),
     ]);
     return true;
@@ -1277,21 +1216,20 @@ const buildCommunityMetaCounts = ({
         directivesCount: compiled?.publicDirectives?.length || 0,
         protectedDirectivesCount: countProtectedDirectives(compiled?.publicDirectives),
         scriptletsCount: compiled?.publicScriptlets?.length || 0,
-        tacticsCount: compiled?.publicTactics?.length || 0,
-        tacticsHostCount: collectCommunityTacticHostnames(compiled?.publicTactics).length,
+        tacticsCount: 0,
+        tacticsHostCount: 0,
         publicDirectivesCount: compiled?.publicDirectives?.length || 0,
         publicScriptletsCount: compiled?.publicScriptlets?.length || 0,
-        publicTacticsCount: compiled?.publicTactics?.length || 0,
+        publicTacticsCount: 0,
         proofDirectivesCount: 0,
         proofScriptletsCount: 0,
-        protectedTacticsCount: countProtectedTactics(compiled?.publicTactics),
-        tacticsDroppedAtCompile: Math.max(0, Number(compiled?.tacticsDroppedAtCompile) || 0),
+        protectedTacticsCount: 0,
+        tacticsDroppedAtCompile: 0,
         hotfixLane: 'public',
         extrasSigned: true,
         remoteDirectiveFeaturesEnabled: Boolean(
             compiled?.publicDirectives?.length ||
-            compiled?.publicScriptlets?.length ||
-            compiled?.publicTactics?.length
+            compiled?.publicScriptlets?.length
         ),
         baselineVersion: typeof baselineMeta?.version === 'string'
             ? baselineMeta.version
@@ -1375,7 +1313,6 @@ const writeCompiledCommunityState = async ({
         localWrite(STORAGE_KEYS.heuristics, compiled?.heuristics ?? null),
         localWrite(STORAGE_KEYS.publicDirectives, compiled?.publicDirectives ?? null),
         localWrite(STORAGE_KEYS.publicScriptlets, compiled?.publicScriptlets ?? null),
-        localWrite(STORAGE_KEYS.publicTactics, compiled?.publicTactics ?? null),
         localWrite(STORAGE_KEYS.privateDirectives, null),
         localWrite(STORAGE_KEYS.privateScriptlets, null),
         localRemove(LEGACY_PRIVATE_STORAGE_KEYS.directives),
@@ -1479,7 +1416,6 @@ const readStoredCommunityInjectableSnapshot = async () => {
         heuristics,
         publicDirectives,
         publicScriptlets,
-        publicTactics,
         privateDirectives,
         privateScriptlets,
         legacyDirectives,
@@ -1489,7 +1425,6 @@ const readStoredCommunityInjectableSnapshot = async () => {
         localRead(STORAGE_KEYS.heuristics),
         localRead(STORAGE_KEYS.publicDirectives),
         localRead(STORAGE_KEYS.publicScriptlets),
-        localRead(STORAGE_KEYS.publicTactics),
         localRead(STORAGE_KEYS.privateDirectives),
         localRead(STORAGE_KEYS.privateScriptlets),
         localRead(LEGACY_PRIVATE_STORAGE_KEYS.directives),
@@ -1500,7 +1435,6 @@ const readStoredCommunityInjectableSnapshot = async () => {
         heuristics: heuristics ?? null,
         publicDirectives: publicDirectives ?? null,
         publicScriptlets: publicScriptlets ?? null,
-        publicTactics: publicTactics ?? null,
         privateDirectives: privateDirectives ?? null,
         privateScriptlets: privateScriptlets ?? null,
         legacyDirectives: legacyDirectives ?? null,
@@ -1521,7 +1455,6 @@ const snapshotToInjectableState = snapshot => ({
         snapshot?.privateScriptlets,
         snapshot?.legacyScriptlets
     ),
-    tactics: snapshot?.publicTactics ?? null,
 });
 
 const buildCompiledInjectableSnapshot = compiled => ({
@@ -1532,9 +1465,6 @@ const buildCompiledInjectableSnapshot = compiled => ({
         : null,
     publicScriptlets: Array.isArray(compiled?.publicScriptlets)
         ? compiled.publicScriptlets
-        : null,
-    publicTactics: Array.isArray(compiled?.publicTactics)
-        ? compiled.publicTactics
         : null,
     privateDirectives: null,
     privateScriptlets: null,
@@ -1555,8 +1485,7 @@ const hasStoredCompiledCommunityState = ({
     injectableSnapshot?.cosmetics instanceof Object ||
     injectableSnapshot?.heuristics instanceof Object ||
     Array.isArray(injectableSnapshot?.publicDirectives) ||
-    Array.isArray(injectableSnapshot?.publicScriptlets) ||
-    Array.isArray(injectableSnapshot?.publicTactics)
+    Array.isArray(injectableSnapshot?.publicScriptlets)
 );
 
 const readStoredCommunityInjectableState = async ( ) =>
@@ -1975,12 +1904,6 @@ export async function syncCommunityRules({ force = false } = {}) {
     ) {
         return applyFallback(new Error('schema v4 requires full integrity scope'), privateStateResult);
     }
-    if (
-        normalizedSchemaVersion < COMMUNITY_RULE_SCHEMA_VERSION_TACTICS &&
-        bundle?.tactics !== undefined
-    ) {
-        return applyFallback(new Error('schema v4 required for tactics'), privateStateResult);
-    }
     const now = Date.now();
     const currentCompiledMeta = await localRead(STORAGE_KEYS.meta);
     const extrasSigned = integrityScope === 'full';
@@ -1990,10 +1913,8 @@ export async function syncCommunityRules({ force = false } = {}) {
         heuristics: extrasSigned ? bundle.heuristics : null,
         directives: extrasSigned && publicHotfixLane ? bundle.directives : null,
         scriptlets: extrasSigned && publicHotfixLane ? bundle.scriptlets : null,
-        tactics: extrasSigned && publicHotfixLane ? bundle.tactics : null,
     }, {
         schemaVersion: normalizedSchemaVersion,
-        maxTactics: COMMUNITY_TACTIC_BASELINE_MAX,
     });
     const baselineMetaToStore = {
         version: bundle.version,
@@ -2027,7 +1948,6 @@ export async function syncCommunityRules({ force = false } = {}) {
         localWrite(BASELINE_STORAGE_KEYS.heuristics, sanitizedBaseline.heuristics),
         localWrite(BASELINE_STORAGE_KEYS.publicDirectives, sanitizedBaseline.publicDirectives),
         localWrite(BASELINE_STORAGE_KEYS.publicScriptlets, sanitizedBaseline.publicScriptlets),
-        localWrite(BASELINE_STORAGE_KEYS.publicTactics, sanitizedBaseline.publicTactics),
     ]);
 
     let writeResult;
@@ -2302,13 +2222,6 @@ export async function syncCommunityOverlayRules({
     ) {
         return persistOverlayError('unsupported overlay schema version');
     }
-    if (
-        overlaySchemaVersion < COMMUNITY_RULE_SCHEMA_VERSION_TACTICS &&
-        bundle?.tactics !== undefined
-    ) {
-        return persistOverlayError('schema v4 required for tactics');
-    }
-
     const integrity = bundle.integrity || {};
     if ( integrity.algorithm !== 'sha256' || typeof integrity.value !== 'string' ) {
         return persistOverlayError('missing overlay integrity');
@@ -2374,14 +2287,12 @@ export async function syncCommunityOverlayRules({
         heuristics: bundle.heuristics ?? null,
         directives: bundle.directives ?? null,
         scriptlets: bundle.scriptlets ?? null,
-        tactics: bundle.tactics ?? null,
     }, {
         schemaVersion: overlaySchemaVersion,
         maxRules: COMMUNITY_OVERLAY_MAX_RULES,
         maxCosmeticSelectors: COMMUNITY_OVERLAY_MAX_COSMETIC_SELECTORS,
         maxDirectives: COMMUNITY_OVERLAY_MAX_DIRECTIVES,
         maxScriptlets: COMMUNITY_OVERLAY_MAX_SCRIPTLETS,
-        maxTactics: COMMUNITY_OVERLAY_MAX_TACTICS,
         maxHeuristicRegexes: COMMUNITY_OVERLAY_MAX_HEURISTIC_REGEXES,
     });
     overlayState.index[normalizedSiteKey] = normalizeOverlayIndexEntry({

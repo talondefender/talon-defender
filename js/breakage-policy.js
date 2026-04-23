@@ -19,7 +19,6 @@ export const AUDITABLE_SUBSYSTEMS = Object.freeze([
     'nativeHeuristics',
     'automation',
     'remoteCosmetics',
-    'remoteTactics',
     'postHideCleanup',
 ]);
 
@@ -106,15 +105,6 @@ export const RISK_MANIFEST = Object.freeze([
         runTiming: 'document_start',
         frameScope: 'frame-dependent',
         mutationType: 'execute bundled scriptlets on remote instructions',
-        protectedExposure: 'high',
-    },
-    {
-        id: 'remote-tactics',
-        tier: RISK_TIERS.high,
-        hostScope: 'community bundle exact hosts',
-        runTiming: 'document_start',
-        frameScope: 'main world',
-        mutationType: 'mutate same-origin JSON fetch and xhr responses with packaged interpreters',
         protectedExposure: 'high',
     },
     {

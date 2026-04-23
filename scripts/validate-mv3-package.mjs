@@ -251,6 +251,23 @@ const REQUIRED_ALIASED_SCRIPTLET_PATHS = [
   'rulesets/scripting/scriptlet/ublock-experimental.trusted-json-edit-xhr-request.js',
 ];
 
+const FORBIDDEN_PUBLIC_REMOTE_TACTICS_PATHS = [
+  'js/community-tactics.js',
+  'js/scripting/remote-tactics-bootstrap.js',
+  'js/scripting/remote-tactics.js',
+];
+
+const FORBIDDEN_PUBLIC_REMOTE_TACTICS_TEXT = [
+  'applyCommunityTacticsToJsonValue',
+  'sanitizeCommunityTactics(',
+  'remote-tactics-bootstrap',
+  'remote-tactics-main',
+  '/js/scripting/remote-tactics-bootstrap.js',
+  '/js/scripting/remote-tactics.js',
+  'communityBundlePublicTactics',
+  'communityBaselinePublicTacticsV1',
+];
+
 const checkPackagedComplianceFiles = async () => {
   const requiredFiles = [
     'LICENSE.txt',
@@ -451,6 +468,35 @@ const checkAliasedScriptletAssets = async () => {
     const absPath = path.join(targetDir, relativePath);
     if (await pathExists(absPath)) { continue; }
     addViolation(relativePath, 'Missing aliased scriptlet runtime asset');
+  }
+};
+
+const checkPublicRemoteTacticsGate = async files => {
+  for (const relativePath of FORBIDDEN_PUBLIC_REMOTE_TACTICS_PATHS) {
+    if (await pathExists(path.join(targetDir, relativePath)) === false) { continue; }
+    addViolation(relativePath, 'Public package must not ship the remote tactics interpreter artifact');
+  }
+
+  const textExts = new Set(['.html', '.js', '.json', '.css', '.txt', '.md']);
+  for (const absPath of files) {
+    const ext = path.extname(absPath).toLowerCase();
+    if (textExts.has(ext) === false) { continue; }
+    const relPath = getRelPath(absPath);
+    let text = '';
+    try {
+      text = await fs.readFile(absPath, 'utf8');
+    } catch {
+      continue;
+    }
+    for (const token of FORBIDDEN_PUBLIC_REMOTE_TACTICS_TEXT) {
+      const index = text.indexOf(token);
+      if (index === -1) { continue; }
+      addViolation(
+        relPath,
+        `Public package must not contain remote tactics artifact/token: ${token}`,
+        lineFromIndex(text, index)
+      );
+    }
   }
 };
 
@@ -760,6 +806,7 @@ const main = async () => {
   await checkSourceCodeLinkInUi();
 
   const files = await collectFiles(targetDir);
+  await checkPublicRemoteTacticsGate(files);
   for (const absPath of files) {
     const relPath = getRelPath(absPath);
     if (relPath.startsWith('keys/')) {

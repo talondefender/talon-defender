@@ -44,9 +44,9 @@ Bundled filtering surface now:
 
 Community bundle behavior now:
 - the default bundle URL is `https://api.talondefender.com/v1/community/latest.bundle.json`
-- community bundles are signed JSON data only: they do not carry executable JavaScript or WASM, and they can only select packaged DNR behavior, packaged redirect resources, packaged cosmetics/heuristics/directives, packaged scriptlet tokens, and the packaged bounded JSON tactic interpreter
+- community bundles are signed JSON data only: public store packages do not carry executable JavaScript, WASM, or remote command payloads, and signed community data can only select packaged DNR behavior, packaged redirect resources, packaged cosmetics/heuristics/directives, and packaged scriptlet tokens
 - the extension now treats `latest.bundle.json` as the signed baseline lane and derives signed site-keyed overlay requests from the same community base URL, compiling `baseline + active overlays` back into the existing `communityBundle*` effective state consumed by DNR and injectables
-- schema `v4` community payloads can now also carry signed public `tactics`, stored as `communityBundlePublicTactics`, with baseline + overlay precedence merged by tactic `id`
+- schema `v4` community payloads can still be verified for signature compatibility, but public store builds ignore tactic payloads and do not persist public tactic storage keys
 - the bundle must pass SHA-256 integrity validation and Ed25519 signature verification
 - community sync only runs while the extension is entitled
 - successful community sync now defaults to a `6` hour refresh cadence, accepts signed bundle TTLs only within `1..24` hours, and still retries failures after `15` minutes
@@ -59,9 +59,9 @@ Community bundle behavior now:
 - signed remote extras now activate with rollback semantics: the worker snapshots the prior community state, stages the candidate bundle, and restores the last-known-good rules and extras if injectable registration fails
 - active overlays survive restart, can be removed by signed `404`/`410` overlay responses, negative-cache missing or revoked site keys for `30` minutes, retry fetch failures after `5` minutes, and keep the previous overlay active until a replacement compiles successfully
 - overlay merge precedence now keeps more recent overlays ahead of older overlays, keeps overlays ahead of the baseline within each quota class, dedupes merged cosmetics and heuristic arrays, replaces directives by `id`, and re-canonicalizes merged scriptlets by `rulesetId` + `token` + `world`
-- signed public tactics now accept only exact-host `jsonPrune` and `jsonSet` entries for same-origin JSON `fetch` or `XMLHttpRequest` responses, allow `jsonSet` writes only for bounded empty-safe values including `[]` and `{}`, reject Talon-owned and protected-domain targets, cap baseline/overlay/compiled counts, and drop compiled overflow from the tail after overlay-first precedence
+- public store builds now ignore signed tactic entries rather than registering page-world response mutators, and the non-shipped tactic interpreter source is not kept in the public extension/source-release surface
 - when community sync is disabled or the configured bundle URL is invalid, the extension clears active community DNR rules plus stored remote cosmetics, heuristics, directives, scriptlets, and sync diagnostics state
-- the packaged remote-tactics lane now registers one isolated-world bootstrap plus one MAIN-world interpreter at `document_start` only on the compiled exact-host tactic union, mirrors that exact-host scope during open-tab runtime refresh, installs wrappers before page code runs, bridges exact-host tactic config by `CustomEvent`, reports tactic host counts through diagnostics, and fails closed back to the original response on parse, bridge, or tactic errors
+- public package and public source validation now fail if tactic interpreter files, registration IDs, or public tactic storage keys appear in public artifacts
 - public startup now scrubs only proof-lane directives, scriptlets, and breakage-audit overrides before injectable registration, while preserving active public signed hotfix extras
 - successful sync and private-state cleanup now trigger an immediate full injectable refresh when remote cosmetics, heuristics, directives, or scriptlets changed
 - signed remote cosmetics can now carry both global selectors and host-scoped selectors without a store update
@@ -71,9 +71,10 @@ Community bundle behavior now:
 - emergency community sync now tracks last attempt separately from last successful apply, uses a short attempt debounce before retrying the same domain, and only burns the full cooldown after a real remote apply succeeds
 - the allow-all DNR helper now self-heals partial dynamic/session mismatches, verifies the final paired state, rolls back on partial update failure, and reports both repairs and rollbacks through troubleshooting diagnostics
 - injectable registration now retries once after a full reset of extension-managed content scripts and persists the latest sync result for troubleshooting
-- troubleshooting/report output now exposes compiled community bundle version, baseline version and last baseline attempt/success/error state, active overlay and negative-cache counts, last overlay site/version/reason/status, last emergency-sync attempt versus success state, cleanup reason, activation rollback state, public versus proof hotfix counts, dropped quota classes, partial DNR repair state, allow-all rollback state, active exception counts, remote heuristic regex counts, host-scoped cosmetic counts, public tactic counts and dropped tactic overflow, `remoteTactics` subsystem state, and injectable sync recovery errors for operator diagnostics
+- troubleshooting/report output now exposes compiled community bundle version, baseline version and last baseline attempt/success/error state, active overlay and negative-cache counts, last overlay site/version/reason/status, last emergency-sync attempt versus success state, cleanup reason, activation rollback state, public versus proof hotfix counts, dropped quota classes, partial DNR repair state, allow-all rollback state, active exception counts, remote heuristic regex counts, host-scoped cosmetic counts, ignored public tactic counts, and injectable sync recovery errors for operator diagnostics
 
 Release posture now:
 - this workspace is the only public-safe source surface
 - the Chrome source manifest now pins the Chrome Web Store public key so unpacked Chrome loads keep the published extension id and storage namespace
 - Chrome and Edge release scripts also refresh `../Talon Defender Latest/`
+- `npm run release:gate` runs unit tests, public-safe and release-hygiene audits, production/dependency audits, Chrome and Edge package validation, public source packaging, and the Chrome smoke test when Chrome is available

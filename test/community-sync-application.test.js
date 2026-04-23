@@ -66,6 +66,7 @@ const dnrState = {
   failCommunityUpdateCount: 0,
   failSessionUpdateCount: 0,
   enabledRulesets: [],
+  reorderReturnedRules: false,
 };
 
 const DEFAULT_MAX_NUMBER_OF_DYNAMIC_RULES = 5000;
@@ -121,11 +122,32 @@ const filterRulesByIds = (rules, ruleIds) => {
   return rules.filter(rule => ruleIds.includes(rule.id));
 };
 
+const emulateChromeRuleOrder = rule => {
+  const source = clone(rule);
+  const out = {};
+  for (const key of ['action', 'condition', 'id', 'priority']) {
+    if (Object.hasOwn(source, key) === false) { continue; }
+    out[key] = source[key];
+  }
+  for (const key of Object.keys(source)) {
+    if (Object.hasOwn(out, key)) { continue; }
+    out[key] = source[key];
+  }
+  return out;
+};
+
+const cloneRulesForApi = rules => {
+  const cloned = clone(rules);
+  return dnrState.reorderReturnedRules
+    ? cloned.map(emulateChromeRuleOrder)
+    : cloned;
+};
+
 const dnr = {
   MAX_NUMBER_OF_DYNAMIC_RULES: DEFAULT_MAX_NUMBER_OF_DYNAMIC_RULES,
   MAX_NUMBER_OF_REGEX_RULES: DEFAULT_MAX_NUMBER_OF_REGEX_RULES,
   async getDynamicRules(options = {}) {
-    return clone(filterRulesByIds(dnrState.dynamicRules, options.ruleIds));
+    return cloneRulesForApi(filterRulesByIds(dnrState.dynamicRules, options.ruleIds));
   },
   async updateDynamicRules({ addRules = [], removeRuleIds = [] } = {}) {
     const hasCommunityRules = addRules.some(rule => rule.id >= 6000000 && rule.id < 7000000);
@@ -139,7 +161,7 @@ const dnr = {
     dnrState.dynamicRules.push(...clone(addRules));
   },
   async getSessionRules(options = {}) {
-    return clone(filterRulesByIds(dnrState.sessionRules, options.ruleIds));
+    return cloneRulesForApi(filterRulesByIds(dnrState.sessionRules, options.ruleIds));
   },
   async updateSessionRules({ addRules = [], removeRuleIds = [] } = {}) {
     if (dnrState.failSessionUpdateCount > 0) {
@@ -466,6 +488,7 @@ const resetEnvironment = () => {
   dnrState.failCommunityUpdateCount = 0;
   dnrState.failSessionUpdateCount = 0;
   dnrState.enabledRulesets.length = 0;
+  dnrState.reorderReturnedRules = false;
   dnr.MAX_NUMBER_OF_DYNAMIC_RULES = DEFAULT_MAX_NUMBER_OF_DYNAMIC_RULES;
   dnr.MAX_NUMBER_OF_REGEX_RULES = DEFAULT_MAX_NUMBER_OF_REGEX_RULES;
   remoteBundle = null;
@@ -947,7 +970,7 @@ test('community sync applies passive packaged XML and media redirect stubs throu
   );
 });
 
-test('community sync applies bounded first-party redirects and empty collection tactics', { concurrency: false }, async () => {
+test('community sync applies bounded first-party redirects and ignores public tactics in store builds', { concurrency: false }, async () => {
   resetEnvironment();
 
   remoteBundle = await createSignedBundle({
@@ -1017,30 +1040,9 @@ test('community sync applies bounded first-party redirects and empty collection 
       priority: 1100,
     },
   ]);
-  assert.deepEqual(storageData.communityBundlePublicTactics, [
-    {
-      id: 'set-empty-array',
-      kind: 'jsonSet',
-      phase: 'response',
-      hosts: ['=video.example.com'],
-      transport: 'fetch',
-      urlPathPrefixes: ['/api/player'],
-      jsonPaths: ['payload.adPlacements'],
-      value: [],
-    },
-    {
-      id: 'set-empty-object',
-      kind: 'jsonSet',
-      phase: 'response',
-      hosts: ['=video.example.com'],
-      transport: 'both',
-      urlPathPrefixes: ['/api/player'],
-      jsonPaths: ['payload.adMetadata'],
-      value: {},
-    },
-  ]);
-  assert.equal(storageData.communityBundleMeta.publicTacticsCount, 2);
-  assert.equal(storageData.communityBundleMeta.tacticsHostCount, 1);
+  assert.equal(storageData.communityBundlePublicTactics, undefined);
+  assert.equal(storageData.communityBundleMeta.publicTacticsCount, 0);
+  assert.equal(storageData.communityBundleMeta.tacticsHostCount, 0);
 });
 
 test('community sync stores signed public directives and scriptlets without developer mode', { concurrency: false }, async () => {
@@ -1189,7 +1191,7 @@ test('community sync marks scriptlets-only baseline extras for immediate injecta
   assert.equal(result.requiresInjectableRefresh, true);
 });
 
-test('community sync stores signed public tactics from schema v4 bundles', { concurrency: false }, async () => {
+test('community sync ignores signed public tactics from schema v4 bundles in store builds', { concurrency: false }, async () => {
   resetEnvironment();
 
   remoteBundle = await createSignedBundle({
@@ -1233,34 +1235,14 @@ test('community sync stores signed public tactics from schema v4 bundles', { con
   await finalizeCommunityActivationSuccess(result.activation);
 
   assert.equal(result.source, 'remote');
-  assert.deepEqual(storageData.communityBundlePublicTactics, [
-    {
-      id: 'prune-ads',
-      kind: 'jsonPrune',
-      phase: 'response',
-      hosts: ['=video.example'],
-      transport: 'fetch',
-      urlPathPrefixes: ['/api/player'],
-      jsonPaths: ['payload.adPlacements'],
-    },
-    {
-      id: 'set-empty',
-      kind: 'jsonSet',
-      phase: 'response',
-      hosts: ['=video.example'],
-      transport: 'both',
-      urlPathPrefixes: ['/api/player'],
-      jsonPaths: ['payload.adBreakId'],
-      value: '',
-    },
-  ]);
-  assert.deepEqual(storageData.communityBaselinePublicTacticsV1, storageData.communityBundlePublicTactics);
-  assert.equal(storageData.communityBundleMeta.publicTacticsCount, 2);
-  assert.equal(storageData.communityBundleMeta.tacticsCount, 2);
-  assert.equal(storageData.communityBundleMeta.tacticsHostCount, 1);
+  assert.equal(storageData.communityBundlePublicTactics, undefined);
+  assert.equal(storageData.communityBaselinePublicTacticsV1, undefined);
+  assert.equal(storageData.communityBundleMeta.publicTacticsCount, 0);
+  assert.equal(storageData.communityBundleMeta.tacticsCount, 0);
+  assert.equal(storageData.communityBundleMeta.tacticsHostCount, 0);
 });
 
-test('community sync marks tactics-only baseline extras for immediate injectable refresh', { concurrency: false }, async () => {
+test('community sync does not refresh injectables for tactics-only baseline extras in store builds', { concurrency: false }, async () => {
   resetEnvironment();
 
   remoteBundle = await createSignedBundle({
@@ -1281,7 +1263,7 @@ test('community sync marks tactics-only baseline extras for immediate injectable
   const result = await syncCommunityRules({ force: true });
 
   assert.equal(result.source, 'remote');
-  assert.equal(result.requiresInjectableRefresh, true);
+  assert.equal(result.requiresInjectableRefresh, false);
 });
 
 test('community sync drops internal Talon first-party scopes across remote rules and extras', { concurrency: false }, async () => {
@@ -1457,16 +1439,6 @@ test('overlay sync migrates existing compiled community state into baseline stor
       world: 'MAIN',
     },
   ];
-  storageData.communityBundlePublicTactics = [
-    {
-      id: 'legacy-tactic',
-      kind: 'jsonPrune',
-      hosts: ['=legacy.example'],
-      transport: 'fetch',
-      urlPathPrefixes: ['/api/player'],
-      jsonPaths: ['payload.ads'],
-    },
-  ];
   remoteOverlayResponses.set('video.example', {
     status: 404,
     body: null,
@@ -1491,10 +1463,7 @@ test('overlay sync migrates existing compiled community state into baseline stor
     storageData.communityBaselinePublicScriptletsV1,
     storageData.communityBundlePublicScriptlets
   );
-  assert.deepEqual(
-    storageData.communityBaselinePublicTacticsV1,
-    storageData.communityBundlePublicTactics
-  );
+  assert.equal(storageData.communityBaselinePublicTacticsV1, undefined);
   assert.deepEqual(overlayFetchLog, [
     {
       siteKey: 'video.example',
@@ -1712,38 +1681,9 @@ test('overlay sync merges baseline and site overlay state into the compiled publ
       world: 'MAIN',
     },
   ]);
-  assert.deepEqual(storageData.communityBundlePublicTactics, [
-    {
-      id: 'shared-tactic',
-      kind: 'jsonSet',
-      phase: 'response',
-      hosts: ['=video.example'],
-      transport: 'both',
-      urlPathPrefixes: ['/api/player'],
-      jsonPaths: ['payload.adBreakId'],
-      value: false,
-    },
-    {
-      id: 'overlay-only-tactic',
-      kind: 'jsonPrune',
-      phase: 'response',
-      hosts: ['=overlay.example'],
-      transport: 'xhr',
-      urlPathPrefixes: ['/api/player'],
-      jsonPaths: ['payload.overlayAds'],
-    },
-    {
-      id: 'baseline-only-tactic',
-      kind: 'jsonPrune',
-      phase: 'response',
-      hosts: ['=baseline.example'],
-      transport: 'fetch',
-      urlPathPrefixes: ['/api/player'],
-      jsonPaths: ['payload.baselineAds'],
-    },
-  ]);
-  assert.equal(storageData.communityBundleMeta.publicTacticsCount, 3);
-  assert.equal(storageData.communityBundleMeta.tacticsHostCount, 3);
+  assert.equal(storageData.communityBundlePublicTactics, undefined);
+  assert.equal(storageData.communityBundleMeta.publicTacticsCount, 0);
+  assert.equal(storageData.communityBundleMeta.tacticsHostCount, 0);
   assert.equal(storageData.communityBundleMeta.activeOverlayCount, 1);
   assert.equal(storageData.communityBundleMeta.lastOverlaySiteKey, 'video.example');
   assert.equal(storageData.communityBundleMeta.lastOverlayVersion, 'overlay.2026.03.25.1');
@@ -1973,17 +1913,7 @@ test('overlay sync removes revoked site overlays and recompiles the effective co
       maxApplies: undefined,
     },
   ]);
-  assert.deepEqual(storageData.communityBundlePublicTactics, [
-    {
-      id: 'baseline-tactic',
-      kind: 'jsonPrune',
-      phase: 'response',
-      hosts: ['=baseline.example'],
-      transport: 'fetch',
-      urlPathPrefixes: ['/api/player'],
-      jsonPaths: ['payload.baselineAds'],
-    },
-  ]);
+  assert.equal(storageData.communityBundlePublicTactics, undefined);
   assert.equal(storageData.communityOverlayIndexV1['video.example'].version, '');
   assert.equal(storageData.communityOverlayIndexV1['video.example'].lastStatus, 'missing');
   assert.ok(storageData.communityOverlayIndexV1['video.example'].negativeUntil > 0);
@@ -2461,6 +2391,42 @@ test('setAllowAllRules repairs missing session companion rules and records the r
     lastRollbackAt: 0,
   });
   assert.equal(typeof storageData.allowAllRulesDiagnosticsV1.lastRepairAt, 'number');
+});
+
+test('setAllowAllRules accepts Chrome-normalized rule object key order', { concurrency: false }, async () => {
+  resetEnvironment();
+  dnrState.reorderReturnedRules = true;
+
+  const modified = await compatDnr.setAllowAllRules(
+    8500000,
+    [],
+    [],
+    true,
+    3000000
+  );
+
+  assert.equal(modified, true);
+  assert.deepEqual(dnrState.dynamicRules, [
+    {
+      id: 8500000,
+      action: { type: 'allowAllRequests' },
+      condition: {
+        resourceTypes: ['main_frame'],
+      },
+      priority: 3000000,
+    },
+  ]);
+  assert.deepEqual(dnrState.sessionRules, [
+    {
+      id: 8500001,
+      action: { type: 'allow' },
+      condition: {
+        tabIds: [-1],
+      },
+      priority: 3000000,
+    },
+  ]);
+  assert.equal(storageData.allowAllRulesDiagnosticsV1, undefined);
 });
 
 test('setAllowAllRules rolls back partial updates when the session companion write fails', { concurrency: false }, async () => {

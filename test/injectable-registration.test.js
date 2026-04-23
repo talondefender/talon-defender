@@ -217,26 +217,17 @@ test('remote scriptlet registration canonicalizes duplicate entries and scopes i
   assert.match(source, /remote-scriptlet\.\$\{world\.toLowerCase\(\)\}\.\$\{baseId\}/);
 });
 
-test('remote tactics registration uses exact-host matches with paired bootstrap and MAIN-world lanes', async () => {
+test('public injectable registration does not include remote tactics lanes', async () => {
   const source = await fs.readFile(
     new URL('../js/scripting-manager.js', import.meta.url),
     'utf8'
   );
-  const remoteTacticsStart = source.indexOf('function registerRemoteTactics(context) {');
-  const remoteTacticsEnd = source.indexOf('/******************************************************************************/', remoteTacticsStart);
-  const remoteTacticsSource = source.slice(remoteTacticsStart, remoteTacticsEnd);
 
-  assert.match(source, /const PUBLIC_REMOTE_TACTICS_KEY = 'communityBundlePublicTactics';/);
-  assert.match(source, /registerRemoteTactics\(context\)/);
-  assert.match(remoteTacticsSource, /collectRegisteredRemoteTacticHostnames\(/);
-  assert.match(remoteTacticsSource, /const matches = exactMatchesFromHostnames\(targetHostnames\);/);
-  assert.match(source, /id: 'remote-tactics-bootstrap'/);
-  assert.match(source, /id: 'remote-tactics-main'/);
-  assert.match(source, /id: 'remote-tactics-bootstrap',[\s\S]*matchOriginAsFallback: true/);
-  assert.match(source, /id: 'remote-tactics-main',[\s\S]*matchOriginAsFallback: true/);
-  assert.match(source, /world: 'MAIN'/);
-  assert.match(remoteTacticsSource, /subsystemSuppressionHostnames\?\.remoteTactics/);
-  assert.equal(remoteTacticsSource.includes('matchesFromHostnames(optimal)'), false);
+  assert.doesNotMatch(source, /PUBLIC_REMOTE_TACTICS_KEY/);
+  assert.doesNotMatch(source, /registerRemoteTactics\(context\)/);
+  assert.doesNotMatch(source, /remote-tactics-bootstrap/);
+  assert.doesNotMatch(source, /remote-tactics-main/);
+  assert.doesNotMatch(source, /communityBundlePublicTactics/);
 });
 
 test('remote cosmetics registration splits broad and host-gated lanes', async () => {

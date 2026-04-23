@@ -5,6 +5,8 @@
 export const DEFAULT_TRIAL_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
 export const TRIAL_REMINDER_INITIAL_DELAY_MS = 2 * 60 * 1000;
 export const TRIAL_REMINDER_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+export const ACTIVATION_TOKEN_MAX_LENGTH = 2048;
+export const ACTIVATION_TOKEN_DEVICE_LABEL_MAX_LENGTH = 128;
 
 const HARD_DENY_ERROR_CODES = Object.freeze([
     'INVALID_KEY',
@@ -18,6 +20,83 @@ const toNum = v => {
     const n = Number(v);
     return Number.isFinite(n) ? n : undefined;
 };
+
+const normalizePositiveMs = value => {
+    const asNum = toNum(value);
+    if (asNum !== undefined) { return Math.max(0, asNum); }
+    if (typeof value === 'string') {
+        const parsed = Date.parse(value);
+        if (Number.isFinite(parsed)) { return Math.max(0, parsed); }
+    }
+    return 0;
+};
+
+export const normalizeActivationToken = value => {
+    if (typeof value !== 'string') { return ''; }
+    const token = value.trim();
+    if (token === '' || token.length > ACTIVATION_TOKEN_MAX_LENGTH) { return ''; }
+    return token;
+};
+
+const normalizeActivationTokenDeviceLabel = value => {
+    if (typeof value !== 'string') { return ''; }
+    return value.trim().slice(0, ACTIVATION_TOKEN_DEVICE_LABEL_MAX_LENGTH);
+};
+
+export const sanitizeEntitlementSyncState = (
+    input = {},
+    { now = Date.now() } = {}
+) => {
+    const source = input instanceof Object ? input : {};
+    const out = {};
+
+    const trialStartMs = normalizePositiveMs(source.trialStartMs);
+    if (trialStartMs > 0) {
+        out.trialStartMs = trialStartMs;
+    }
+    const trialEndMs = normalizePositiveMs(source.trialEndMs);
+    if (trialEndMs > 0) {
+        out.trialEndMs = trialEndMs;
+    }
+
+    const activationToken = normalizeActivationToken(source.activationToken);
+    const activationTokenExpiresAtMs = normalizePositiveMs(
+        source.activationTokenExpiresAtMs ?? source.activationTokenExpiresAt
+    );
+    if (activationToken !== '' && activationTokenExpiresAtMs > now) {
+        out.activationToken = activationToken;
+        out.activationTokenExpiresAtMs = activationTokenExpiresAtMs;
+        const updatedMs = normalizePositiveMs(source.activationTokenUpdatedMs);
+        if (updatedMs > 0) {
+            out.activationTokenUpdatedMs = updatedMs;
+        }
+        const deviceId = typeof source.deviceId === 'string'
+            ? source.deviceId.trim().slice(0, 128)
+            : '';
+        if (deviceId !== '') {
+            out.deviceId = deviceId;
+        }
+        const deviceLabel = normalizeActivationTokenDeviceLabel(source.deviceLabel);
+        if (deviceLabel !== '') {
+            out.deviceLabel = deviceLabel;
+        }
+    }
+
+    return out;
+};
+
+export const buildActivationTokenSyncPatch = (input = {}, { now = Date.now() } = {}) =>
+    sanitizeEntitlementSyncState({
+        activationToken: input.activationToken,
+        activationTokenExpiresAtMs:
+            input.activationTokenExpiresAtMs ??
+            input.activationTokenExpiresAt ??
+            input.expiresAtMs ??
+            input.expiresAt,
+        activationTokenUpdatedMs: now,
+        deviceId: input.deviceId,
+        deviceLabel: input.deviceLabel,
+    }, { now });
 
 export const normalizeErrorCode = value => {
     if ( typeof value !== 'string' ) { return ''; }

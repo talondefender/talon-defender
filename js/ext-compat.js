@@ -31,10 +31,26 @@ const cloneRules = rules => Array.isArray(rules)
     ? rules.map(rule => structuredClone(rule))
     : [];
 
+const stableValue = value => {
+    if ( Array.isArray(value) ) {
+        return value.map(stableValue);
+    }
+    if ( value instanceof Object ) {
+        const out = {};
+        for ( const key of Object.keys(value).sort() ) {
+            out[key] = stableValue(value[key]);
+        }
+        return out;
+    }
+    return value;
+};
+
+const stableRulesKey = rules => JSON.stringify(
+    cloneRules(rules).sort(ruleCompare).map(stableValue)
+);
+
 const isSameRules = (a, b) => {
-    const left = cloneRules(a).sort(ruleCompare);
-    const right = cloneRules(b).sort(ruleCompare);
-    return JSON.stringify(left) === JSON.stringify(right);
+    return stableRulesKey(a) === stableRulesKey(b);
 };
 
 const readLocalDiagnostics = async key => {

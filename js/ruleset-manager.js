@@ -29,6 +29,7 @@ import {
 import {
     applyDefaultRulesetFlagsToDetails,
     getDefaultRulesetIdsFromRuleResources,
+    planStaticRulesetQuotaChange,
     reconcileDefaultRulesetPatch,
 } from './default-rulesets.js';
 
@@ -712,6 +713,32 @@ async function enableRulesets(ids) {
     }
 
     const response = {};
+
+    const availableStaticRuleCount =
+        typeof dnr.getAvailableStaticRuleCount === 'function'
+            ? await dnr.getAvailableStaticRuleCount().catch(reason => {
+                ubolErr(`getAvailableStaticRuleCount/${reason}`);
+                return null;
+            })
+            : null;
+    if ( availableStaticRuleCount !== null ) {
+        const quotaPlan = planStaticRulesetQuotaChange({
+            beforeIds,
+            enableRulesetIds,
+            disableRulesetIds,
+            rulesetDetails,
+            availableStaticRuleCount,
+            maxEnabledStaticRulesets: dnr.MAX_NUMBER_OF_ENABLED_STATIC_RULESETS,
+        });
+        response.staticRuleCount = availableStaticRuleCount;
+        response.staticRuleQuota = quotaPlan;
+        if ( quotaPlan.ok === false ) {
+            response.error = quotaPlan.error;
+            response.enabledRulesets = Array.from(beforeIds);
+            ubolErr(`updateEnabledRulesets/preflight/${quotaPlan.error}`);
+            return response;
+        }
+    }
 
     await dnr.updateEnabledRulesets({
         enableRulesetIds,

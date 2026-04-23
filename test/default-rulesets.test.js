@@ -346,6 +346,44 @@ test('packaged build preserves bundled annoyance coverage, regional coverage, de
   }
 });
 
+test('public package excludes remote tactics interpreter artifacts and storage hooks', async () => {
+  await getPackagedBundle();
+  const forbiddenPaths = [
+    path.join(PACKAGED_OUT_DIR, 'js', 'community-tactics.js'),
+    path.join(PACKAGED_OUT_DIR, 'js', 'scripting', 'remote-tactics-bootstrap.js'),
+    path.join(PACKAGED_OUT_DIR, 'js', 'scripting', 'remote-tactics.js'),
+  ];
+  for (const forbiddenPath of forbiddenPaths) {
+    await assert.rejects(
+      fs.access(forbiddenPath),
+      { code: 'ENOENT' },
+      `${path.relative(PACKAGED_OUT_DIR, forbiddenPath)} must not be packaged`
+    );
+  }
+
+  const filesToScan = [
+    path.join(PACKAGED_OUT_DIR, 'js', 'background.js'),
+    path.join(PACKAGED_OUT_DIR, 'js', 'scripting-manager.js'),
+    path.join(PACKAGED_OUT_DIR, 'js', 'community-sync.js'),
+  ];
+  const forbiddenTokens = [
+    'remote-tactics-bootstrap',
+    'remote-tactics-main',
+    'communityBundlePublicTactics',
+    'communityBaselinePublicTacticsV1',
+  ];
+  for (const filePath of filesToScan) {
+    const text = await fs.readFile(filePath, 'utf8');
+    for (const token of forbiddenTokens) {
+      assert.equal(
+        text.includes(token),
+        false,
+        `${path.relative(PACKAGED_OUT_DIR, filePath)} must not contain ${token}`
+      );
+    }
+  }
+});
+
 test('complete mode annoyance pack includes the full bundled annoyance family set', async () => {
   const manifest = await readJson('../manifest.json');
   const backgroundSource = await readText('../js/background.js');

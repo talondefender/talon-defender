@@ -29,7 +29,6 @@ import {
     isInternalUnfilteredHostname,
 } from './breakage-policy.js';
 import { canonicalizeCommunityScriptlets } from './community-sync.js';
-import { collectCommunityTacticHostnames } from './community-tactics.js';
 import { fetchJSON } from './fetch.js';
 import {
     isRemoteScriptletDirectiveId,
@@ -47,7 +46,6 @@ import { createSingleFlightRunner } from './single-flight.js';
 const resourceDetailPromises = new Map();
 const PUBLIC_REMOTE_COSMETICS_KEY = 'communityBundleCosmetics';
 const PUBLIC_REMOTE_SCRIPTLETS_KEY = 'communityBundlePublicScriptlets';
-const PUBLIC_REMOTE_TACTICS_KEY = 'communityBundlePublicTactics';
 const PRIVATE_REMOTE_SCRIPTLETS_KEY = 'communityBundlePrivateScriptlets';
 const LEGACY_REMOTE_SCRIPTLETS_KEY = 'communityBundleScriptlets';
 const AUTO_GENERIC_HIGH_KEY = 'autoGenericHighHosts';
@@ -60,7 +58,6 @@ const SUPPRESSIBLE_SUBSYSTEMS = Object.freeze([
     'nativeHeuristics',
     'automation',
     'remoteCosmetics',
-    'remoteTactics',
     'postHideCleanup',
 ]);
 const SCRIPTLET_PATH_ALIASES = new Map([
@@ -271,24 +268,6 @@ const readActiveSubsystemSuppressionHostnames = async () => {
         }
     }
     return out;
-};
-
-const collectRegisteredRemoteTacticHostnames = (
-    filteringModeDetails,
-    remoteTactics,
-) => {
-    const tacticHostnames = collectCommunityTacticHostnames(remoteTactics);
-    if ( tacticHostnames.length === 0 ) { return []; }
-    const hasBroadHostPermission =
-        filteringModeDetails?.optimal?.has?.('all-urls') ||
-        filteringModeDetails?.complete?.has?.('all-urls');
-    if ( hasBroadHostPermission ) { return tacticHostnames; }
-    const permissionGrantedHostnames = [
-        ...(filteringModeDetails?.optimal || []),
-        ...(filteringModeDetails?.complete || []),
-    ];
-    if ( permissionGrantedHostnames.length === 0 ) { return []; }
-    return ut.intersectHostnameIters(tacticHostnames, permissionGrantedHostnames);
 };
 
 const classifyRemoteCosmeticsState = cosmetics => {
@@ -1288,115 +1267,6 @@ function registerRemoteCosmetics(context) {
 
 /******************************************************************************/
 
-function registerRemoteTactics(context) {
-    const {
-        before,
-        filteringModeDetails,
-        subsystemSuppressionHostnames,
-        remoteTactics,
-    } = context;
-
-    const registeredBootstrap = before.get('remote-tactics-bootstrap');
-    before.delete('remote-tactics-bootstrap'); // Important!
-    const registeredMain = before.get('remote-tactics-main');
-    before.delete('remote-tactics-main'); // Important!
-
-    context.registeredTacticsHostCount = 0;
-
-    if ( Array.isArray(remoteTactics) === false || remoteTactics.length === 0 ) {
-        if ( registeredBootstrap !== undefined ) {
-            context.toRemove.push('remote-tactics-bootstrap');
-        }
-        if ( registeredMain !== undefined ) {
-            context.toRemove.push('remote-tactics-main');
-        }
-        return;
-    }
-
-    const { none, basic } = filteringModeDetails;
-    const targetHostnames = collectRegisteredRemoteTacticHostnames(
-        filteringModeDetails,
-        remoteTactics
-    );
-    const matches = exactMatchesFromHostnames(targetHostnames);
-    if ( matches.length === 0 ) {
-        if ( registeredBootstrap !== undefined ) {
-            context.toRemove.push('remote-tactics-bootstrap');
-        }
-        if ( registeredMain !== undefined ) {
-            context.toRemove.push('remote-tactics-main');
-        }
-        return;
-    }
-
-    context.registeredTacticsHostCount = targetHostnames.length;
-    normalizeMatches(matches);
-
-    const excludeMatches = [];
-    if ( none.has('all-urls') === false ) {
-        excludeMatches.push(...ut.matchesFromHostnames(none));
-    }
-    if ( basic.has('all-urls') === false ) {
-        excludeMatches.push(...ut.matchesFromHostnames(basic));
-    }
-    pushExactExcludeMatches(
-        excludeMatches,
-        subsystemSuppressionHostnames?.remoteTactics
-    );
-
-    const bootstrapDirective = {
-        id: 'remote-tactics-bootstrap',
-        js: ['/js/scripting/remote-tactics-bootstrap.js'],
-        allFrames: true,
-        matchOriginAsFallback: true,
-        matches,
-        runAt: 'document_start',
-    };
-    if ( excludeMatches.length !== 0 ) {
-        bootstrapDirective.excludeMatches = excludeMatches;
-    }
-    if ( registeredBootstrap === undefined ) {
-        context.toAdd.push(bootstrapDirective);
-    } else if (
-        ut.strArrayEq(registeredBootstrap.js, bootstrapDirective.js, false) === false ||
-        ut.strArrayEq(registeredBootstrap.matches, matches) === false ||
-        ut.strArrayEq(registeredBootstrap.excludeMatches, excludeMatches) === false ||
-        Boolean(registeredBootstrap.matchOriginAsFallback) !==
-            Boolean(bootstrapDirective.matchOriginAsFallback)
-    ) {
-        context.toRemove.push('remote-tactics-bootstrap');
-        context.toAdd.push(bootstrapDirective);
-    }
-
-    const mainDirective = {
-        id: 'remote-tactics-main',
-        js: ['/js/scripting/remote-tactics.js'],
-        allFrames: true,
-        matchOriginAsFallback: true,
-        matches,
-        runAt: 'document_start',
-        world: 'MAIN',
-    };
-    if ( excludeMatches.length !== 0 ) {
-        mainDirective.excludeMatches = excludeMatches;
-    }
-    if ( registeredMain === undefined ) {
-        context.toAdd.push(mainDirective);
-    } else if (
-        ut.strArrayEq(registeredMain.js, mainDirective.js, false) === false ||
-        ut.strArrayEq(registeredMain.matches, matches) === false ||
-        ut.strArrayEq(registeredMain.excludeMatches, excludeMatches) === false ||
-        Boolean(registeredMain.matchOriginAsFallback) !==
-            Boolean(mainDirective.matchOriginAsFallback) ||
-        registeredMain.world !== 'MAIN'
-    ) {
-        context.toRemove.push('remote-tactics-main');
-        context.toAdd.push(mainDirective);
-    }
-}
-
-/******************************************************************************/
-
 function registerPostHideCleanup(context) {
     const { before, filteringModeDetails, subsystemSuppressionHostnames } = context;
 
@@ -1533,7 +1403,6 @@ const buildInjectablesRegistrationPlan = async () => {
         genericDetails,
         remoteCosmetics,
         remoteScriptlets,
-        remoteTactics,
         autoGenericHighHosts,
         subsystemSuppressionHostnames,
         registered,
@@ -1555,11 +1424,6 @@ const buildInjectablesRegistrationPlan = async () => {
             ],
             'registerInjectables/remote-scriptlets'
         ),
-        readOptionalLocalValue(
-            PUBLIC_REMOTE_TACTICS_KEY,
-            null,
-            `registerInjectables/${PUBLIC_REMOTE_TACTICS_KEY}`
-        ),
         readActiveAutoGenericHighHosts(),
         readActiveSubsystemSuppressionHostnames(),
         browser.scripting.getRegisteredContentScripts(),
@@ -1579,7 +1443,6 @@ const buildInjectablesRegistrationPlan = async () => {
         toRemove,
         remoteCosmetics: remoteCosmetics instanceof Object ? remoteCosmetics : null,
         remoteScriptlets,
-        remoteTactics: Array.isArray(remoteTactics) ? remoteTactics : null,
         autoGenericHighHosts:
             autoGenericHighHosts instanceof Set
                 ? autoGenericHighHosts
@@ -1601,7 +1464,6 @@ const buildInjectablesRegistrationPlan = async () => {
         registerAutomation(context),
         registerAdShellStyles(context),
         registerRemoteCosmetics(context),
-        registerRemoteTactics(context),
         registerPostHideCleanup(context),
         registerGeneric(context, genericDetails),
         registerHighGeneric(context, genericDetails),

@@ -6,7 +6,6 @@ import {
     isInternalUnfilteredHostname,
     patternCouldMatchProtectedDomain,
 } from './breakage-policy.js';
-import { normalizeCommunityTacticUrlPathPrefix } from './community-tactics.js';
 
 export const COMMUNITY_RULE_SCHEMA_VERSION_LEGACY = 1;
 export const COMMUNITY_RULE_SCHEMA_VERSION_ACTIONS = 2;
@@ -23,6 +22,7 @@ export const COMMUNITY_RULE_PRIORITY_ALLOW_ALL_REQUESTS = 1300;
 
 export const COMMUNITY_EXCEPTION_RULES_MAX = 250;
 export const COMMUNITY_ALLOW_ALL_REQUESTS_MAX = 50;
+const COMMUNITY_REDIRECT_URL_PATH_PREFIX_MAX_LENGTH = 128;
 
 export const COMMUNITY_ALLOWED_REDIRECT_EXTENSION_PATHS = Object.freeze([
     '/web_accessible_resources/empty',
@@ -236,8 +236,19 @@ const normalizeRedirectExtensionPath = value => {
     return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
 };
 
-const normalizeRedirectUrlPathPrefix = value =>
-    normalizeCommunityTacticUrlPathPrefix(value);
+const normalizeRedirectUrlPathPrefix = value => {
+    if ( typeof value !== 'string' ) { return ''; }
+    const normalized = value.trim();
+    if (
+        normalized === '' ||
+        normalized.length > COMMUNITY_REDIRECT_URL_PATH_PREFIX_MAX_LENGTH
+    ) {
+        return '';
+    }
+    if ( normalized.startsWith('/') === false ) { return ''; }
+    if ( normalized.includes('?') || normalized.includes('#') ) { return ''; }
+    return normalized;
+};
 
 const normalizeFirstPartyRedirectPathPrefix = (condition, exactHost) => {
     const urlPathPrefix = normalizeRedirectUrlPathPrefix(condition?.urlPathPrefix);

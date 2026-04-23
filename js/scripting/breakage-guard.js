@@ -24,7 +24,6 @@ const AUDITABLE_SUBSYSTEMS = new Set([
     'nativeHeuristics',
     'automation',
     'remoteCosmetics',
-    'remoteTactics',
     'postHideCleanup',
 ]);
 
@@ -364,8 +363,6 @@ const reportBreakageSignal = (signal, details = {}) => {
             normalizedDetails.subsystem = 'automation';
         } else if ( source.startsWith('remote-cosmetics') ) {
             normalizedDetails.subsystem = 'remoteCosmetics';
-        } else if ( source.startsWith('remote-tactics') ) {
-            normalizedDetails.subsystem = 'remoteTactics';
         } else if ( source.startsWith('post-hide-cleanup') ) {
             normalizedDetails.subsystem = 'postHideCleanup';
         }

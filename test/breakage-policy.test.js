@@ -75,7 +75,6 @@ test('remote scriptlet denylist and audit override sanitization remain bounded',
     'nativeHeuristics',
     'automation',
     'remoteCosmetics',
-    'remoteTactics',
     'postHideCleanup',
   ]);
   assert.equal(resolveAuditOverride(overrides, 'shop.example.com', 'remoteCosmetics'), false);

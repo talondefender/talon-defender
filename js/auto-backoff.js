@@ -4,7 +4,6 @@ export const BREAKAGE_SUBSYSTEM_IDS = Object.freeze([
     'nativeHeuristics',
     'automation',
     'remoteCosmetics',
-    'remoteTactics',
     'postHideCleanup',
 ]);
 

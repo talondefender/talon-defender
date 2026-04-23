@@ -9,6 +9,9 @@ Edge release:
 Both store targets:
 - `npm run release:extension:all`
 
+Full release readiness gate:
+- `npm run release:gate`
+
 What each release script does:
 - runs the quality gate for the target store
 - fails if packageable runtime files are untracked or missing from the public-safe release manifest
@@ -45,7 +48,11 @@ Phase 2A release gate:
 - submit the Chrome upload zip from `../Talon Defender Latest/chrome/`
 - until that Chrome store rollout is live enough, treat the signed baseline bundle as the required hotfix lane and do not depend on overlay-only fixes for production users
 
-Phase 2B release gate:
-- schema `4` community payloads with `tactics` are backward-incompatible with older store builds, so do not publish live production tactic payloads until the Chrome and Edge Phase 2B releases are live enough in user hands
-- until both stores are live enough, keep production community publishes on schema `2` or `3` payloads without `tactics`
-- after both store builds are live enough, tactic publishes must still stay inside the bounded public contract: exact-host only, same-origin JSON responses only, and packaged `jsonPrune` / `jsonSet` behavior only, with `jsonSet` limited to the approved empty-safe values
+Store-safe public package gate:
+- public Chrome and Edge packages and the public source archive must not include tactic interpreter files, tactic registration ids, or public tactic storage keys
+- schema `4` community payloads may be verified for signature compatibility, but public store builds ignore tactic entries
+- `npm run validate:mv3-package`, `npm run validate:mv3-package:edge`, and `npm run package:public-source` are release blockers for accidental tactic artifact reintroduction
+
+Smoke gate:
+- `npm run test:chrome-smoke` packages the Chrome extension, loads it with the pinned extension id, checks startup/options data, default rulesets, entitlement paywall recovery, and quota messaging
+- set `TALON_CHROME_SMOKE_REQUIRED=1` when Chrome/Chromium must be present instead of allowing a local skip

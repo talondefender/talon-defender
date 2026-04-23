@@ -5,9 +5,18 @@ import fs from 'node:fs/promises';
 const readSource = relativePath =>
   fs.readFile(new URL(`../${relativePath}`, import.meta.url), 'utf8');
 
+const pathExists = async relativePath => {
+  try {
+    await fs.access(new URL(`../${relativePath}`, import.meta.url));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const countMatches = (source, pattern) => (source.match(pattern) ?? []).length;
 
-test('adaptive subsystems keep the shared helper ordering and bounded remote tactics lanes', async () => {
+test('adaptive subsystems keep the shared helper ordering and omit public remote tactics lanes', async () => {
   const source = await readSource('js/scripting-manager.js');
 
   assert.match(source, /const TALON_SHADOW_DOM_HELPER_PATH = '\/js\/scripting\/shadow-dom-helper\.js'/);
@@ -16,12 +25,27 @@ test('adaptive subsystems keep the shared helper ordering and bounded remote tac
   assert.match(source, /TALON_SHADOW_DOM_HELPER_PATH,\s*TALON_BLOCK_HINTS_PATH,\s*'\/js\/scripting\/automation\.js'/);
   assert.match(source, /\/js\/scripting\/remote-cosmetics-global\.js/);
   assert.match(source, /\/js\/scripting\/remote-cosmetics-host\.js/);
-  assert.match(source, /id: 'remote-tactics-bootstrap'/);
-  assert.match(source, /id: 'remote-tactics-main'/);
-  assert.match(source, /world: 'MAIN'/);
+  assert.doesNotMatch(source, /remote-tactics-bootstrap/);
+  assert.doesNotMatch(source, /remote-tactics-main/);
+  assert.doesNotMatch(source, /communityBundlePublicTactics/);
   assert.doesNotMatch(source, /registerNationalPostAntiAdblock/);
   assert.doesNotMatch(source, /registerFinancialPostCompatibility/);
   assert.doesNotMatch(source, /registerFinancialPostAntiAdblock/);
+});
+
+test('public source does not keep non-shipped tactic interpreter files', async () => {
+  const allowlist = await readSource('public-safe-allowlist.txt');
+
+  assert.equal(await pathExists('js/community-tactics.js'), false);
+  assert.equal(await pathExists('js/scripting/remote-tactics-bootstrap.js'), false);
+  assert.equal(await pathExists('js/scripting/remote-tactics.js'), false);
+  assert.equal(await pathExists('test/community-tactics.test.js'), false);
+  assert.equal(await pathExists('test/remote-tactics-runtime.test.js'), false);
+  assert.equal(allowlist.includes('js/community-tactics.js'), false);
+  assert.equal(allowlist.includes('js/scripting/remote-tactics-bootstrap.js'), false);
+  assert.equal(allowlist.includes('js/scripting/remote-tactics.js'), false);
+  assert.equal(allowlist.includes('test/community-tactics.test.js'), false);
+  assert.equal(allowlist.includes('test/remote-tactics-runtime.test.js'), false);
 });
 
 test('manifest permissions stay limited to the reviewed blocker surface', async () => {
@@ -291,25 +315,6 @@ test('ruleset manager injects fixed YouTube ad session rules for the remaining p
   assert.match(source, /urlFilter: '\|https:\/\/www\.google\.ca\/pagead\/lvz'/);
   assert.match(source, /await updateYouTubeAdSessionRules\(currentRules, addRulesUnfiltered, removeRuleIds\);/);
   assert.match(source, /if \( Number\.isInteger\(rule\.id\) && rule\.id > 0 \) \{/);
-});
-
-test('remote tactics stays packaged and bootstrap caching is explicit', async () => {
-  const bootstrapSource = await readSource('js/scripting/remote-tactics-bootstrap.js');
-  const mainSource = await readSource('js/scripting/remote-tactics.js');
-
-  assert.match(bootstrapSource, /const STORAGE_KEY = 'communityBundlePublicTactics';/);
-  assert.match(bootstrapSource, /let cachedTactics = \[\];/);
-  assert.match(bootstrapSource, /let cacheLoaded = false;/);
-  assert.match(bootstrapSource, /let pendingRead = null;/);
-  assert.match(bootstrapSource, /if \( cacheLoaded \) \{/);
-  assert.match(bootstrapSource, /if \( pendingRead instanceof Promise \) \{/);
-  assert.match(bootstrapSource, /changes\[STORAGE_KEY\] === undefined/);
-  assert.match(bootstrapSource, /cachedTactics = \[\];\s*cacheLoaded = false;/);
-  assert.match(mainSource, /self\.fetch = new Proxy\(self\.fetch/);
-  assert.match(mainSource, /self\.XMLHttpRequest = class extends NativeXMLHttpRequest/);
-  assert.doesNotMatch(mainSource, /\beval\s*\(/);
-  assert.doesNotMatch(mainSource, /Function\s*\(/);
-  assert.doesNotMatch(mainSource, /import\(/);
 });
 
 test('background runtime refresh uses a fingerprint gate instead of unconditional tab sweeps', async () => {

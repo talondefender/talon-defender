@@ -24,8 +24,10 @@ Forbidden here:
 
 Release rules:
 - `npm run audit:public-safe` must pass before release
+- `npm run release:gate` is the full pre-release readiness gate
 - `public-safe-allowlist.txt` is the exact public file manifest; any new tracked public file must be added there in the same change
 - `source-code.json` must point to the public extension repository tag and tarball
 - the public source archive must be built from this workspace only
+- non-shipped tactic interpreter source and tests must not be present in this public workspace or the public source archive
 - the public GitHub repo for this workspace is `https://github.com/talondefender/talon-defender`
 - ad hoc corpora, captures, and live-content fixtures do not belong in the public `test/` surface

@@ -3,9 +3,11 @@
 
 import { browser, localKeys, localRead, localRemove, localWrite, runtime } from './ext.js';
 import {
+    buildActivationTokenSyncPatch,
     computeEntitlementState,
     isHardDenyErrorCode,
     normalizeErrorCode,
+    sanitizeEntitlementSyncState,
 } from './entitlement-logic.js';
 
 /******************************************************************************/
@@ -104,7 +106,10 @@ const looksLikeEntitlementSync = v => {
     if (v instanceof Object === false) { return false; }
     const trialStartMs = toNum(v.trialStartMs) || 0;
     const licenseKey = typeof v.licenseKey === 'string' ? v.licenseKey.trim() : '';
-    return trialStartMs > 0 || licenseKey !== '';
+    const activationToken = typeof v.activationToken === 'string'
+        ? v.activationToken.trim()
+        : '';
+    return trialStartMs > 0 || licenseKey !== '' || activationToken !== '';
 };
 
 const looksLikeEntitlementLocal = v => {
@@ -139,9 +144,22 @@ const syncWrite = async (key, value) => {
     return false;
 };
 
+const syncStateChanged = (left, right) =>
+    JSON.stringify(left || {}) !== JSON.stringify(right || {});
+
+const readAndSanitizeEntitlementSyncValue = async value => {
+    const sanitized = sanitizeEntitlementSyncState(value, { now: Date.now() });
+    if (syncStateChanged(value, sanitized)) {
+        await syncWrite(ENTITLEMENT_SYNC_STORAGE_KEY, sanitized);
+    }
+    return sanitized;
+};
+
 const readEntitlementSync = async () => {
     const stored = await syncRead(ENTITLEMENT_SYNC_STORAGE_KEY);
-    if (stored instanceof Object) { return stored; }
+    if (stored instanceof Object) {
+        return readAndSanitizeEntitlementSyncValue(stored);
+    }
 
     // Migration: if a previous version stored the entitlement blob under a different key,
     // detect and move it without hard-coding the legacy key name.
@@ -153,9 +171,10 @@ const readEntitlementSync = async () => {
                 if (key === ENTITLEMENT_SYNC_STORAGE_KEY) { continue; }
                 if (/entitlement/i.test(key) === false) { continue; }
                 if (looksLikeEntitlementSync(value) === false) { continue; }
-                await syncWrite(ENTITLEMENT_SYNC_STORAGE_KEY, value);
+                const sanitized = sanitizeEntitlementSyncState(value, { now: Date.now() });
+                await syncWrite(ENTITLEMENT_SYNC_STORAGE_KEY, sanitized);
                 try { await browser.storage.sync.remove(key); } catch { }
-                return value;
+                return sanitized;
             }
         }
     } catch {
@@ -165,7 +184,9 @@ const readEntitlementSync = async () => {
 
 const writeEntitlementSync = async patch => {
     const stored = await readEntitlementSync();
-    const next = Object.assign({}, stored, patch);
+    const next = sanitizeEntitlementSyncState(Object.assign({}, stored, patch), {
+        now: Date.now(),
+    });
     await syncWrite(ENTITLEMENT_SYNC_STORAGE_KEY, next);
     return next;
 };
@@ -444,9 +465,7 @@ export async function initEntitlement({ now = Date.now() } = {}) {
     }
 
     const localLicenseKey = normalizeKey(next.licenseKey);
-    const syncedLicenseKey = normalizeKey(synced.licenseKey);
     let localLicenseKeyUpdatedMs = toNum(next.licenseKeyUpdatedMs) || 0;
-    let syncedLicenseKeyUpdatedMs = toNum(synced.licenseKeyUpdatedMs) || 0;
 
     if (localLicenseKey !== '' && localLicenseKeyUpdatedMs === 0) {
         localLicenseKeyUpdatedMs = now;
@@ -454,57 +473,48 @@ export async function initEntitlement({ now = Date.now() } = {}) {
         changed = true;
     }
 
-    if (localLicenseKey === '' && syncedLicenseKey !== '') {
-        // Respect an explicit local clear if it is newer than sync state.
-        if (localLicenseKeyUpdatedMs > 0 && localLicenseKeyUpdatedMs >= syncedLicenseKeyUpdatedMs) {
-            syncPatch = Object.assign(syncPatch || {}, {
-                licenseKey: '',
-                licenseKeyUpdatedMs: localLicenseKeyUpdatedMs,
-            });
-        } else {
-            next.licenseKey = syncedLicenseKey;
-            next.licenseKeyUpdatedMs = syncedLicenseKeyUpdatedMs || now;
+    const localActivation = sanitizeEntitlementSyncState(next, { now });
+    const syncedActivation = sanitizeEntitlementSyncState(synced, { now });
+    const localActivationUpdatedMs = toNum(localActivation.activationTokenUpdatedMs) || 0;
+    const syncedActivationUpdatedMs = toNum(syncedActivation.activationTokenUpdatedMs) || 0;
+    const chooseSyncedActivation = (
+        syncedActivation.activationToken &&
+        (
+            localActivation.activationToken === undefined ||
+            syncedActivationUpdatedMs >= localActivationUpdatedMs
+        )
+    );
+    const chosenActivation = chooseSyncedActivation
+        ? syncedActivation
+        : localActivation;
+    if (chosenActivation.activationToken) {
+        for (const key of [
+            'activationToken',
+            'activationTokenExpiresAtMs',
+            'activationTokenUpdatedMs',
+        ]) {
+            if (chosenActivation[key] === undefined) { continue; }
+            if (next[key] === chosenActivation[key]) { continue; }
+            next[key] = chosenActivation[key];
             changed = true;
-            if (syncedLicenseKeyUpdatedMs === 0) {
-                syncPatch = Object.assign(syncPatch || {}, { licenseKeyUpdatedMs: next.licenseKeyUpdatedMs });
+        }
+        const expiresAt = toNum(chosenActivation.activationTokenExpiresAtMs) || 0;
+        if (expiresAt > now) {
+            if ((toNum(next.entitledUntilMs) || 0) < expiresAt) {
+                next.entitledUntilMs = expiresAt;
+                changed = true;
+            }
+            if ((toNum(next.graceUntilMs) || 0) < expiresAt) {
+                next.graceUntilMs = expiresAt;
+                changed = true;
+            }
+            if (next.licenseKind !== 'activation-token' && localLicenseKey === '') {
+                next.licenseKind = 'activation-token';
+                changed = true;
             }
         }
-    } else if (localLicenseKey !== '' && syncedLicenseKey === '') {
-        // Respect an explicit sync clear if it is newer than local state.
-        if (syncedLicenseKeyUpdatedMs > 0 && syncedLicenseKeyUpdatedMs > localLicenseKeyUpdatedMs) {
-            next.licenseKey = '';
-            next.licenseKeyUpdatedMs = syncedLicenseKeyUpdatedMs;
-            changed = true;
-        } else {
-            syncPatch = Object.assign(syncPatch || {}, {
-                licenseKey: localLicenseKey,
-                licenseKeyUpdatedMs: localLicenseKeyUpdatedMs || now,
-            });
-        }
-    } else if (localLicenseKey !== '' && syncedLicenseKey !== '' && localLicenseKey !== syncedLicenseKey) {
-        const chooseSynced = syncedLicenseKeyUpdatedMs >= localLicenseKeyUpdatedMs;
-        const chosenKey = chooseSynced ? syncedLicenseKey : localLicenseKey;
-        const chosenUpdatedMs = (chooseSynced ? syncedLicenseKeyUpdatedMs : localLicenseKeyUpdatedMs) || now;
-
-        if (chooseSynced) {
-            next.licenseKey = chosenKey;
-            next.licenseKeyUpdatedMs = chosenUpdatedMs;
-            changed = true;
-        }
-
-        if (syncedLicenseKey !== chosenKey || syncedLicenseKeyUpdatedMs !== chosenUpdatedMs) {
-            syncPatch = Object.assign(syncPatch || {}, {
-                licenseKey: chosenKey,
-                licenseKeyUpdatedMs: chosenUpdatedMs,
-            });
-        }
-    } else if (localLicenseKey !== '' && syncedLicenseKey === localLicenseKey) {
-        if (syncedLicenseKeyUpdatedMs === 0 && localLicenseKeyUpdatedMs) {
-            syncPatch = Object.assign(syncPatch || {}, { licenseKeyUpdatedMs: localLicenseKeyUpdatedMs });
-        }
-        if (localLicenseKeyUpdatedMs === 0 && syncedLicenseKeyUpdatedMs) {
-            next.licenseKeyUpdatedMs = syncedLicenseKeyUpdatedMs;
-            changed = true;
+        if (syncStateChanged(syncedActivation, chosenActivation)) {
+            syncPatch = Object.assign(syncPatch || {}, chosenActivation);
         }
     }
 
@@ -545,7 +555,6 @@ export async function setLicenseKey(licenseKey) {
         licenseKey: key,
         licenseKeyUpdatedMs: now,
     });
-    writeEntitlementSync({ licenseKey: key, licenseKeyUpdatedMs: now }).catch(() => { });
     return next;
 }
 
@@ -566,8 +575,15 @@ export async function clearLicenseKey() {
         licenseKind: '',
         licenseKid: '',
         licensePlan: '',
+        activationToken: '',
+        activationTokenExpiresAtMs: 0,
+        activationTokenUpdatedMs: now,
     });
-    writeEntitlementSync({ licenseKey: '', licenseKeyUpdatedMs: now }).catch(() => { });
+    writeEntitlementSync({
+        activationToken: '',
+        activationTokenExpiresAtMs: 0,
+        activationTokenUpdatedMs: now,
+    }).catch(() => { });
     return next;
 }
 
@@ -635,6 +651,11 @@ export async function verifyLicense({
             licensePlan: offline.plan,
         };
         await writeEntitlement(patch);
+        writeEntitlementSync({
+            activationToken: '',
+            activationTokenExpiresAtMs: 0,
+            activationTokenUpdatedMs: now,
+        }).catch(() => { });
         return {
             ok: true,
             active: offline.active,
@@ -697,13 +718,33 @@ export async function verifyLicense({
                 patch.licenseKind = '';
                 patch.licenseKid = '';
                 patch.licensePlan = '';
+                patch.activationToken = '';
+                patch.activationTokenExpiresAtMs = 0;
+                patch.activationTokenUpdatedMs = now;
             }
             await writeEntitlement(patch);
+            if (hardDeny) {
+                writeEntitlementSync({
+                    activationToken: '',
+                    activationTokenExpiresAtMs: 0,
+                    activationTokenUpdatedMs: now,
+                }).catch(() => { });
+            }
             return { ok: false, error: code || `http ${res.status}` };
         }
         const json = await res.json().catch(() => null);
         const active = Boolean(json?.active);
         const entitledUntilMs = active ? parseEntitledUntil(json?.entitledUntil) : 0;
+        const activationTokenPatch = active
+            ? buildActivationTokenSyncPatch(json, { now })
+            : {};
+        const activationTokenLocalPatch = activationTokenPatch.activationToken
+            ? {
+                activationToken: activationTokenPatch.activationToken,
+                activationTokenExpiresAtMs: activationTokenPatch.activationTokenExpiresAtMs,
+                activationTokenUpdatedMs: activationTokenPatch.activationTokenUpdatedMs,
+            }
+            : {};
         const patch = {
             lastVerifiedMs: now,
             entitledUntilMs,
@@ -717,8 +758,23 @@ export async function verifyLicense({
             licenseKind: 'remote',
             licenseKid: '',
             licensePlan: typeof json?.plan === 'string' ? json.plan : '',
+            ...activationTokenLocalPatch,
         };
+        if (active && activationTokenPatch.activationToken === undefined) {
+            patch.activationToken = '';
+            patch.activationTokenExpiresAtMs = 0;
+            patch.activationTokenUpdatedMs = now;
+        }
         await writeEntitlement(patch);
+        if (active && activationTokenPatch.activationToken) {
+            writeEntitlementSync(activationTokenPatch).catch(() => { });
+        } else {
+            writeEntitlementSync({
+                activationToken: '',
+                activationTokenExpiresAtMs: 0,
+                activationTokenUpdatedMs: now,
+            }).catch(() => { });
+        }
         return { ok: true, active, entitledUntilMs };
     } catch (e) {
         await writeEntitlement({

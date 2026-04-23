@@ -123,7 +123,6 @@ const AUTO_ANNOYANCES_DISABLED_KEY = 'autoAnnoyancesDisabledInComplete';
 const REMOTE_COSMETICS_RUNTIME_STATS_KEY = 'remoteCosmeticsRuntimeStatsV1';
 const REMOTE_COSMETICS_RUNTIME_STATS_TTL_MS = 24 * 60 * 60 * 1000;
 const REMOTE_COSMETICS_STORAGE_KEY = 'communityBundleCosmetics';
-const REMOTE_TACTICS_STORAGE_KEY = 'communityBundlePublicTactics';
 const ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object.freeze([
     '/shared/public-suffix-data.js',
     '/shared/site-key-resolver.js',
@@ -144,12 +143,6 @@ const REMOTE_COSMETICS_HOST_LIVE_RUNTIME_REFRESH_FILES = Object.freeze([
     '/js/scripting/block-hints.js',
     '/js/scripting/remote-cosmetics.js',
     '/js/scripting/remote-cosmetics-host.js',
-]);
-const REMOTE_TACTICS_ISOLATED_LIVE_RUNTIME_REFRESH_FILES = Object.freeze([
-    '/js/scripting/remote-tactics-bootstrap.js',
-]);
-const MAIN_WORLD_LIVE_RUNTIME_REFRESH_FILES = Object.freeze([
-    '/js/scripting/remote-tactics.js',
 ]);
 const DEFAULT_ACTION_TITLE = 'Talon Defender';
 const HOTFIX_RELOAD_ACTION_TITLE = 'Talon Defender: Reload tab to apply hotfix';
@@ -347,19 +340,6 @@ const tabMatchesHostnameSet = async (
     const frameUrls = await listTabFrameUrls(tabId, fallbackUrl);
     return frameUrls.some(url => hostnames.has(normalizeHttpHostname(url)));
 };
-
-const tabMatchesRemoteTacticHosts = async (
-    tabId,
-    {
-        fallbackUrl = '',
-        hostname = '',
-        remoteTacticHostnames = new Set(),
-    } = {}
-) => tabMatchesHostnameSet(tabId, {
-    fallbackUrl,
-    hostname,
-    hostnames: remoteTacticHostnames,
-});
 
 const collectStoredRemoteCosmeticHostnames = cosmetics => {
     const out = new Set();
@@ -1163,7 +1143,6 @@ import {
     countHostSpecificCommunityCosmeticSelectors,
     normalizeCommunitySyncTtlHours,
 } from './community-sync-logic.js';
-import { collectCommunityTacticHostnames } from './community-tactics.js';
 
 import {
     getConsoleOutput,
@@ -1787,11 +1766,6 @@ async function executeRuntimeStopLane(tabId, func, options = {}) {
     return true;
 }
 
-async function readRegisteredRemoteTacticHostnames() {
-    const storedTactics = await localRead(REMOTE_TACTICS_STORAGE_KEY);
-    return new Set(collectCommunityTacticHostnames(storedTactics));
-}
-
 async function readRegisteredRemoteCosmeticHostnames() {
     const storedCosmetics = await localRead(REMOTE_COSMETICS_STORAGE_KEY);
     return collectStoredRemoteCosmeticHostnames(storedCosmetics);
@@ -1833,7 +1807,6 @@ async function refreshRuntimeStateForTab(
         url = '',
         hostname = '',
         remoteCosmeticHostnames = new Set(),
-        remoteTacticHostnames = new Set(),
     } = {}
 ) {
     if ( browser.scripting?.executeScript === undefined ) { return false; }
@@ -1853,25 +1826,10 @@ async function refreshRuntimeStateForTab(
             } else {
                 await executeRuntimeStopLane(tabId, stopRemoteCosmeticsHostController);
             }
-            const shouldRefreshRemoteTactics = await tabMatchesRemoteTacticHosts(tabId, {
-                fallbackUrl: url,
-                hostname,
-                remoteTacticHostnames,
+            await executeRuntimeStopLane(tabId, stopRemoteTacticsBootstrapController);
+            await executeRuntimeStopLane(tabId, stopMainWorldRuntimeControllers, {
+                world: 'MAIN',
             });
-            if ( shouldRefreshRemoteTactics ) {
-                await executeRuntimeRefreshLane(
-                    tabId,
-                    REMOTE_TACTICS_ISOLATED_LIVE_RUNTIME_REFRESH_FILES
-                );
-                await executeRuntimeRefreshLane(tabId, MAIN_WORLD_LIVE_RUNTIME_REFRESH_FILES, {
-                    world: 'MAIN',
-                });
-            } else {
-                await executeRuntimeStopLane(tabId, stopRemoteTacticsBootstrapController);
-                await executeRuntimeStopLane(tabId, stopMainWorldRuntimeControllers, {
-                    world: 'MAIN',
-                });
-            }
             return true;
         }
         await executeRuntimeStopLane(tabId, stopIsolatedRuntimeControllers);
@@ -1893,9 +1851,6 @@ async function refreshRuntimeStateForOpenTabs() {
     const remoteCosmeticHostnames = await readRegisteredRemoteCosmeticHostnames().catch(
         () => new Set()
     );
-    const remoteTacticHostnames = await readRegisteredRemoteTacticHostnames().catch(
-        () => new Set()
-    );
     try {
         tabs = await browser.tabs.query({});
     } catch (reason) {
@@ -1914,7 +1869,6 @@ async function refreshRuntimeStateForOpenTabs() {
                     url: tab?.url || '',
                     hostname,
                     remoteCosmeticHostnames,
-                    remoteTacticHostnames,
                 }))
                 .catch(reason => {
                     if ( isIgnorableRuntimeError(reason) === false ) {
@@ -1955,7 +1909,6 @@ async function computeInjectableRuntimeFingerprint() {
         publicDirectives,
         privateDirectives,
         directives,
-        remoteTactics,
     ] = await Promise.all([
         getFilteringModeDetails(true).catch(() => null),
         localRead(REMOTE_COSMETICS_STORAGE_KEY).catch(() => null),
@@ -1963,7 +1916,6 @@ async function computeInjectableRuntimeFingerprint() {
         localRead('communityBundlePublicDirectives').catch(() => null),
         localRead('communityBundlePrivateDirectives').catch(() => null),
         localRead('communityBundleDirectives').catch(() => null),
-        localRead(REMOTE_TACTICS_STORAGE_KEY).catch(() => null),
     ]);
     return JSON.stringify({
         filteringModeDetails,
@@ -1975,7 +1927,6 @@ async function computeInjectableRuntimeFingerprint() {
         publicDirectives,
         privateDirectives,
         directives,
-        remoteTactics,
     });
 }
 

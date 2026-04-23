@@ -3,12 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 
 import { sanitizeCommunityRules } from '../js/community-rule-sanitizer.js';
-import { sanitizeCommunityTactics } from '../js/community-tactics.js';
 
 const readSource = relativePath =>
   fs.readFile(new URL(`../${relativePath}`, import.meta.url), 'utf8');
 
-test('remote data contract sanitizes DNR and tactic payloads before packaged activation', () => {
+test('remote data contract sanitizes DNR payloads before packaged activation', () => {
   const ruleResult = sanitizeCommunityRules([
     {
       action: { type: 'allow' },
@@ -52,46 +51,16 @@ test('remote data contract sanitizes DNR and tactic payloads before packaged act
   ], {
     schemaVersion: 5,
   });
-  const tactics = sanitizeCommunityTactics([
-    {
-      id: 'prune-player-ads',
-      kind: 'jsonPrune',
-      hosts: ['news.example'],
-      transport: 'fetch',
-      urlPathPrefixes: ['/api/player'],
-      jsonPaths: ['payload.ads'],
-    },
-    {
-      id: 'drop-executable-value',
-      kind: 'jsonSet',
-      hosts: ['news.example'],
-      transport: 'fetch',
-      urlPathPrefixes: ['/api/player'],
-      jsonPaths: ['payload.ads'],
-      value: 'alert(1)',
-    },
-    {
-      id: 'drop-protected-tactic',
-      kind: 'jsonPrune',
-      hosts: ['accounts.google.com'],
-      transport: 'fetch',
-      urlPathPrefixes: ['/api/player'],
-      jsonPaths: ['payload.ads'],
-    },
-  ], {
-    schemaVersion: 5,
-  });
 
   assert.deepEqual(ruleResult.rules.map(rule => rule.action.type), ['allow']);
   assert.equal(ruleResult.dropped.unsafeScope, 2);
   assert.equal(ruleResult.dropped.unsupportedRedirectPath, 1);
-  assert.deepEqual(tactics.map(entry => entry.id), ['prune-player-ads']);
-  assert.equal(JSON.stringify(tactics).includes('alert(1)'), false);
-  assert.equal(JSON.stringify(tactics).includes('accounts.google.com'), false);
 });
 
-test('remote extras remain JSON selectors for packaged behavior, not executable source', async () => {
+test('remote extras remain JSON selectors for packaged behavior and public sync ignores tactics', async () => {
   const source = await readSource('js/community-sync.js');
+  const packageSource = await readSource('scripts/package-extension.mjs');
+  const sourceRelease = await readSource('scripts/package-public-source.ps1');
 
   assert.match(source, /const sanitizeCommunityPayloadForStorage = \(/);
   assert.match(source, /rules: sanitizedRules\.rules/);
@@ -99,8 +68,9 @@ test('remote extras remain JSON selectors for packaged behavior, not executable 
   assert.match(source, /heuristics: sanitizeCommunityHeuristics\(input\?\.heuristics/);
   assert.match(source, /publicDirectives: sanitizeCommunityDirectives\(input\?\.directives/);
   assert.match(source, /publicScriptlets: sanitizeCommunityScriptlets\(input\?\.scriptlets/);
-  assert.match(source, /publicTactics: sanitizeCommunityTacticsForStorage\(/);
-  assert.match(source, /input\?\.tactics \?\? input\?\.publicTactics/);
+  assert.doesNotMatch(source, /publicTactics: sanitizeCommunityTacticsForStorage\(/);
+  assert.doesNotMatch(source, /input\?\.tactics \?\? input\?\.publicTactics/);
+  assert.doesNotMatch(source, /communityBundlePublicTactics/);
   assert.match(source, /if \( patternCouldMatchInternalUnfilteredDomain\(normalizedHost\) \) \{ continue; \}/);
   assert.match(source, /if \( patternCouldMatchProtectedDomain\(normalizedHost\) \) \{ continue; \}/);
   assert.match(source, /rulesetId: bucket\.rulesetId/);
@@ -110,4 +80,7 @@ test('remote extras remain JSON selectors for packaged behavior, not executable 
   assert.doesNotMatch(source, /entry\.code/);
   assert.doesNotMatch(source, /entry\.source/);
   assert.doesNotMatch(source, /entry\.javascript/);
+  assert.match(packageSource, /const EXCLUDE = \[/);
+  assert.doesNotMatch(packageSource, /remote-tactics-bootstrap\.js/);
+  assert.match(sourceRelease, /Public source archive must not include non-shipped tactic source/);
 });

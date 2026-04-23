@@ -147,12 +147,19 @@ $sourceItems = @(
   "test/auto-backoff.test.js",
   "test/automation-directives.test.js",
   "test/breakage-policy.test.js",
-  "test/community-tactics.test.js",
   "test/default-rulesets.test.js",
   "test/entitlement-regression.test.js",
   "test/remote-data-contract.test.js",
   "unpicker-ui.html",
   "web_accessible_resources"
+)
+
+$forbiddenPublicSourceItems = @(
+  "js/community-tactics.js",
+  "js/scripting/remote-tactics-bootstrap.js",
+  "js/scripting/remote-tactics.js",
+  "test/community-tactics.test.js",
+  "test/remote-tactics-runtime.test.js"
 )
 
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
@@ -175,6 +182,13 @@ foreach ($item in $sourceItems) {
     New-Item -ItemType Directory -Force -Path $destinationParent | Out-Null
   }
   Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Recurse -Force
+}
+
+foreach ($item in $forbiddenPublicSourceItems) {
+  $forbiddenPath = Join-Path $stageDir $item
+  if (Test-Path -LiteralPath $forbiddenPath) {
+    throw "Public source archive must not include non-shipped tactic source: $item"
+  }
 }
 
 New-ZipFromDirectoryFilesOnly -SourceDir $stageDir -DestinationZip $archivePath
