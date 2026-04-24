@@ -233,7 +233,7 @@
   },
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtFarJBdV0gpkL++8IG2QWivFFtMTaFWCBmCgkLLycLvv2zQAxK0soVEAUQtfmFyxUgLTuhHZ2k5/qbQXohs3nBFEjQi+cLbIdg88eK4Gk7KE+d9l1CAb7kqcSg2x+SCRu/+hIZ0/bOEPMm6ltTkvz0qa9jLKBQ5fmwQ+o0W4Waebu0tbajURgmI4BHVzS9aRQUjIUqrXzM9SjAFb8N2G5LmJPEaQ4o+ySwPFnclYeKr/piy9NbV6JqDPgEDqHXyPiKw9AegZYxHggc1e9uScSDeAVt+1kRqCd27+ZgQgL4Hyj4qbNou+cv7fGd03+WR5L9GS6d7o5u17jQPfVKvfvQIDAQAB",
   "manifest_version": 3,
-  "minimum_chrome_version": "122.0",
+  "minimum_chrome_version": "137.0",
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self';"
   },
