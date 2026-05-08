@@ -21,6 +21,13 @@
       "proof": "https://easylist.to/pages/licence.html",
       "attributionRequired": true
     },
+    "pgl": {
+      "license": "CC-BY-NC-SA-4.0",
+      "commercialUse": "unknown",
+      "sourceUrl": "https://pgl.yoyo.org/adservers/",
+      "proof": "https://pgl.yoyo.org/adservers/policy.php",
+      "attributionRequired": true
+    },
     "annoyances-cookies": {
       "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
       "commercialUse": "allowed",

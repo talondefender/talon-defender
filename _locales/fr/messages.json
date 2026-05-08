@@ -357,6 +357,9 @@
   "popupFilteringCompleteSite": {
     "message": "Protection renforcée pour ce site"
   },
+  "popupAllowThisSiteButton": {
+    "message": "Autoriser ce site"
+  },
   "subscriptionSectionTitle": {
     "message": "Abonnement"
   },

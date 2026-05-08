@@ -248,6 +248,7 @@ const readPopupPanelData = async ({
             lastErrorAction: typeof storedEntitlement.lastErrorAction === 'string' ? storedEntitlement.lastErrorAction : '',
         }),
         reloadNeededState,
+        compatibilityMode: getActiveCompatibilityModeForHostname(sanitizedHostname),
     };
 };
 
@@ -412,6 +413,40 @@ const serializeAutoBackoffSubsystemState = ({ activeOnly = false } = {}) => {
         out[hostname] = serialized;
     }
     return out;
+};
+
+const getActiveCompatibilityModeForHostname = hostname => {
+    const normalizedHostname = normalizeSiteKeyHostname(hostname);
+    if ( normalizedHostname === '' ) { return { active: false }; }
+    const now = Date.now();
+    const hostBackoff = autoBackoffState.get(normalizedHostname);
+    const activeHostBackoff = Number(hostBackoff?.expiresAt) > now
+        ? {
+            previousLevel: Number(hostBackoff.previousLevel) || MODE_NONE,
+            downgradedLevel: Number(hostBackoff.downgradedLevel) || MODE_NONE,
+            expiresAt: Number(hostBackoff.expiresAt) || 0,
+        }
+        : null;
+    const subsystemBackoffs = {};
+    const subsystemMap = autoBackoffSubsystemState.get(normalizedHostname);
+    if ( subsystemMap instanceof Map ) {
+        for ( const [subsystemId, entry] of subsystemMap ) {
+            const expiresAt = Number(entry?.expiresAt) || 0;
+            if ( expiresAt <= now ) { continue; }
+            subsystemBackoffs[subsystemId] = { expiresAt };
+        }
+    }
+    const activeExpiresAt = [
+        activeHostBackoff?.expiresAt,
+        ...Object.values(subsystemBackoffs).map(entry => entry.expiresAt),
+    ].filter(value => Number(value) > now);
+    return {
+        active: activeHostBackoff !== null || Object.keys(subsystemBackoffs).length !== 0,
+        hostname: normalizedHostname,
+        hostBackoff: activeHostBackoff,
+        subsystemBackoffs,
+        expiresAt: activeExpiresAt.length === 0 ? 0 : Math.max(...activeExpiresAt),
+    };
 };
 
 const serializeAutoPromotionState = () => {
@@ -987,6 +1022,43 @@ const applyAutoBackoff = async (hostname) => {
     await syncInjectablesAndRefreshTabs({ runtimeOnly: false });
 };
 
+const restoreCompatibilityModeForHostname = async hostname => {
+    const normalizedHostname = normalizeSiteKeyHostname(hostname);
+    if ( normalizedHostname === '' ) {
+        return { ok: false, error: 'invalid_hostname' };
+    }
+    const now = Date.now();
+    let changed = false;
+    const hostBackoff = autoBackoffState.get(normalizedHostname);
+    if ( hostBackoff instanceof Object ) {
+        const expiresAt = Number(hostBackoff.expiresAt) || 0;
+        if ( expiresAt > now ) {
+            const currentLevel = await getFilteringMode(normalizedHostname);
+            if ( Number(currentLevel) === Number(hostBackoff.downgradedLevel) ) {
+                await setFilteringMode(normalizedHostname, hostBackoff.previousLevel);
+            }
+        }
+        autoBackoffState.delete(normalizedHostname);
+        await persistAutoBackoffState();
+        changed = true;
+    }
+    const subsystemMap = autoBackoffSubsystemState.get(normalizedHostname);
+    if ( subsystemMap instanceof Map && subsystemMap.size !== 0 ) {
+        autoBackoffSubsystemState.delete(normalizedHostname);
+        await persistAutoBackoffSubsystemState();
+        changed = true;
+    }
+    if ( changed ) {
+        scheduleAutoBackoffAlarm();
+        await syncInjectablesAndRefreshTabs({ runtimeOnly: false });
+    }
+    return {
+        ok: true,
+        changed,
+        compatibilityMode: getActiveCompatibilityModeForHostname(normalizedHostname),
+    };
+};
+
 const recordBlockedNavigation = (hostname) => {
     if (hostname === '') { return; }
     const now = Date.now();
@@ -1301,11 +1373,6 @@ const STARTUP_SAFE_MESSAGE_TYPES = new Set([
     'clearLicenseKey',
 ]);
 const POST_STARTUP_ONLY_MESSAGE_TYPES = new Set([
-    'setYouTubeWatchBootstrapEnabled',
-    'clearYouTubeWatchBootstrapOverride',
-    'setYouTubeWatchOwnerProfile',
-    'setYouTubeWatchRuntimeLane',
-    'clearYouTubeWatchRuntimeLaneOverride',
 ]);
 const MAX_MESSAGE_CSS_LENGTH = 120000;
 const MAX_NAVIGATION_URL_LENGTH = 4096;
@@ -3257,7 +3324,23 @@ function onMessage(request, sender, callback) {
                     hasCustomFilters: 0,
                     entitlementStatus: { status: 'error', error: `${reason}` },
                     reloadNeededState: { reason: '' },
+                    compatibilityMode: { active: false },
                 });
+            });
+            return true;
+        }
+
+        case 'restoreCompatibilityMode': {
+            const hostname = sanitizeModeHostname(request.hostname);
+            if (isEntitled() === false) {
+                callback({ ok: false, error: 'subscription_required' });
+                return true;
+            }
+            restoreCompatibilityModeForHostname(hostname).then(result => {
+                callback(result);
+            }).catch(reason => {
+                ubolErr(`restoreCompatibilityMode/${reason}`);
+                callback({ ok: false, error: `${reason}` });
             });
             return true;
         }

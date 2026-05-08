@@ -357,6 +357,9 @@
   "popupFilteringCompleteSite": {
     "message": "このサイトでは追加保護がオン"
   },
+  "popupAllowThisSiteButton": {
+    "message": "このサイトを許可"
+  },
   "subscriptionSectionTitle": {
     "message": "サブスクリプション"
   },

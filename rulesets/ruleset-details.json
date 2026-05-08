@@ -81,6 +81,33 @@
     "scriptlets": 9
   },
   {
+    "id": "pgl",
+    "name": "Peter Lowe - Ads, trackers, and more",
+    "group": "default",
+    "enabled": true,
+    "homeURL": "https://pgl.yoyo.org/adservers/",
+    "filters": {
+      "total": 3501,
+      "accepted": 3420,
+      "rejected": 81
+    },
+    "rules": {
+      "total": 1,
+      "plain": 1,
+      "regex": 0,
+      "strictblock": 1,
+      "urlskip": 0,
+      "rejected": 0
+    },
+    "css": {
+      "generic": 0,
+      "generichigh": 0,
+      "specific": 0,
+      "procedural": 0
+    },
+    "scriptlets": 0
+  },
+  {
     "id": "annoyances-cookies",
     "name": "EasyList/uBO - Cookie Notices",
     "group": "annoyances",

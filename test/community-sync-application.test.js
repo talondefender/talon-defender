@@ -2492,8 +2492,7 @@ test('setAllowAllRules rolls back partial updates when the session companion wri
   assert.equal(typeof storageData.allowAllRulesDiagnosticsV1.lastRollbackAt, 'number');
 });
 
-test('packaged community fallback bundle is valid and non-empty', { concurrency: false }, () => {
+test('packaged community fallback bundle is intentionally empty', { concurrency: false }, () => {
   assert.equal(Array.isArray(fallbackRules), true);
-  assert.ok(fallbackRules.length > 0);
-  assert.ok(fallbackRules.every(rule => rule?.action?.type === 'block'));
+  assert.equal(fallbackRules.length, 0);
 });

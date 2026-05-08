@@ -15,7 +15,9 @@ export const COMMUNITY_RULE_SCHEMA_VERSION_REQUEST_TACTICS = 5;
 export const COMMUNITY_RULE_SCHEMA_VERSION_CURRENT =
     COMMUNITY_RULE_SCHEMA_VERSION_REQUEST_TACTICS;
 
-export const COMMUNITY_RULE_PRIORITY_BLOCK = 1000;
+// Keep community block rules below packaged redirect/allow compatibility rules.
+// Broad remote blocks must not override uBO's anti-breakage shims.
+export const COMMUNITY_RULE_PRIORITY_BLOCK = 10;
 export const COMMUNITY_RULE_PRIORITY_REDIRECT = 1100;
 export const COMMUNITY_RULE_PRIORITY_ALLOW = 1200;
 export const COMMUNITY_RULE_PRIORITY_ALLOW_ALL_REQUESTS = 1300;
@@ -229,6 +231,26 @@ const withNonMainFrameCondition = condition => {
     return out;
 };
 
+const copyTrimmedString = (target, source, key, { required = false } = {}) => {
+    if ( source[key] === undefined ) {
+        return required ? false : true;
+    }
+    if ( typeof source[key] !== 'string' ) { return false; }
+    const value = source[key].trim();
+    if ( value === '' ) { return false; }
+    target[key] = value;
+    return true;
+};
+
+const copyExactHostnameList = (target, source, key, { required = false } = {}) => {
+    const value = sanitizeExactHostnameList(source[key], { required });
+    if ( value === null ) { return false; }
+    if ( value !== undefined ) {
+        target[key] = value;
+    }
+    return true;
+};
+
 const normalizeRedirectExtensionPath = value => {
     if ( typeof value !== 'string' ) { return ''; }
     const trimmed = value.trim();
@@ -296,19 +318,66 @@ const sanitizeBlockRule = rule => {
     if ( rule.condition instanceof Object === false ) {
         return { ok: false, reason: 'unsafeScope' };
     }
-    const condition = Object.assign({}, rule.condition);
+    const input = rule.condition;
+    const allowedKeys = new Set([
+        'urlFilter',
+        'regexFilter',
+        'requestDomains',
+        'excludedRequestDomains',
+        'initiatorDomains',
+        'excludedInitiatorDomains',
+        'resourceTypes',
+        'excludedResourceTypes',
+        'domainType',
+        'isUrlFilterCaseSensitive',
+    ]);
+    if ( hasOnlyAllowedConditionKeys(input, allowedKeys) === false ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
     if (
-        exactHostListTargetsInternalDomain(condition.requestDomains) ||
-        exactHostListTargetsInternalDomain(condition.initiatorDomains)
+        exactHostListTargetsInternalDomain(input.requestDomains) ||
+        exactHostListTargetsInternalDomain(input.initiatorDomains) ||
+        exactHostListTargetsProtectedDomain(input.requestDomains) ||
+        exactHostListTargetsProtectedDomain(input.initiatorDomains)
     ) {
         return { ok: false, reason: 'unsafeScope' };
     }
-    const nonMainFrameCondition = withNonMainFrameCondition(condition);
+    if ( Array.isArray(input.resourceTypes) && Array.isArray(input.excludedResourceTypes) ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    if ( Array.isArray(input.domainType) && input.domainType.includes('firstParty') ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    const condition = {};
+    if (
+        copyTrimmedString(condition, input, 'urlFilter') === false ||
+        copyTrimmedString(condition, input, 'regexFilter') === false ||
+        copyExactHostnameList(condition, input, 'requestDomains') === false ||
+        copyExactHostnameList(condition, input, 'excludedRequestDomains') === false ||
+        copyExactHostnameList(condition, input, 'initiatorDomains') === false ||
+        copyExactHostnameList(condition, input, 'excludedInitiatorDomains') === false
+    ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    if (
+        condition.urlFilter === undefined &&
+        condition.regexFilter === undefined &&
+        condition.requestDomains === undefined
+    ) {
+        return { ok: false, reason: 'unsafeScope' };
+    }
+    if ( input.isUrlFilterCaseSensitive !== undefined ) {
+        if ( typeof input.isUrlFilterCaseSensitive !== 'boolean' ) {
+            return { ok: false, reason: 'unsafeScope' };
+        }
+        condition.isUrlFilterCaseSensitive = input.isUrlFilterCaseSensitive;
+    }
+    const nonMainFrameCondition = withNonMainFrameCondition(input);
     if ( nonMainFrameCondition === null ) {
         return { ok: false, reason: 'unsafeScope' };
     }
-    const normalizedDomainType = normalizeDomainType(condition.domainType);
-    if ( condition.domainType !== undefined && normalizedDomainType === '' ) {
+    const normalizedDomainType = normalizeDomainType(input.domainType);
+    if ( input.domainType !== undefined && normalizedDomainType === '' ) {
         return { ok: false, reason: 'unsafeScope' };
     }
     Object.assign(condition, nonMainFrameCondition);

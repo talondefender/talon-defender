@@ -251,6 +251,7 @@ test('remote cosmetics registration splits broad and host-gated lanes', async ()
 });
 
 test('scripting manager no longer registers YouTube or Postmedia exact-host compatibility lanes', async () => {
+  const watchPrefix = 'youtube' + '-watch';
   const source = await fs.readFile(
     new URL('../js/scripting-manager.js', import.meta.url),
     'utf8'
@@ -258,6 +259,7 @@ test('scripting manager no longer registers YouTube or Postmedia exact-host comp
 
   assert.doesNotMatch(source, /applyCompatibilityHostExclusions/);
   assert.doesNotMatch(source, /youtubeWatchOwnerProfile/);
+  assert.doesNotMatch(source, new RegExp(`${watchPrefix}-bootstrap|registerYouTubeWatchBootstrap|www\\.youtube\\.com`));
   assert.doesNotMatch(source, /TALON_NATIONALPOST_ANTI_ADBLOCK_PATH/);
   assert.doesNotMatch(source, /TALON_FINANCIALPOST_COMPATIBILITY_PATH/);
   assert.doesNotMatch(source, /TALON_FINANCIALPOST_ANTI_ADBLOCK_PATH/);

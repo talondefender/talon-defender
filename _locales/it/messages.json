@@ -357,6 +357,9 @@
   "popupFilteringCompleteSite": {
     "message": "Protezione extra attiva per questo sito"
   },
+  "popupAllowThisSiteButton": {
+    "message": "Consenti questo sito"
+  },
   "subscriptionSectionTitle": {
     "message": "Abbonamento"
   },

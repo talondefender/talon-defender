@@ -357,6 +357,9 @@
   "popupFilteringCompleteSite": {
     "message": "Extra protection on for this site"
   },
+  "popupAllowThisSiteButton": {
+    "message": "Allow this site"
+  },
   "subscriptionSectionTitle": {
     "message": "Subscription"
   },

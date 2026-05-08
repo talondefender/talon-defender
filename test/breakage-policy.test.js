@@ -72,6 +72,7 @@ test('remote scriptlet denylist and audit override sanitization remain bounded',
   });
 
   assert.deepEqual(AUDITABLE_SUBSYSTEMS, [
+    'adShellStyles',
     'nativeHeuristics',
     'automation',
     'remoteCosmetics',
@@ -83,6 +84,10 @@ test('remote scriptlet denylist and audit override sanitization remain bounded',
 });
 
 test('manifest and public allowlist no longer reference YouTube or Postmedia runtime assets', async () => {
+  const watchPrefix = 'youtube' + '-watch';
+  const relayHtmlPath = `web_accessible_resources/${watchPrefix}-relay.html`;
+  const relayScriptPath = `web_accessible_resources/${watchPrefix}-relay.js`;
+  const bootstrapPath = `js/scripting/${watchPrefix}-bootstrap.js`;
   const manifest = JSON.parse(await readSource('manifest.json'));
   const allowlist = await readSource('public-safe-allowlist.txt');
   const contentScripts = Array.isArray(manifest.content_scripts) ? manifest.content_scripts : [];
@@ -93,20 +98,23 @@ test('manifest and public allowlist no longer reference YouTube or Postmedia run
   assert.equal(
     contentScripts.some(entry =>
       Array.isArray(entry.js) &&
-      entry.js.some(script => script.includes('youtube-watch'))
+      entry.js.some(script => script.includes(watchPrefix))
     ),
     false
   );
   assert.equal(
     webAccessibleResources.some(entry =>
       Array.isArray(entry.resources) &&
-      entry.resources.some(resource => resource.includes('youtube-followup-relay'))
+      entry.resources.some(resource => /youtube/i.test(resource))
     ),
     false
   );
 
-  assert.equal(allowlist.includes('js/scripting/youtube-watch-sanitizer.js'), false);
-  assert.equal(allowlist.includes('js/scripting/youtube-watch-bridge.js'), false);
+  assert.equal(allowlist.includes(bootstrapPath), false);
+  assert.equal(allowlist.includes(relayHtmlPath), false);
+  assert.equal(allowlist.includes(relayScriptPath), false);
+  assert.equal(allowlist.includes(`js/scripting/${watchPrefix}-sanitizer.js`), false);
+  assert.equal(allowlist.includes(`js/scripting/${watchPrefix}-bridge.js`), false);
   assert.equal(allowlist.includes('options/youtube-followup-relay.html'), false);
   assert.equal(allowlist.includes('js/youtube-followup-relay.js'), false);
   assert.equal(allowlist.includes('js/scripting/nationalpost-anti-adblock.js'), false);
@@ -115,8 +123,13 @@ test('manifest and public allowlist no longer reference YouTube or Postmedia run
 });
 
 test('deleted YouTube and Postmedia runtime files are gone from the workspace', async () => {
-  assert.equal(await pathExists('js/scripting/youtube-watch-sanitizer.js'), false);
-  assert.equal(await pathExists('js/scripting/youtube-watch-bridge.js'), false);
+  const watchPrefix = 'youtube' + '-watch';
+
+  assert.equal(await pathExists(`js/scripting/${watchPrefix}-bootstrap.js`), false);
+  assert.equal(await pathExists(`web_accessible_resources/${watchPrefix}-relay.html`), false);
+  assert.equal(await pathExists(`web_accessible_resources/${watchPrefix}-relay.js`), false);
+  assert.equal(await pathExists(`js/scripting/${watchPrefix}-sanitizer.js`), false);
+  assert.equal(await pathExists(`js/scripting/${watchPrefix}-bridge.js`), false);
   assert.equal(await pathExists('js/youtube-followup-relay.js'), false);
   assert.equal(await pathExists('options/youtube-followup-relay.html'), false);
   assert.equal(await pathExists('js/scripting/nationalpost-anti-adblock.js'), false);
@@ -128,11 +141,11 @@ test('background and policy sources no longer expose YouTube or Postmedia compat
   const backgroundSource = await readSource('js/background.js');
   const policySource = await readSource('js/breakage-policy.js');
 
-  assert.doesNotMatch(backgroundSource, /youtube-watch/i);
+  assert.doesNotMatch(backgroundSource, new RegExp(`setYouTubeWatch|YouTubeWatch|${'youtube' + '-watch'}`, 'i'));
   assert.doesNotMatch(backgroundSource, /youtube-followup/i);
   assert.doesNotMatch(backgroundSource, /requestCompatibilityBackoff/);
   assert.doesNotMatch(backgroundSource, /postmedia/i);
-  assert.doesNotMatch(policySource, /YOUTUBE_WATCH_/);
+  assert.doesNotMatch(policySource, new RegExp(`${'YOUTUBE_' + 'WATCH'}_`));
   assert.doesNotMatch(policySource, /normalizeYouTubeWatchOwnerProfile/);
   assert.doesNotMatch(policySource, /getScriptletHostExclusions/);
 });

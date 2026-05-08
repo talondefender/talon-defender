@@ -10,6 +10,9 @@ const rootDir = process.cwd();
 const distDir = path.resolve(rootDir, 'dist/extension');
 const required = process.env.TALON_CHROME_SMOKE_REQUIRED === '1';
 const headed = process.env.TALON_CHROME_SMOKE_HEADLESS !== '1';
+const MODE_NONE = 0;
+const MODE_OPTIMAL = 2;
+const TRUSTED_DIRECTIVE_BASE_RULE_ID = 8000000;
 const PAYWALL_DYNAMIC_RULE_ID = 8500000;
 const CONTROL_PAGE_PATH = 'web_accessible_resources/noop.html';
 const DEFAULT_RULESET_IDS = [
@@ -347,6 +350,42 @@ const run = async () => {
       const rules = await getDynamicRules(page, [PAYWALL_DYNAMIC_RULE_ID]);
       return rules.length === 0 ? true : null;
     });
+
+    const allowSiteLevel = await sendRuntimeMessage(page, {
+      what: 'setFilteringMode',
+      hostname: 'example.com',
+      level: MODE_NONE,
+    });
+    assert(allowSiteLevel === MODE_NONE, `allowed site level was not saved: ${allowSiteLevel}`);
+
+    const allowedSiteModes = await sendRuntimeMessage(page, { what: 'getFilteringModeDetails' });
+    assert(
+      Array.isArray(allowedSiteModes?.none) && allowedSiteModes.none.includes('example.com'),
+      `Allowed Sites did not list example.com: ${JSON.stringify(allowedSiteModes)}`
+    );
+
+    await waitFor('allowed site allow-all DNR rule', async () => {
+      const rules = await getDynamicRules(page, [TRUSTED_DIRECTIVE_BASE_RULE_ID]);
+      const rule = rules[0];
+      return rule?.action?.type === 'allowAllRequests' &&
+        Array.isArray(rule?.condition?.requestDomains) &&
+        rule.condition.requestDomains.includes('example.com')
+        ? rules
+        : null;
+    });
+
+    const protectSiteLevel = await sendRuntimeMessage(page, {
+      what: 'setFilteringMode',
+      hostname: 'example.com',
+      level: MODE_OPTIMAL,
+    });
+    assert(protectSiteLevel === MODE_OPTIMAL, `site protection level was not restored: ${protectSiteLevel}`);
+
+    const protectedSiteModes = await sendRuntimeMessage(page, { what: 'getFilteringModeDetails' });
+    assert(
+      Array.isArray(protectedSiteModes?.none) && protectedSiteModes.none.includes('example.com') === false,
+      `Allowed Sites did not remove example.com: ${JSON.stringify(protectedSiteModes)}`
+    );
 
     const quotaMessage = await page.evaluate(async () => {
       const mod = await import(chrome.runtime.getURL('/options/ruleset-toggle-state.js'));

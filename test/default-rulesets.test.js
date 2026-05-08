@@ -1,7 +1,8 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -15,11 +16,12 @@ import {
 
 const execFileAsync = promisify(execFile);
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
-const PACKAGED_OUT_DIR = path.join(repoRoot, 'dist', `test-default-rulesets-${process.pid}`);
+let packagedOutDir;
 const EXPECTED_DEFAULT_IDS = [
   'ublock-filters',
   'easylist',
   'easyprivacy',
+  'pgl',
   'ublock-badware',
   'urlhaus-full',
 ];
@@ -64,6 +66,7 @@ const EXPECTED_BUNDLED_IDS = [
   'ublock-filters',
   'easylist',
   'easyprivacy',
+  'pgl',
   'annoyances-cookies',
   'annoyances-notifications',
   'annoyances-others',
@@ -93,19 +96,33 @@ const readText = async relativePath => {
 };
 
 let packagedBundlePromise;
+const getPackagedOutDir = async () => {
+  if (packagedOutDir === undefined) {
+    packagedOutDir = await fs.mkdtemp(path.join(os.tmpdir(), 'talon-default-rulesets-'));
+  }
+  return packagedOutDir;
+};
+
+after(async () => {
+  if (packagedOutDir === undefined) { return; }
+  await fs.rm(packagedOutDir, { recursive: true, force: true });
+});
+
 const getPackagedBundle = () => {
   if (packagedBundlePromise) { return packagedBundlePromise; }
   packagedBundlePromise = (async () => {
+    const outDir = await getPackagedOutDir();
     await execFileAsync(
       process.execPath,
-      ['scripts/package-extension.mjs', '--out', `dist/test-default-rulesets-${process.pid}`],
+      ['scripts/package-extension.mjs', '--out', outDir],
       { cwd: repoRoot }
     );
     const readPackagedJson = async (...parts) => {
-      const absPath = path.join(PACKAGED_OUT_DIR, ...parts);
+      const absPath = path.join(outDir, ...parts);
       return JSON.parse(await fs.readFile(absPath, 'utf8'));
     };
     return {
+      outDir,
       manifest: await readPackagedJson('manifest.json'),
       details: await readPackagedJson('rulesets', 'ruleset-details.json'),
       licensePolicy: await readPackagedJson('rulesets', 'ruleset-license-policy.json'),
@@ -202,6 +219,28 @@ test('default ruleset migration preserves customized profiles and later user opt
 
   assert.equal(optedInAfterMigration.changed, false);
   assert.equal(optedInAfterMigration.patchedEnabledRulesets.includes('annoyances-overlays'), true);
+});
+
+test('default ruleset migration adds pgl only to still-default old profiles', () => {
+  const previousDefaults = EXPECTED_DEFAULT_IDS.filter(id => id !== 'pgl');
+  const nextDefaults = EXPECTED_DEFAULT_IDS;
+
+  const stillDefault = reconcileDefaultRulesetPatch({
+    currentEnabledRulesets: previousDefaults,
+    storedDefaultRulesetIds: previousDefaults,
+    nextDefaultRulesetIds: nextDefaults,
+  });
+  assert.equal(stillDefault.changed, true);
+  assert.equal(stillDefault.patchedEnabledRulesets.includes('pgl'), true);
+  assert.deepEqual(stillDefault.addedDefaultRulesets, ['pgl']);
+
+  const customized = reconcileDefaultRulesetPatch({
+    currentEnabledRulesets: previousDefaults.filter(id => id !== 'easyprivacy'),
+    storedDefaultRulesetIds: previousDefaults,
+    nextDefaultRulesetIds: nextDefaults,
+  });
+  assert.equal(customized.patchedEnabledRulesets.includes('pgl'), false);
+  assert.deepEqual(customized.addedDefaultRulesets, []);
 });
 
 test('legacy ruleset selections reset once to the canonical install defaults', () => {
@@ -347,24 +386,24 @@ test('packaged build preserves bundled annoyance coverage, regional coverage, de
 });
 
 test('public package excludes remote tactics interpreter artifacts and storage hooks', async () => {
-  await getPackagedBundle();
+  const { outDir } = await getPackagedBundle();
   const forbiddenPaths = [
-    path.join(PACKAGED_OUT_DIR, 'js', 'community-tactics.js'),
-    path.join(PACKAGED_OUT_DIR, 'js', 'scripting', 'remote-tactics-bootstrap.js'),
-    path.join(PACKAGED_OUT_DIR, 'js', 'scripting', 'remote-tactics.js'),
+    path.join(outDir, 'js', 'community-tactics.js'),
+    path.join(outDir, 'js', 'scripting', 'remote-tactics-bootstrap.js'),
+    path.join(outDir, 'js', 'scripting', 'remote-tactics.js'),
   ];
   for (const forbiddenPath of forbiddenPaths) {
     await assert.rejects(
       fs.access(forbiddenPath),
       { code: 'ENOENT' },
-      `${path.relative(PACKAGED_OUT_DIR, forbiddenPath)} must not be packaged`
+      `${path.relative(outDir, forbiddenPath)} must not be packaged`
     );
   }
 
   const filesToScan = [
-    path.join(PACKAGED_OUT_DIR, 'js', 'background.js'),
-    path.join(PACKAGED_OUT_DIR, 'js', 'scripting-manager.js'),
-    path.join(PACKAGED_OUT_DIR, 'js', 'community-sync.js'),
+    path.join(outDir, 'js', 'background.js'),
+    path.join(outDir, 'js', 'scripting-manager.js'),
+    path.join(outDir, 'js', 'community-sync.js'),
   ];
   const forbiddenTokens = [
     'remote-tactics-bootstrap',
@@ -378,7 +417,7 @@ test('public package excludes remote tactics interpreter artifacts and storage h
       assert.equal(
         text.includes(token),
         false,
-        `${path.relative(PACKAGED_OUT_DIR, filePath)} must not contain ${token}`
+        `${path.relative(outDir, filePath)} must not contain ${token}`
       );
     }
   }

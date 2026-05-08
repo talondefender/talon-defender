@@ -46,14 +46,6 @@ const URL_ALLOWLIST = [
     reason: 'public source-code metadata',
   },
   {
-    re: /^https:\/\/www\.youtube\.com\/watch(?:[?#]|$)/,
-    reason: 'bounded YouTube watch relay target normalization',
-  },
-  {
-    re: /^https:\/\/www\.youtube\.com$/,
-    reason: 'bounded YouTube origin validation',
-  },
-  {
     re: /^https:\/\/www\.google\.(?:com|ca)\/pagead\/lvz$/,
     reason: 'packaged DNR blocker match target, not a remote fetch endpoint',
   },

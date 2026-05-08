@@ -37,6 +37,11 @@
         "path": "/rulesets/main/easyprivacy.json"
       },
       {
+        "id": "pgl",
+        "enabled": true,
+        "path": "/rulesets/main/pgl.json"
+      },
+      {
         "id": "annoyances-cookies",
         "enabled": false,
         "path": "/rulesets/main/annoyances-cookies.json"
@@ -320,8 +325,6 @@
         "web_accessible_resources/noop-vast3.xml",
         "web_accessible_resources/noop-0.1s.mp3",
         "web_accessible_resources/noop-1s.mp4",
-        "web_accessible_resources/youtube-watch-relay.html",
-        "web_accessible_resources/youtube-watch-relay.js",
         "web_accessible_resources/nobab2.js",
         "web_accessible_resources/chartbeat.js",
         "web_accessible_resources/noop.json",

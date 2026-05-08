@@ -346,16 +346,19 @@
     "message": "Skyddet är aktivt"
   },
   "popupNoActiveTab": {
-    "message": "Ingen mål upptäckt"
+    "message": "Inget mål upptäckt"
   },
   "popupFilteringDisabledSite": {
-    "message": "Skydd av för denna webbplats"
+    "message": "Skyddet är av för den här webbplatsen"
   },
   "popupFilteringEnabledSite": {
-    "message": "Skydd på för denna webbplats"
+    "message": "Skyddet är på för den här webbplatsen"
   },
   "popupFilteringCompleteSite": {
-    "message": "Extra skydd på för denna webbplats"
+    "message": "Extra skydd är på för den här webbplatsen"
+  },
+  "popupAllowThisSiteButton": {
+    "message": "Tillåt den här webbplatsen"
   },
   "subscriptionSectionTitle": {
     "message": "Prenumeration"

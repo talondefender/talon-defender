@@ -349,13 +349,16 @@
     "message": "Kohdetta ei havaittu"
   },
   "popupFilteringDisabledSite": {
-    "message": "Suojaus pois päältä tällä sivustolla"
+    "message": "Suojaus pois käytöstä tällä sivustolla"
   },
   "popupFilteringEnabledSite": {
-    "message": "Suojaus päällä tällä sivustolla"
+    "message": "Suojaus käytössä tällä sivustolla"
   },
   "popupFilteringCompleteSite": {
-    "message": "Lisäsuojaus päällä tällä sivustolla"
+    "message": "Lisäsuojaus käytössä tällä sivustolla"
+  },
+  "popupAllowThisSiteButton": {
+    "message": "Salli tämä sivusto"
   },
   "subscriptionSectionTitle": {
     "message": "Tilaus"

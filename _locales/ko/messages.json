@@ -349,13 +349,16 @@
     "message": "대상을 찾지 못했습니다"
   },
   "popupFilteringDisabledSite": {
-    "message": "이 사이트의 보호 끔"
+    "message": "이 사이트 보호 꺼짐"
   },
   "popupFilteringEnabledSite": {
-    "message": "이 사이트의 보호 켬"
+    "message": "이 사이트 보호 켜짐"
   },
   "popupFilteringCompleteSite": {
-    "message": "이 사이트의 추가 보호 켬"
+    "message": "이 사이트 추가 보호 켜짐"
+  },
+  "popupAllowThisSiteButton": {
+    "message": "이 사이트 허용"
   },
   "subscriptionSectionTitle": {
     "message": "구독"

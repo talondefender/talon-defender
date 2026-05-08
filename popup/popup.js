@@ -13,6 +13,7 @@ const headerEl = document.querySelector(".header");
 const safetyStatusEl = document.getElementById("safetyStatus");
 const metricLabelEls = Array.from(document.querySelectorAll(".metric-label"));
 const statsCardEl = document.querySelector(".stats-card.shield-style");
+const allowedSitesCardEl = document.getElementById("allowedSitesCard");
 const openSettingsButton = document.getElementById("openSettings");
 const privacyLinkButton = document.getElementById("privacyLink");
 const filterPackSummaryEl = document.getElementById("filterPacksSummary");
@@ -61,12 +62,14 @@ let currentHost = null;
 let currentTabId = null;
 let currentTabUrl = "";
 let defaultFilteringMode = MODE_OPTIMAL;
+let currentSiteLevel = MODE_OPTIMAL;
 let currentEnabledState = true;
 let entitlementStatus = null;
 let paywalled = false;
 let licenseEntryVisible = false;
 let expiredKeyEntryVisible = false;
 let currentReloadNeededReason = "";
+let currentCompatibilityMode = null;
 
 const GLOBAL_PAUSE_SNAPSHOT_KEY = "globalPauseFilteringModesSnapshot";
 const ENTITLEMENT_LOCAL_STORAGE_KEY = "talonEntitlement";
@@ -126,10 +129,10 @@ function clearCurrentTabState() {
   currentHost = null;
   currentTabId = null;
   currentTabUrl = "";
+  currentSiteLevel = defaultFilteringMode;
   currentReloadNeededReason = "";
-  if (dynamicHostLabelEl) {
-    dynamicHostLabelEl.textContent = t("popupNoActiveTab");
-  }
+  currentCompatibilityMode = null;
+  renderAllowedSitesControls();
   renderRuntimeNotice();
 }
 
@@ -560,7 +563,7 @@ function wireEvents() {
         focusLicenseEntry();
         return;
       }
-      setSiteMode(MODE_COMPLETE);
+      setSiteMode(getProtectionLevelForCurrentSite());
     });
   }
 
@@ -578,6 +581,17 @@ function wireEvents() {
     runtimeNoticeReloadButton.addEventListener("click", async () => {
       runtimeNoticeReloadButton.disabled = true;
       try {
+        if (isCompatibilityModeActive()) {
+          await sendRuntimeMessageWithTimeout({
+            what: "restoreCompatibilityMode",
+            hostname: currentHost || ""
+          });
+          currentCompatibilityMode = null;
+          await refreshPopupPanelData().catch(() => {});
+          await reloadCurrentTab("reload tab after compatibility restore");
+          window.close();
+          return;
+        }
         const reloaded = await reloadCurrentTab("reload tab for hotfix");
         if (!reloaded) {
           return;
@@ -735,9 +749,7 @@ async function resolveActiveHost() {
     currentTabUrl = "";
   }
 
-  if (dynamicHostLabelEl) {
-    dynamicHostLabelEl.textContent = currentHost || t("popupNoActiveTab");
-  }
+  renderAllowedSitesControls();
   renderRuntimeNotice();
 }
 
@@ -745,15 +757,28 @@ function renderRuntimeNotice() {
   if (!runtimeNoticeEl || !runtimeNoticeTextEl || !runtimeNoticeReloadButton) {
     return;
   }
-  const visible = Boolean(currentTabId) &&
+  const compatibilityVisible = Boolean(currentTabId) &&
+    !paywalled &&
+    isCompatibilityModeActive();
+  const hotfixVisible = Boolean(currentTabId) &&
     !paywalled &&
     currentReloadNeededReason === "remoteScriptletHotfix";
+  const visible = compatibilityVisible || hotfixVisible;
   runtimeNoticeEl.hidden = !visible;
   if (!visible) {
     return;
   }
-  runtimeNoticeTextEl.textContent = "Reload this tab to apply the latest Talon Defender hotfix.";
-  runtimeNoticeReloadButton.textContent = "Reload tab";
+  if (compatibilityVisible) {
+    runtimeNoticeTextEl.textContent = "Compatibility mode is active on this site. Ads may be blocked less aggressively.";
+    runtimeNoticeReloadButton.textContent = "Restore blocking";
+  } else {
+    runtimeNoticeTextEl.textContent = "Reload this tab to apply the latest Talon Defender hotfix.";
+    runtimeNoticeReloadButton.textContent = "Reload tab";
+  }
+}
+
+function isCompatibilityModeActive() {
+  return currentCompatibilityMode?.active === true;
 }
 
 async function refreshRuntimeNoticeState() {
@@ -795,16 +820,24 @@ async function refreshPopupPanelData() {
     defaultFilteringMode = nextDefaultMode;
     currentEnabledState = nextDefaultMode !== MODE_NONE;
   }
+  const nextSiteLevel = Number(panelData?.level);
+  currentSiteLevel = Number.isFinite(nextSiteLevel)
+    ? nextSiteLevel
+    : defaultFilteringMode;
 
   if (panelData?.entitlementStatus && typeof panelData.entitlementStatus === "object") {
     applyEntitlementStatus(panelData.entitlementStatus);
   } else {
     renderToggle(currentEnabledState);
   }
+  renderAllowedSitesControls();
 
   currentReloadNeededReason = typeof panelData?.reloadNeededState?.reason === "string"
     ? panelData.reloadNeededState.reason
     : "";
+  currentCompatibilityMode = panelData?.compatibilityMode?.active === true
+    ? panelData.compatibilityMode
+    : null;
   renderRuntimeNotice();
 }
 
@@ -1108,6 +1141,7 @@ function applyEntitlementStatus(status) {
   renderEntitlementStatus(entitlementStatus);
   setPaywalledUI(paywalled);
   renderExpiredOverlay(entitlementStatus, { canReplaceDevice });
+  renderAllowedSitesControls();
   renderRuntimeNotice();
 
   if (subscribeNowButton) {
@@ -1237,7 +1271,56 @@ async function refreshFilteringState() {
   } catch (_error) {
     currentEnabledState = defaultFilteringMode !== MODE_NONE;
   }
+  if (!currentHost) {
+    currentSiteLevel = defaultFilteringMode;
+  }
   renderToggle(currentEnabledState);
+  renderAllowedSitesControls();
+}
+
+function getProtectionLevelForCurrentSite() {
+  return defaultFilteringMode > MODE_NONE
+    ? defaultFilteringMode
+    : MODE_OPTIMAL;
+}
+
+function renderAllowedSitesControls() {
+  const hasHost = Boolean(currentHost);
+  const canChangeSite = hasHost && !paywalled;
+  const isAllowed = currentSiteLevel === MODE_NONE;
+
+  if (allowedSitesCardEl) {
+    allowedSitesCardEl.classList.toggle("allowed", hasHost && isAllowed && !paywalled);
+    allowedSitesCardEl.classList.toggle("unavailable", !hasHost || paywalled);
+  }
+
+  if (dynamicHostLabelEl) {
+    dynamicHostLabelEl.textContent = currentHost || t("popupNoActiveTab");
+  }
+
+  if (dynamicStatusEl) {
+    if (!hasHost) {
+      dynamicStatusEl.textContent = t("popupNoActiveTab");
+    } else if (paywalled) {
+      dynamicStatusEl.textContent = t("popupStatusTrialEndedActivate");
+    } else if (isAllowed) {
+      dynamicStatusEl.textContent = t("popupFilteringDisabledSite");
+    } else if (currentSiteLevel === MODE_COMPLETE) {
+      dynamicStatusEl.textContent = t("popupFilteringCompleteSite");
+    } else {
+      dynamicStatusEl.textContent = t("popupFilteringEnabledSite");
+    }
+  }
+
+  if (allowDomainButton) {
+    allowDomainButton.hidden = isAllowed && canChangeSite;
+    allowDomainButton.disabled = !canChangeSite;
+  }
+
+  if (blockDomainButton) {
+    blockDomainButton.hidden = !(isAllowed && canChangeSite);
+    blockDomainButton.disabled = !canChangeSite;
+  }
 }
 
 async function setSiteEnabled(enabled) {
@@ -1258,6 +1341,7 @@ async function setSiteEnabled(enabled) {
     await chrome.runtime.sendMessage({ what: "setFilteringModeDetails", modes: PAUSED_FILTERING_MODES });
   }
   await refreshFilteringState();
+  await refreshPopupPanelData().catch(() => {});
   await reloadCurrentTab("reload tab after protection change");
 }
 
@@ -1266,24 +1350,21 @@ async function setSiteMode(level) {
     return;
   }
   try {
-    await chrome.runtime.sendMessage({
+    const afterLevel = await chrome.runtime.sendMessage({
       what: "setFilteringMode",
       hostname: currentHost,
       level
     });
+    const normalizedAfterLevel = Number(afterLevel);
+    currentSiteLevel = Number.isFinite(normalizedAfterLevel)
+      ? normalizedAfterLevel
+      : level;
   } catch (error) {
     console.error("Failed to set filtering mode", error);
   }
   await refreshFilteringState();
-  if (dynamicStatusEl) {
-    if (level === MODE_NONE) {
-      dynamicStatusEl.textContent = t("popupFilteringDisabledSite");
-    } else if (level === MODE_COMPLETE) {
-      dynamicStatusEl.textContent = t("popupFilteringCompleteSite");
-    } else {
-      dynamicStatusEl.textContent = t("popupFilteringEnabledSite");
-    }
-  }
+  await refreshPopupPanelData().catch(() => {});
+  renderAllowedSitesControls();
   await reloadCurrentTab("reload tab after site filtering change");
 }
 

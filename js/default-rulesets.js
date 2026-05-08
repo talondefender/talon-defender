@@ -76,8 +76,14 @@ export function reconcileDefaultRulesetPatch({
 
     const storedSet = new Set(stored);
     const nextSet = new Set(next);
+    const isStillDefaultSelection =
+        stored.length !== 0 &&
+        current.length === stored.length &&
+        stored.every(id => currentSet.has(id));
 
-    const toAdd = next.filter(id => storedSet.has(id) === false);
+    const toAdd = isStillDefaultSelection
+        ? next.filter(id => storedSet.has(id) === false)
+        : [];
     const toRemove = stored.filter(id => nextSet.has(id) === false);
 
     const patched = new Set(current);

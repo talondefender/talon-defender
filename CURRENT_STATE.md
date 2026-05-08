@@ -7,9 +7,7 @@ Runtime behavior now:
 - the first popup flow can open `https://talondefender.com/welcome-live/?source=first_popup_open`.
 - the uninstall URL is always set to `https://talondefender.com/uninstall/` with `source` and `version` query parameters.
 - expired users can be reminded with `https://talondefender.com/trial-expired/` and a `trial_expired_reminder` source.
-- YouTube watch pages still have a manifest-declared `document_start` MAIN-world bootstrap script, and the public default now keeps its host-scoped enable cookie on for entitled `optimal` and `complete` users while private proof lanes can still override the cookie explicitly.
-- YouTube watch pages now also support an internal owner-profile switch for private proofing, so Talon can compare `talon-current`, `upstream-core`, and `upstream-core+talon-wins` ownership without changing the public product surface.
-- same-tab YouTube `/watch` clicks on `www.youtube.com` now force a fresh top-level document navigation through the public `native-heuristics` content script, so the player does not inherit a broken SPA follow-up state from the previous page context.
+- MV3 YouTube-specific runtime workarounds have been intentionally removed and deferred; generic static/community ruleset blocking may still apply, but there is no custom YouTube bootstrap, relay, navigation hardening, or session-rule lane.
 - host grouping for auto-promotion and heuristic site comparisons now uses a packaged fail-closed site-key resolver so ccTLD hosts do not broaden to bare public suffixes such as `co.uk`.
 - automation hide directives now apply across every matched selector in a directive, mirror their marker-based hide styles into discovered shadow roots and related fallback frames, and use a bounded retry backoff with inactivity reset instead of permanently stopping after three successful applies.
 - automation directives can now declare required bundled rulesets, so popup and consent fixes track the user-facing protection toggles instead of running outside the selected popup/overlay posture, and Guardian article pages now have exact-host automation coverage for the Sourcepoint consent wall, the inline `#sign-in-gate` registration interrupt, the sticky bottom `StickyBottomBanner` reader-revenue prompt, and the article-end `#slot-body-end` contribution ask, with those curated Guardian nuisance prompts now suppressed by direct selector CSS so article-surface mutation guards do not block them.
@@ -35,11 +33,12 @@ Expired behavior now:
 - in practice, expired status suspends blocking until the user restores entitlement
 
 Bundled filtering surface now:
-- default rulesets enabled in the manifest are `ublock-filters`, `easylist`, `easyprivacy`, `ublock-badware`, and `urlhaus-full`
+- default rulesets enabled in the manifest are `ublock-filters`, `easylist`, `easyprivacy`, `pgl`, `ublock-badware`, and `urlhaus-full`
 - entering complete mode now auto-enables the full bundled annoyance family: `annoyances-cookies`, `annoyances-notifications`, `annoyances-others`, `annoyances-overlays`, `annoyances-social`, and `annoyances-widgets`
 - the public Settings page now exposes an `Extra protection` toggle for the five non-default annoyance packs, so users no longer need to understand the hidden complete-mode concept
 - legacy or markerless ruleset selections now reset once to the canonical install defaults so reused Chrome storage cannot leave the public protection checkboxes blank, while later user checkbox changes persist normally across refreshes and restarts
 - the public Options page now bootstraps its protection checkboxes from a canonical background snapshot through the trusted early-message path, loads ruleset state in parallel with entitlement state, starts from a neutral `Loading...` row state instead of a fake all-disabled render, listens for runtime ruleset broadcasts, and renders multi-ruleset toggles as `active`, `partial`, or `disabled` so early startup races cannot falsely show all protections unchecked
+- the public popup now exposes a current-tab `Allowed Sites` control that adds the active hostname to no-filtering mode and can turn protection back on for that site, while Settings keeps the manual Allowed Sites list for arbitrary host entry and removal
 - the public package now also bundles a public-safe regional language ruleset family disabled by default and auto-enables locale-matched entries on fresh installs and untouched profiles
 - release packaging prunes unbundled ruleset artifacts so the shipped package only contains manifest-backed resources
 
@@ -56,7 +55,7 @@ Community bundle behavior now:
 - schema `v2` community bundles can now ship tightly scoped MV3-safe exception rules using exact-host `allow`, exact-host `allowAllRequests`, third-party packaged-resource `redirect` actions, and exact-host first-party path-scoped packaged redirects
 - signed public bundles can now also ship host-scoped directives and bundled-allowlist scriptlets in normal store builds without developer mode
 - signed remote DNR rules, cosmetics, heuristics, directives, and scriptlets now all reject Talon-owned first-party host scopes so community hotfixes cannot target `talondefender.com` pages
-- remote scriptlet registration now applies the same packaged compatibility host exclusions, including YouTube owner-profile fences, before host matches are registered
+- remote scriptlet registration uses the packaged public compatibility path without private YouTube owner-profile fences
 - signed remote extras now activate with rollback semantics: the worker snapshots the prior community state, stages the candidate bundle, and restores the last-known-good rules and extras if injectable registration fails
 - active overlays survive restart, can be removed by signed `404`/`410` overlay responses, negative-cache missing or revoked site keys for `30` minutes, retry fetch failures after `5` minutes, and keep the previous overlay active until a replacement compiles successfully
 - overlay merge precedence now keeps more recent overlays ahead of older overlays, keeps overlays ahead of the baseline within each quota class, dedupes merged cosmetics and heuristic arrays, replaces directives by `id`, and re-canonicalizes merged scriptlets by `rulesetId` + `token` + `world`

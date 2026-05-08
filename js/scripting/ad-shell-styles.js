@@ -3,21 +3,14 @@
 // Isolate from global scope
 (function uBOL_adShellStyles() {
 
+if ( self.TalonAdShellStylesController ) {
+    self.TalonAdShellStylesController.refresh?.();
+    return;
+}
+
 const BASE_SELECTORS = [
-    '.container--ads',
-    '.container--ads-leaderboard-atf',
-    '.container--ads-leaderboard-btf',
-    '.in-article-ads',
-    '.ad-slot',
-    '.ad-slot-rail__container',
-    '.ads__slot',
-    '.ads__title',
     '.freestar-ads',
-    '[data-ad]',
-    '[data-ad-unit]',
-    '[data-ad-slot]',
-    '[data-ad-client]',
-    '[data-advertisement]',
+    '[class*="freestar" i]',
     'ins.adsbygoogle',
     '.adsbygoogle',
     '.OUTBRAIN',
@@ -26,10 +19,8 @@ const BASE_SELECTORS = [
     'div[id^="taboola-"]',
     'div[class*="taboola" i]',
     '[id^="div-gpt-ad-"]',
-    '[id*="ad-slot" i]',
-    '[class*="ad-slot" i]',
-    '[class*="container--ads" i]',
-    '[class*="freestar" i]',
+    '[id^="google_ads_iframe_"]',
+    'iframe[id^="google_ads_iframe_"]',
 ];
 
 const HOST_SCOPED_SELECTORS = Object.freeze([
@@ -61,21 +52,52 @@ const STYLE_TEXT =
     'min-height:0!important;max-height:0!important;margin:0!important;' +
     'padding:0!important;border:0!important;overflow:hidden!important;}';
 
-const inject = () => {
+const STYLE_ID = 'ubol-ad-shell-styles';
+const SUBSYSTEM_ID = 'adShellStyles';
+
+const remove = () => {
     try {
-        if ( document.getElementById('ubol-ad-shell-styles') ) { return; }
+        document.getElementById(STYLE_ID)?.remove();
+    } catch {
+    }
+};
+
+const shouldRun = async () => {
+    const guard = self.TalonBreakageGuard;
+    try {
+        await guard?.whenReady?.();
+        return guard?.shouldRunSubsystem?.(SUBSYSTEM_ID) !== false;
+    } catch {
+    }
+    return true;
+};
+
+const inject = async () => {
+    if ( await shouldRun() === false ) {
+        remove();
+        return;
+    }
+    try {
+        if ( document.getElementById(STYLE_ID) ) { return; }
         const style = document.createElement('style');
-        style.id = 'ubol-ad-shell-styles';
+        style.id = STYLE_ID;
         style.textContent = STYLE_TEXT;
         (document.head || document.documentElement || document).append(style);
     } catch {
     }
 };
 
+self.TalonAdShellStylesController = {
+    refresh: inject,
+    stop: remove,
+};
+
 if ( document.documentElement ) {
-    inject();
+    inject().catch(() => {});
 } else {
-    document.addEventListener('readystatechange', inject, { once: true });
+    document.addEventListener('readystatechange', () => {
+        inject().catch(() => {});
+    }, { once: true });
 }
 
 })();

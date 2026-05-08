@@ -21,6 +21,7 @@ const RISK_TIERS = Object.freeze({
 
 const BREAKAGE_AUDIT_OVERRIDES_KEY = 'breakageAuditOverridesV1';
 const AUDITABLE_SUBSYSTEMS = new Set([
+    'adShellStyles',
     'nativeHeuristics',
     'automation',
     'remoteCosmetics',
@@ -365,6 +366,8 @@ const reportBreakageSignal = (signal, details = {}) => {
             normalizedDetails.subsystem = 'remoteCosmetics';
         } else if ( source.startsWith('post-hide-cleanup') ) {
             normalizedDetails.subsystem = 'postHideCleanup';
+        } else if ( source.startsWith('ad-shell-styles') ) {
+            normalizedDetails.subsystem = 'adShellStyles';
         }
     }
     const signalKey = `${signal}:${details.reason || ''}:${details.selector || ''}`;

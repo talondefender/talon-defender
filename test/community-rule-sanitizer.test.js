@@ -435,6 +435,81 @@ test('schema v2 rejects internal Talon first-party exact host scopes', () => {
   assert.equal(result.dropped.unsafeScope, 3);
 });
 
+test('community block rules stay non-main-frame, third-party, and tightly scoped', () => {
+  const result = sanitizeCommunityRules([
+    {
+      action: { type: 'block' },
+      condition: {
+        urlFilter: '||ads.example^',
+        resourceTypes: ['script'],
+      },
+    },
+    {
+      action: { type: 'block' },
+      condition: {
+        urlFilter: '||ads.example^',
+        resourceTypes: ['main_frame'],
+      },
+    },
+    {
+      action: { type: 'block' },
+      condition: {
+        urlFilter: '||ads.example^',
+        domainType: 'firstParty',
+      },
+    },
+    {
+      action: { type: 'block' },
+      condition: {
+        urlFilter: '||ads.example^',
+        domainType: ['firstParty', 'thirdParty'],
+      },
+    },
+    {
+      action: { type: 'block' },
+      condition: {
+        urlFilter: '||ads.example^',
+        responseHeaders: [{ header: 'x-test' }],
+      },
+    },
+    {
+      action: { type: 'block' },
+      condition: {
+        requestDomains: ['talondefender.com'],
+        resourceTypes: ['script'],
+      },
+    },
+    {
+      action: { type: 'block' },
+      condition: {
+        requestDomains: ['checkout.shopify.com'],
+        resourceTypes: ['script'],
+      },
+    },
+    {
+      action: { type: 'block' },
+      condition: {
+        requestDomains: ['*.example.com'],
+        resourceTypes: ['script'],
+      },
+    },
+    {
+      action: { type: 'block' },
+      condition: {
+        resourceTypes: ['script'],
+      },
+    },
+  ], {
+    schemaVersion: 2,
+  });
+
+  assert.equal(result.rules.length, 1);
+  assert.equal(result.rules[0].priority, COMMUNITY_RULE_PRIORITY_BLOCK);
+  assert.deepEqual(result.rules[0].condition.resourceTypes, ['script']);
+  assert.equal(result.rules[0].condition.domainType, 'thirdParty');
+  assert.equal(result.dropped.unsafeScope, 8);
+});
+
 test('community exception quotas cap total exceptions and allowAllRequests relief separately', () => {
   const allowRules = Array.from({ length: COMMUNITY_EXCEPTION_RULES_MAX + 1 }, (_, index) => ({
     action: { type: 'allow' },
@@ -476,6 +551,7 @@ test('community exception quotas cap total exceptions and allowAllRequests relie
 });
 
 test('community exception priorities stay ordered and below user/admin dynamic priorities', () => {
+  assert.equal(COMMUNITY_RULE_PRIORITY_BLOCK < 16, true);
   assert.equal(COMMUNITY_RULE_PRIORITY_BLOCK < COMMUNITY_RULE_PRIORITY_REDIRECT, true);
   assert.equal(COMMUNITY_RULE_PRIORITY_REDIRECT < COMMUNITY_RULE_PRIORITY_ALLOW, true);
   assert.equal(COMMUNITY_RULE_PRIORITY_ALLOW < COMMUNITY_RULE_PRIORITY_ALLOW_ALL_REQUESTS, true);

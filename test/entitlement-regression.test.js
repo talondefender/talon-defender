@@ -286,7 +286,7 @@ test('license storage keeps raw keys local and clears sync-safe activation token
   assert.match(optionsSource, /licenseRevealButton\.addEventListener\("click", \(\) => \{[\s\S]*licenseKeyRevealed = !licenseKeyRevealed;[\s\S]*updateLockedKeyDisplay\(\);/);
 });
 
-test('background startup message policy keeps popup warmup startup-safe and releases YouTube lab overrides once core startup is ready', async () => {
+test('background startup message policy keeps popup warmup startup-safe without abandoned lab overrides', async () => {
   const source = await readText('../js/background.js');
 
   assert.match(source, /let startupCoreReady = false;/);
@@ -294,8 +294,7 @@ test('background startup message policy keeps popup warmup startup-safe and rele
   assert.match(source, /const STARTUP_SAFE_MESSAGE_TYPES = new Set\(\[/);
   assert.match(source, /'popupWarmup'/);
   assert.match(source, /const POST_STARTUP_ONLY_MESSAGE_TYPES = new Set\(\[/);
-  assert.match(source, /'setYouTubeWatchRuntimeLane'/);
-  assert.match(source, /'setYouTubeWatchOwnerProfile'/);
+  assert.doesNotMatch(source, new RegExp(`setYouTubeWatch|YouTubeWatch|${'youtube' + '-watch'}`, 'i'));
   assert.match(source, /function shouldHandlePostStartupOnlyMessage\(request, sender\)/);
   assert.match(source, /function shouldRejectPostStartupOnlyMessage\(request, sender\)/);
   assert.match(source, /safeCallback\(buildPostStartupOnlyResponse\(\)\);/);

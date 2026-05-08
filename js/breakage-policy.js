@@ -16,6 +16,7 @@ export const INTERNAL_UNFILTERED_DOMAINS = Object.freeze([
 export const BREAKAGE_AUDIT_OVERRIDES_KEY = 'breakageAuditOverridesV1';
 
 export const AUDITABLE_SUBSYSTEMS = Object.freeze([
+    'adShellStyles',
     'nativeHeuristics',
     'automation',
     'remoteCosmetics',
@@ -60,6 +61,15 @@ export const RISK_MANIFEST = Object.freeze([
         runTiming: 'document_start',
         frameScope: 'all frames',
         mutationType: 'hide DOM nodes via packaged selectors',
+        protectedExposure: 'medium',
+    },
+    {
+        id: 'ad-shell-styles',
+        tier: RISK_TIERS.medium,
+        hostScope: 'basic, optimal, and complete modes',
+        runTiming: 'document_start',
+        frameScope: 'all frames',
+        mutationType: 'prepaint hide known ad network shells',
         protectedExposure: 'medium',
     },
     {

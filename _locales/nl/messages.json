@@ -349,13 +349,16 @@
     "message": "Geen doel gedetecteerd"
   },
   "popupFilteringDisabledSite": {
-    "message": "Bescherming uit voor deze site"
+    "message": "Bescherming staat uit voor deze site"
   },
   "popupFilteringEnabledSite": {
-    "message": "Bescherming aan voor deze site"
+    "message": "Bescherming staat aan voor deze site"
   },
   "popupFilteringCompleteSite": {
-    "message": "Extra bescherming aan voor deze site"
+    "message": "Extra bescherming staat aan voor deze site"
+  },
+  "popupAllowThisSiteButton": {
+    "message": "Deze site toestaan"
   },
   "subscriptionSectionTitle": {
     "message": "Abonnement"

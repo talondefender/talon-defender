@@ -349,13 +349,16 @@
     "message": "Intet mål registreret"
   },
   "popupFilteringDisabledSite": {
-    "message": "Beskyttelse fra for dette websted"
+    "message": "Beskyttelse slået fra for dette websted"
   },
   "popupFilteringEnabledSite": {
-    "message": "Beskyttelse til for dette websted"
+    "message": "Beskyttelse slået til for dette websted"
   },
   "popupFilteringCompleteSite": {
-    "message": "Ekstra beskyttelse til for dette websted"
+    "message": "Ekstra beskyttelse slået til for dette websted"
+  },
+  "popupAllowThisSiteButton": {
+    "message": "Tillad dette websted"
   },
   "subscriptionSectionTitle": {
     "message": "Abonnement"

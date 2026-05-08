@@ -1,6 +1,7 @@
 export const AUTO_BACKOFF_SIGNAL_WINDOW_MS = 5 * 60 * 1000;
 export const AUTO_BACKOFF_SIGNAL_MIN_COUNT = 2;
 export const BREAKAGE_SUBSYSTEM_IDS = Object.freeze([
+    'adShellStyles',
     'nativeHeuristics',
     'automation',
     'remoteCosmetics',

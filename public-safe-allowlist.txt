@@ -1,4 +1,5 @@
 ﻿.gitignore
+.ignore
 _locales/da/messages.json
 _locales/de/messages.json
 _locales/en/messages.json
@@ -395,7 +396,6 @@ js/scripting/shadow-dom-helper.js
 js/scripting/toolbar-icon.js
 js/scripting/tool-overlay.js
 js/scripting/unpicker.js
-js/scripting/youtube-watch-bootstrap.js
 js/scripting-manager.js
 js/single-flight.js
 js/site-key.js
@@ -1352,8 +1352,6 @@ web_accessible_resources/noop-0.1s.mp3
 web_accessible_resources/noop-1s.mp4
 web_accessible_resources/noop-vast3.xml
 web_accessible_resources/noop-vmap1.xml
-web_accessible_resources/youtube-watch-relay.html
-web_accessible_resources/youtube-watch-relay.js
 web_accessible_resources/outbrain-widget.js
 web_accessible_resources/popads.js
 web_accessible_resources/prebid-ads.js

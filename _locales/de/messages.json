@@ -349,13 +349,16 @@
     "message": "Kein Ziel erkannt"
   },
   "popupFilteringDisabledSite": {
-    "message": "Schutz für diese Website aus"
+    "message": "Schutz für diese Website deaktiviert"
   },
   "popupFilteringEnabledSite": {
-    "message": "Schutz für diese Website an"
+    "message": "Schutz für diese Website aktiviert"
   },
   "popupFilteringCompleteSite": {
-    "message": "Zusätzlicher Schutz für diese Website an"
+    "message": "Zusätzlicher Schutz für diese Website aktiviert"
+  },
+  "popupAllowThisSiteButton": {
+    "message": "Diese Website zulassen"
   },
   "subscriptionSectionTitle": {
     "message": "Abonnement"
