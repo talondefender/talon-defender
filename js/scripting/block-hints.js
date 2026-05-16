@@ -4,6 +4,7 @@
 (function uBOL_blockHints() {
 
 const HINT_ATTR = 'data-talon-block-hint';
+const HINTS_CHANGED_EVENT = 'talon-block-hints-changed';
 const ELEMENT_TTL_MS = 5000;
 const NETWORK_TTL_MS = 5000;
 const MAX_TRACKED_ELEMENTS = 96;
@@ -80,6 +81,16 @@ const scheduleCleanup = ( ) => {
     }, Math.max(50, nextExpiry - now));
 };
 
+const notifyHintsChanged = count => {
+    if ( count === 0 ) { return; }
+    try {
+        self.dispatchEvent?.(new CustomEvent(HINTS_CHANGED_EVENT, {
+            detail: { count },
+        }));
+    } catch {
+    }
+};
+
 const getNextHintTarget = current => {
     if ( current instanceof Element === false ) { return null; }
     const root = current.getRootNode?.();
@@ -91,6 +102,7 @@ const noteElement = (
     el,
     {
         ancestors = 1,
+        notify = true,
     } = {}
 ) => {
     if ( el instanceof Element === false ) { return 0; }
@@ -109,6 +121,9 @@ const noteElement = (
     }
     if ( count !== 0 ) {
         scheduleCleanup();
+        if ( notify ) {
+            notifyHintsChanged(count);
+        }
     }
     return count;
 };
@@ -145,12 +160,13 @@ const noteSelectorMatches = (
             for ( const node of nodes ) {
                 if ( node instanceof Element === false || seen.has(node) ) { continue; }
                 seen.add(node);
-                noteElement(node, { ancestors });
+                noteElement(node, { ancestors, notify: false });
                 matched += 1;
                 if ( matched >= maxMatches ) { break; }
             }
         }
     }
+    notifyHintsChanged(matched);
     return matched;
 };
 
@@ -183,17 +199,31 @@ const hasRecentHint = (
 const noteNetworkHit = ( ) => {
     networkHitUntil = Date.now() + NETWORK_TTL_MS;
     scheduleCleanup();
+    notifyHintsChanged(1);
     return true;
 };
 
 const hasRecentNetworkHit = ( ) => networkHitUntil > Date.now();
 
+const getRecentElements = ( ) => {
+    scheduleCleanup();
+    const now = Date.now();
+    return trackedElements.filter(el =>
+        el instanceof Element &&
+        el.isConnected !== false &&
+        hasActiveHintAttr(el, now)
+    );
+};
+
 self.TalonBlockHintsController = {
+    HINT_ATTR,
+    HINTS_CHANGED_EVENT,
     noteElement,
     noteSelectorMatches,
     noteNetworkHit,
     hasRecentHint,
     hasRecentNetworkHit,
+    getRecentElements,
     stop() {
         clearCleanupTimer();
         networkHitUntil = 0;

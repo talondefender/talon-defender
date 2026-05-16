@@ -9,6 +9,8 @@ const shadowController = self.TalonShadowRootController;
 const blockHints = self.TalonBlockHintsController;
 const shadowRootsChangedEvent =
     shadowController?.ROOTS_CHANGED_EVENT || 'talon-shadow-roots-changed';
+const blockHintsChangedEvent =
+    blockHints?.HINTS_CHANGED_EVENT || 'talon-block-hints-changed';
 if ( runtime === undefined ) { return; }
 
 if ( self.TalonPostHideCleanupController ) {
@@ -79,6 +81,9 @@ const getHintParts = el => [
 ].join(' ');
 
 const hasAdHint = el => attrHintRe.test(getHintParts(el));
+
+const hasBlockHint = el =>
+    blockHints?.hasRecentHint?.(el, { includeSubtree: true }) === true;
 
 const isTrivialAdChrome = el => {
     if ( el instanceof Element === false ) { return false; }
@@ -298,6 +303,22 @@ const CANDIDATE_SELECTORS = [
     '[class^="ad_"]',
 ];
 const selectorText = CANDIDATE_SELECTORS.join(',');
+const HIDDEN_AD_SHELL_SELECTORS = [
+    '.freestar-ads',
+    '[class*="freestar" i]',
+    'ins.adsbygoogle',
+    '.adsbygoogle',
+    '.OUTBRAIN',
+    '.ob-widget',
+    '#taboola-below-article-thumbnails',
+    'div[id^="taboola-"]',
+    'div[class*="taboola" i]',
+    '[id^="div-gpt-ad-"]',
+    '[id^="google_ads_iframe_"]',
+    'iframe[id^="google_ads_iframe_"]',
+];
+const hiddenAdShellSelectorText = HIDDEN_AD_SHELL_SELECTORS.join(',');
+const collectionSelectorText = `${selectorText},${hiddenAdShellSelectorText}`;
 
 let pending = [];
 let seen = new WeakSet();
@@ -310,25 +331,89 @@ const enqueue = el => {
     pending.push(el);
 };
 
+const isHiddenAdShellCandidate = el => {
+    if ( el instanceof Element === false ) { return false; }
+    try {
+        return el.matches?.(hiddenAdShellSelectorText) === true;
+    } catch {
+    }
+    return false;
+};
+
+const noteAdShellHint = el => {
+    if ( el instanceof Element === false ) { return; }
+    try {
+        blockHints?.noteElement?.(el, { ancestors: 1 });
+    } catch {
+    }
+};
+
+const enqueueCandidate = node => {
+    if ( node instanceof Element === false ) { return; }
+    const nodeHasHint = hasBlockHint(node);
+    const hiddenAdShell = isHiddenAdShellCandidate(node);
+    if ( hiddenAdShell ) {
+        noteAdShellHint(node);
+    }
+    if ( isVisible(node) || nodeHasHint || hiddenAdShell ) {
+        enqueue(node);
+    }
+    if (
+        node.parentElement &&
+        (
+            isVisible(node.parentElement) ||
+            nodeHasHint ||
+            hiddenAdShell ||
+            hasBlockHint(node.parentElement)
+        )
+    ) {
+        enqueue(node.parentElement);
+    }
+};
+
 const collect = root => {
     let nodes = [];
     try {
-        nodes = (root === document ? document : root).querySelectorAll(selectorText);
+        nodes = (root === document ? document : root).querySelectorAll(collectionSelectorText);
     } catch {
         nodes = [];
     }
+    if ( root instanceof Element ) {
+        try {
+            if (
+                root.matches?.(selectorText) ||
+                isHiddenAdShellCandidate(root)
+            ) {
+                enqueueCandidate(root);
+            }
+        } catch {
+        }
+    }
     for ( const node of nodes ) {
-        if ( isVisible(node) === false ) { continue; }
-        enqueue(node);
-        if ( node.parentElement ) { enqueue(node.parentElement); }
+        enqueueCandidate(node);
+    }
+};
+
+const collectHintedElements = ( ) => {
+    const hinted = blockHints?.getRecentElements?.() || [];
+    for ( const node of hinted ) {
+        if ( node instanceof Element === false ) { continue; }
+        if ( isVisible(node) ) {
+            enqueue(node);
+        }
+        if ( node.parentElement ) {
+            enqueue(node.parentElement);
+        }
     }
 };
 
 let processTimer;
 const MAX_TIME_SLICE_MS = 4;
+let cleanupReady = false;
 
 const processPending = ( ) => {
     processTimer = undefined;
+    if ( cleanupReady === false ) { return; }
     const deadline = self.performance.now() + MAX_TIME_SLICE_MS;
     for ( ; pendingIndex < pending.length; pendingIndex++ ) {
         if ( self.performance.now() >= deadline ) { break; }
@@ -369,18 +454,31 @@ const observer = new MutationObserver(mutations => {
         }
     }
     shadowController?.scheduleRescan?.();
-    scheduleProcess();
+    if ( cleanupReady ) {
+        scheduleProcess();
+    }
 });
+
+const onBlockHintsChanged = ( ) => {
+    collectHintedElements();
+    if ( cleanupReady ) {
+        scheduleProcess();
+    }
+};
 
 self.addEventListener?.(shadowRootsChangedEvent, event => {
     const roots = Array.isArray(event?.detail?.roots)
         ? event.detail.roots
         : undefined;
     collectKnownShadowRoots(roots);
-    scheduleProcess();
+    if ( cleanupReady ) {
+        scheduleProcess();
+    }
 });
 
 let observerConnected = false;
+let blockHintListenerConnected = false;
+let refreshRunId = 0;
 
 const resetState = ( ) => {
     pending = [];
@@ -389,9 +487,15 @@ const resetState = ( ) => {
 };
 
 const stop = async ( ) => {
+    refreshRunId += 1;
+    cleanupReady = false;
     if ( observerConnected ) {
         observer.disconnect();
         observerConnected = false;
+    }
+    if ( blockHintListenerConnected ) {
+        self.removeEventListener?.(blockHintsChangedEvent, onBlockHintsChanged);
+        blockHintListenerConnected = false;
     }
     if ( processTimer !== undefined ) {
         try { self.cancelAnimationFrame(processTimer); } catch { }
@@ -401,18 +505,30 @@ const stop = async ( ) => {
 };
 
 const refresh = async ( ) => {
+    await stop();
+    const runId = refreshRunId + 1;
+    refreshRunId = runId;
+
+    collect(document);
+    collectHintedElements();
+    shadowController?.rescanNow?.();
+    collectKnownShadowRoots();
+    observer.observe(document, { childList: true, subtree: true });
+    observerConnected = true;
+    self.addEventListener?.(blockHintsChangedEvent, onBlockHintsChanged);
+    blockHintListenerConnected = true;
+
     await guard?.whenReady?.();
+    if ( runId !== refreshRunId ) {
+        return { applied: false };
+    }
     if ( guard?.shouldRunSubsystem?.('postHideCleanup') === false ) {
         await stop();
         return { applied: false };
     }
-    await stop();
-    collect(document);
-    shadowController?.rescanNow?.();
-    collectKnownShadowRoots();
+    cleanupReady = true;
+    collectHintedElements();
     scheduleProcess();
-    observer.observe(document, { childList: true, subtree: true });
-    observerConnected = true;
     return { applied: true };
 };
 

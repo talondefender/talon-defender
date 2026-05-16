@@ -1,6 +1,6 @@
 {
   "name": "talon-defender-extension",
-  "version": "0.1.3",
+  "version": "0.1.5",
   "description": "Talon Defender browser extension",
   "license": "GPL-3.0-or-later",
   "repository": {
@@ -20,6 +20,7 @@
     "validate:mv3-package": "node scripts/validate-mv3-package.mjs",
     "validate:mv3-package:edge": "node scripts/validate-mv3-package.mjs --dir dist/edge-extension",
     "test:chrome-smoke": "node scripts/chrome-smoke.mjs",
+    "test:prepaint-visual": "node scripts/prepaint-visual-qa.mjs",
     "release:extension": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-extension.ps1",
     "release:extension:edge": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-edge-extension.ps1",
     "release:extension:all": "npm run release:extension && npm run release:extension:edge",

@@ -1288,6 +1288,7 @@ scripts/chrome-smoke.mjs
 scripts/package-edge-extension.mjs
 scripts/package-extension.mjs
 scripts/package-public-source.ps1
+scripts/prepaint-visual-qa.mjs
 scripts/release-edge-extension.ps1
 scripts/release-extension.ps1
 scripts/sync-latest-artifacts.ps1

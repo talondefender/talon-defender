@@ -1076,7 +1076,9 @@ const recordBlockedNavigation = (hostname) => {
             hostname,
             'blocked-navigation-threshold'
         ).catch(ubolErr);
-        applyAutoBackoff(hostname).catch(ubolErr);
+        // Generic top-frame blocked-navigation errors are not proof Talon broke
+        // the site. Keep this path hotfix-only; Talon breakage signals handle
+        // compatibility backoff when the page itself reports breakage evidence.
     }
 };
 
@@ -1234,6 +1236,7 @@ import {
     registerInjectables,
 } from './scripting-manager.js';
 import { setToolbarIcon, toggleToolbarIcon } from './action.js';
+import { createSingleFlightRunner } from './single-flight.js';
 
 import {
     ENTITLEMENT_CHECK_ALARM,
@@ -1302,6 +1305,28 @@ const configureUninstallURL = (source = 'extension_uninstall') => {
         ubolErr(`setUninstallURL/${reason}`);
     }
 };
+
+async function openFirstPopupWelcomeOnce() {
+    const [pending, seenAt] = await Promise.all([
+        localRead(FIRST_POPUP_WELCOME_PENDING_KEY),
+        localRead(FIRST_POPUP_WELCOME_SEEN_KEY),
+    ]);
+    if (pending !== true && pending instanceof Object === false) {
+        return { opened: false };
+    }
+    const seenTs = Number(seenAt) || 0;
+    if (seenTs > 0) {
+        await localRemove(FIRST_POPUP_WELCOME_PENDING_KEY);
+        return { opened: false };
+    }
+    const url = buildFirstPopupWelcomeURL();
+    await localWrite(FIRST_POPUP_WELCOME_SEEN_KEY, Date.now());
+    await localRemove(FIRST_POPUP_WELCOME_PENDING_KEY);
+    await gotoURL(url);
+    return { opened: true };
+}
+
+const runFirstPopupWelcomeOpen = createSingleFlightRunner(openFirstPopupWelcomeOnce);
 
 const senderOriginFrom = sender => {
     if (typeof sender?.origin === 'string' && sender.origin !== '') {
@@ -3361,25 +3386,8 @@ function onMessage(request, sender, callback) {
         }
 
         case 'maybeOpenFirstPopupWelcome': {
-            Promise.all([
-                localRead(FIRST_POPUP_WELCOME_PENDING_KEY),
-                localRead(FIRST_POPUP_WELCOME_SEEN_KEY),
-            ]).then(async ([pending, seenAt]) => {
-                if (pending !== true && pending instanceof Object === false) {
-                    callback({ opened: false });
-                    return;
-                }
-                const seenTs = Number(seenAt) || 0;
-                if (seenTs > 0) {
-                    await localRemove(FIRST_POPUP_WELCOME_PENDING_KEY);
-                    callback({ opened: false });
-                    return;
-                }
-                const url = buildFirstPopupWelcomeURL();
-                await localWrite(FIRST_POPUP_WELCOME_SEEN_KEY, Date.now());
-                await localRemove(FIRST_POPUP_WELCOME_PENDING_KEY);
-                await gotoURL(url);
-                callback({ opened: true });
+            runFirstPopupWelcomeOpen().then(result => {
+                callback(result);
             }).catch(reason => {
                 ubolErr(`maybeOpenFirstPopupWelcome/${reason}`);
                 callback({ opened: false, error: `${reason}` });

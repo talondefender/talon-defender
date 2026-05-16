@@ -1111,7 +1111,12 @@ const createContentScriptHarness = ({
   fetchJson = {},
   storageData = {},
   hostname = 'example.com',
+  readyState = 'complete',
   shouldRun = true,
+  canMutateElement = () => ({ allowed: true }),
+  isLikelyPrimaryContent = () => false,
+  isProtectedSurface = () => false,
+  blockHints: blockHintsOverride = {},
   protection = {
     category: '',
     allowedRiskTier: 3,
@@ -1125,6 +1130,7 @@ const createContentScriptHarness = ({
   const animationFrames = new Map();
   const mutationObservers = [];
   const document = new FakeDocument();
+  document.readyState = readyState;
   const messages = [];
   const shadowRoots = [];
   let scheduledAnimationFrameCount = 0;
@@ -1250,19 +1256,54 @@ const createContentScriptHarness = ({
     RISK_TIERS: { medium: 2, high: 3 },
     whenReady: async () => {},
     shouldRunSubsystem: () => shouldRun,
-    canMutateElement: () => ({ allowed: true }),
-    isLikelyPrimaryContent: () => false,
+    canMutateElement,
+    isLikelyPrimaryContent,
     getProtection: () => ({ ...protection }),
     registrableDomain: value => String(value || '').trim().toLowerCase(),
-    isProtectedSurface: () => false,
+    isProtectedSurface,
     auditAfterMutation: () => {},
   };
 
-  const blockHints = {
-    noteElement: () => {},
-    hasRecentHint: () => false,
-    hasRecentNetworkHit: () => false,
+  const hintedElements = [];
+  const hintedSet = new WeakSet();
+  const rememberHint = element => {
+    if (element instanceof FakeElement === false || hintedSet.has(element)) {
+      return false;
+    }
+    hintedSet.add(element);
+    hintedElements.push(element);
+    return true;
   };
+  const hintElementAndAncestors = (element, ancestors = 1) => {
+    let count = 0;
+    let current = element;
+    let remaining = Number.isFinite(ancestors) ? Math.max(0, ancestors) : 0;
+    while (current instanceof FakeElement) {
+      if (rememberHint(current)) {
+        count += 1;
+      }
+      if (remaining <= 0) { break; }
+      remaining -= 1;
+      current = current.parentElement;
+    }
+    return count;
+  };
+  const defaultBlockHints = {
+    HINT_ATTR: 'data-talon-block-hint',
+    HINTS_CHANGED_EVENT: 'talon-block-hints-changed',
+    noteElement: (element, { ancestors = 1 } = {}) =>
+      hintElementAndAncestors(element, ancestors),
+    hasRecentHint: (element, { includeSubtree = false } = {}) => {
+      if (element instanceof FakeElement === false) { return false; }
+      if (hintedSet.has(element)) { return true; }
+      return includeSubtree === true &&
+        collectDescendants(element).some(node => hintedSet.has(node));
+    },
+    hasRecentNetworkHit: () => false,
+    getRecentElements: () =>
+      hintedElements.filter(element => element.isConnected !== false),
+  };
+  const blockHints = { ...defaultBlockHints, ...blockHintsOverride };
 
   const shadowController = {
     ROOTS_CHANGED_EVENT: 'talon-shadow-roots-changed',
@@ -1369,6 +1410,9 @@ const createContentScriptHarness = ({
     mutationObservers,
     shadowController,
     createElement,
+    hintElement(element, options) {
+      return hintElementAndAncestors(element, options?.ancestors ?? 1);
+    },
     async load() {
       vm.runInNewContext(source, context, { filename: 'content-script.js' });
       await settle();
@@ -1532,6 +1576,154 @@ test('native heuristics stop disconnects keep-hidden observers created for hidde
     harness.countConnectedObservers(),
     0,
     'native heuristics stop should disconnect both the main observer and keep-hidden observers'
+  );
+});
+
+test('post-hide cleanup collects ad-shell candidates before DOMContentLoaded', async () => {
+  const harness = createContentScriptHarness({
+    source: postHideCleanupSource,
+    readyState: 'loading',
+  });
+
+  const wrapper = harness.createElement({
+    tagName: 'section',
+    className: 'leaderboard-shell',
+    width: 970,
+    height: 250,
+  });
+  const shell = harness.createElement({
+    className: 'freestar-ads',
+    parent: wrapper,
+    width: 970,
+    height: 250,
+  });
+  shell.style.setProperty('display', 'none', 'important');
+
+  await harness.load();
+
+  assert.equal(harness.document.readyState, 'loading');
+  assert.equal(
+    harness.isHidden(wrapper),
+    true,
+    'early hidden ad shell evidence should collapse its reserved wrapper'
+  );
+});
+
+test('post-hide cleanup preserves protected page surfaces', async () => {
+  const structuralHarness = createContentScriptHarness({
+    source: postHideCleanupSource,
+  });
+  structuralHarness.document.body.className = 'ad-slot';
+  structuralHarness.document.body.width = 300;
+  structuralHarness.document.body.height = 250;
+  const header = structuralHarness.createElement({
+    tagName: 'header',
+    className: 'ad-slot',
+    width: 300,
+    height: 250,
+  });
+  const nav = structuralHarness.createElement({
+    tagName: 'nav',
+    className: 'ad-slot',
+    width: 300,
+    height: 250,
+  });
+  const footer = structuralHarness.createElement({
+    tagName: 'footer',
+    className: 'ad-slot',
+    width: 300,
+    height: 250,
+  });
+
+  await structuralHarness.load();
+
+  assert.equal(structuralHarness.isHidden(structuralHarness.document.body), false);
+  assert.equal(structuralHarness.isHidden(header), false);
+  assert.equal(structuralHarness.isHidden(nav), false);
+  assert.equal(structuralHarness.isHidden(footer), false);
+
+  const primaryHarness = createContentScriptHarness({
+    source: postHideCleanupSource,
+    isLikelyPrimaryContent: element => element.tagName === 'ARTICLE',
+  });
+  const article = primaryHarness.createElement({
+    tagName: 'article',
+    className: 'ad-slot',
+    width: 728,
+    height: 90,
+  });
+
+  await primaryHarness.load();
+
+  assert.equal(primaryHarness.isHidden(article), false);
+
+  const guardedHarness = createContentScriptHarness({
+    source: postHideCleanupSource,
+    canMutateElement: element => ({
+      allowed: element.id !== 'checkout-panel',
+    }),
+  });
+  const checkout = guardedHarness.createElement({
+    tagName: 'section',
+    id: 'checkout-panel',
+    className: 'ad-slot',
+    width: 300,
+    height: 250,
+  });
+
+  await guardedHarness.load();
+
+  assert.equal(guardedHarness.isHidden(checkout), false);
+});
+
+test('post-hide cleanup needs strong evidence to collapse nonstandard parent gaps', async () => {
+  const weakHarness = createContentScriptHarness({
+    source: postHideCleanupSource,
+  });
+  const weakWrapper = weakHarness.createElement({
+    tagName: 'section',
+    width: 420,
+    height: 180,
+  });
+  const weakSlot = weakHarness.createElement({
+    className: 'ad-slot',
+    parent: weakWrapper,
+    width: 300,
+    height: 250,
+  });
+  weakSlot.style.setProperty('display', 'none', 'important');
+
+  await weakHarness.load();
+
+  assert.equal(
+    weakHarness.isHidden(weakWrapper),
+    false,
+    'weak hidden naming alone should not collapse a nonstandard wrapper'
+  );
+
+  const hintedHarness = createContentScriptHarness({
+    source: postHideCleanupSource,
+  });
+  const hintedWrapper = hintedHarness.createElement({
+    tagName: 'section',
+    width: 420,
+    height: 180,
+  });
+  const hintedSlot = hintedHarness.createElement({
+    className: 'ad-slot',
+    parent: hintedWrapper,
+    width: 300,
+    height: 250,
+  });
+  hintedSlot.style.setProperty('display', 'none', 'important');
+  hintedHarness.hintElement(hintedSlot, { ancestors: 1 });
+
+  await hintedHarness.load();
+
+  assert.equal(
+    hintedHarness.isHidden(hintedWrapper),
+    true,
+    'a block hint should allow a nonstandard empty wrapper to collapse'
   );
 });
 

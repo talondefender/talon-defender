@@ -69,7 +69,7 @@ let paywalled = false;
 let licenseEntryVisible = false;
 let expiredKeyEntryVisible = false;
 let currentReloadNeededReason = "";
-let currentCompatibilityMode = null;
+let toggleChangeInFlight = false;
 
 const GLOBAL_PAUSE_SNAPSHOT_KEY = "globalPauseFilteringModesSnapshot";
 const ENTITLEMENT_LOCAL_STORAGE_KEY = "talonEntitlement";
@@ -131,17 +131,20 @@ function clearCurrentTabState() {
   currentTabUrl = "";
   currentSiteLevel = defaultFilteringMode;
   currentReloadNeededReason = "";
-  currentCompatibilityMode = null;
   renderAllowedSitesControls();
   renderRuntimeNotice();
 }
 
-async function reloadCurrentTab(context) {
+async function reloadCurrentTab(context, reloadProperties = null) {
   if (!currentTabId) {
     return false;
   }
   try {
-    await chrome.tabs.reload(currentTabId);
+    if (reloadProperties) {
+      await chrome.tabs.reload(currentTabId, reloadProperties);
+    } else {
+      await chrome.tabs.reload(currentTabId);
+    }
     return true;
   } catch (error) {
     const ignorable = isIgnorableRuntimeError(error);
@@ -531,17 +534,10 @@ function wireEvents() {
   bindLicenseKeyFormatter(expiredLicenseKeyEl);
 
   if (toggleButton) {
-    toggleButton.addEventListener("click", async () => {
-      if (paywalled) {
-        focusLicenseEntry();
-        return;
-      }
-      setToggleLoading(true);
-      try {
-        await setSiteEnabled(!currentEnabledState);
-      } finally {
-        setToggleLoading(false);
-      }
+    toggleButton.addEventListener("click", () => {
+      handleProtectionToggleClick().catch((error) => {
+        console.error("Protection toggle failed", error);
+      });
     });
   }
 
@@ -581,17 +577,6 @@ function wireEvents() {
     runtimeNoticeReloadButton.addEventListener("click", async () => {
       runtimeNoticeReloadButton.disabled = true;
       try {
-        if (isCompatibilityModeActive()) {
-          await sendRuntimeMessageWithTimeout({
-            what: "restoreCompatibilityMode",
-            hostname: currentHost || ""
-          });
-          currentCompatibilityMode = null;
-          await refreshPopupPanelData().catch(() => {});
-          await reloadCurrentTab("reload tab after compatibility restore");
-          window.close();
-          return;
-        }
         const reloaded = await reloadCurrentTab("reload tab for hotfix");
         if (!reloaded) {
           return;
@@ -757,28 +742,15 @@ function renderRuntimeNotice() {
   if (!runtimeNoticeEl || !runtimeNoticeTextEl || !runtimeNoticeReloadButton) {
     return;
   }
-  const compatibilityVisible = Boolean(currentTabId) &&
-    !paywalled &&
-    isCompatibilityModeActive();
   const hotfixVisible = Boolean(currentTabId) &&
     !paywalled &&
     currentReloadNeededReason === "remoteScriptletHotfix";
-  const visible = compatibilityVisible || hotfixVisible;
-  runtimeNoticeEl.hidden = !visible;
-  if (!visible) {
+  runtimeNoticeEl.hidden = !hotfixVisible;
+  if (!hotfixVisible) {
     return;
   }
-  if (compatibilityVisible) {
-    runtimeNoticeTextEl.textContent = "Compatibility mode is active on this site. Ads may be blocked less aggressively.";
-    runtimeNoticeReloadButton.textContent = "Restore blocking";
-  } else {
-    runtimeNoticeTextEl.textContent = "Reload this tab to apply the latest Talon Defender hotfix.";
-    runtimeNoticeReloadButton.textContent = "Reload tab";
-  }
-}
-
-function isCompatibilityModeActive() {
-  return currentCompatibilityMode?.active === true;
+  runtimeNoticeTextEl.textContent = "Reload this tab to apply the latest Talon Defender hotfix.";
+  runtimeNoticeReloadButton.textContent = "Reload tab";
 }
 
 async function refreshRuntimeNoticeState() {
@@ -835,9 +807,6 @@ async function refreshPopupPanelData() {
   currentReloadNeededReason = typeof panelData?.reloadNeededState?.reason === "string"
     ? panelData.reloadNeededState.reason
     : "";
-  currentCompatibilityMode = panelData?.compatibilityMode?.active === true
-    ? panelData.compatibilityMode
-    : null;
   renderRuntimeNotice();
 }
 
@@ -1323,7 +1292,85 @@ function renderAllowedSitesControls() {
   }
 }
 
-async function setSiteEnabled(enabled) {
+function ensureToggleMarkup() {
+  if (!toggleButton || toggleButton.querySelector(".switch-track")) {
+    return;
+  }
+
+  const track = document.createElement("span");
+  track.className = "switch-track";
+  const knob = document.createElement("span");
+  knob.className = "switch-knob";
+  track.appendChild(knob);
+  toggleButton.appendChild(track);
+}
+
+function captureProtectionToggleState() {
+  return {
+    currentEnabledState,
+    defaultFilteringMode,
+    currentSiteLevel
+  };
+}
+
+function restoreProtectionToggleState(snapshot) {
+  currentEnabledState = snapshot.currentEnabledState;
+  defaultFilteringMode = snapshot.defaultFilteringMode;
+  currentSiteLevel = snapshot.currentSiteLevel;
+  renderToggle(currentEnabledState);
+  renderAllowedSitesControls();
+}
+
+function applyOptimisticProtectionToggle(enabled) {
+  const nextLevel = enabled ? getProtectionLevelForCurrentSite() : MODE_NONE;
+  currentEnabledState = enabled;
+  defaultFilteringMode = nextLevel;
+
+  if (!currentHost || !enabled || currentSiteLevel === MODE_NONE) {
+    currentSiteLevel = nextLevel;
+  }
+
+  renderToggle(currentEnabledState);
+  renderAllowedSitesControls();
+}
+
+async function handleProtectionToggleClick() {
+  if (paywalled) {
+    focusLicenseEntry();
+    return;
+  }
+  if (toggleChangeInFlight) {
+    return;
+  }
+
+  const previousState = captureProtectionToggleState();
+  const nextEnabled = !currentEnabledState;
+  toggleChangeInFlight = true;
+  applyOptimisticProtectionToggle(nextEnabled);
+  setToggleLoading(true);
+
+  try {
+    await commitSiteEnabled(nextEnabled);
+    await refreshFilteringState();
+    await refreshPopupPanelData().catch(() => {});
+    reloadCurrentTab(
+      "reload tab after protection change",
+      nextEnabled ? null : { bypassCache: true }
+    ).catch(() => {});
+  } catch (error) {
+    restoreProtectionToggleState(previousState);
+    await Promise.allSettled([
+      refreshFilteringState(),
+      refreshPopupPanelData()
+    ]);
+    throw error;
+  } finally {
+    toggleChangeInFlight = false;
+    setToggleLoading(false);
+  }
+}
+
+async function commitSiteEnabled(enabled) {
   if (enabled) {
     const snapshot = await readGlobalPauseSnapshot();
     if (snapshot) {
@@ -1335,14 +1382,20 @@ async function setSiteEnabled(enabled) {
     }
   } else {
     const currentModes = await chrome.runtime.sendMessage({ what: "getFilteringModeDetails" });
+    let snapshotWrittenForThisAttempt = false;
     if (isValidFilteringModesSnapshot(currentModes)) {
       await writeGlobalPauseSnapshot(currentModes);
+      snapshotWrittenForThisAttempt = true;
     }
-    await chrome.runtime.sendMessage({ what: "setFilteringModeDetails", modes: PAUSED_FILTERING_MODES });
+    try {
+      await chrome.runtime.sendMessage({ what: "setFilteringModeDetails", modes: PAUSED_FILTERING_MODES });
+    } catch (error) {
+      if (snapshotWrittenForThisAttempt) {
+        await clearGlobalPauseSnapshot();
+      }
+      throw error;
+    }
   }
-  await refreshFilteringState();
-  await refreshPopupPanelData().catch(() => {});
-  await reloadCurrentTab("reload tab after protection change");
 }
 
 async function setSiteMode(level) {
@@ -1378,9 +1431,11 @@ async function refreshFilterCatalog() {
 
 
 function renderToggle(enabled) {
+  currentEnabledState = Boolean(enabled);
   if (!toggleButton) {
     return;
   }
+  ensureToggleMarkup();
   if (paywalled) {
     toggleButton.disabled = false;
     toggleButton.classList.add("off");
@@ -1390,10 +1445,11 @@ function renderToggle(enabled) {
     updateStatusSummary();
     return;
   }
-  toggleButton.classList.toggle("off", !enabled);
-  const toggleLabelKey = enabled ? "popupToggleDisableProtection" : "popupToggleEnableProtection";
+  toggleButton.classList.toggle("off", !currentEnabledState);
+  const toggleLabelKey = currentEnabledState ? "popupToggleDisableProtection" : "popupToggleEnableProtection";
   toggleButton.setAttribute("data-i18n-aria-label", toggleLabelKey);
   toggleButton.setAttribute("aria-label", t(toggleLabelKey));
+  toggleButton.setAttribute("aria-checked", String(currentEnabledState));
   updateStatusSummary();
 }
 
@@ -1497,18 +1553,7 @@ function updateStatusSummary() {
     headerEl.classList.toggle("paused", !currentEnabledState);
   }
 
-  // Update Switch State
-  if (toggleButton) {
-    toggleButton.classList.toggle("off", !currentEnabledState);
-    toggleButton.setAttribute("aria-checked", String(currentEnabledState));
-    toggleButton.textContent = "";
-    const track = document.createElement("span");
-    track.className = "switch-track";
-    const knob = document.createElement("span");
-    knob.className = "switch-knob";
-    track.appendChild(knob);
-    toggleButton.appendChild(track);
-  }
+  ensureToggleMarkup();
 
   updateProtectionSummary(currentEnabledState);
 }

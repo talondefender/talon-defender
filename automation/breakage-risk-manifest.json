@@ -30,7 +30,7 @@
     "id": "post-hide-cleanup",
     "tier": 2,
     "hostScope": "optimal and complete modes",
-    "runTiming": "document_idle",
+    "runTiming": "document_start",
     "frameScope": "all frames",
     "mutationType": "collapse containers after hides",
     "protectedExposure": "medium-high"

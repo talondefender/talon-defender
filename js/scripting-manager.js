@@ -1008,6 +1008,7 @@ function registerAdShellStyles(context) {
 
     const js = [
         '/js/scripting/breakage-guard.js',
+        TALON_BLOCK_HINTS_PATH,
         '/js/scripting/ad-shell-styles.js',
     ];
 
@@ -1025,6 +1026,10 @@ function registerAdShellStyles(context) {
     if ( none.has('all-urls') === false ) {
         excludeMatches.push(...ut.matchesFromHostnames(none));
     }
+    pushExactExcludeMatches(
+        excludeMatches,
+        subsystemSuppressionHostnames?.adShellStyles
+    );
 
     const registered = before.get('ad-shell-styles');
     before.delete('ad-shell-styles'); // Important!
@@ -1085,10 +1090,6 @@ function registerRemoteCosmetics(context) {
     if ( none.has('all-urls') === false ) {
         excludeMatches.push(...ut.matchesFromHostnames(none));
     }
-    pushExactExcludeMatches(
-        excludeMatches,
-        subsystemSuppressionHostnames?.adShellStyles
-    );
     if ( basic.has('all-urls') === false ) {
         excludeMatches.push(...ut.matchesFromHostnames(basic));
     }
@@ -1219,7 +1220,7 @@ function registerPostHideCleanup(context) {
         allFrames: true,
         matchOriginAsFallback: true,
         matches,
-        runAt: 'document_idle',
+        runAt: 'document_start',
     };
     if ( excludeMatches.length !== 0 ) {
         directive.excludeMatches = excludeMatches;

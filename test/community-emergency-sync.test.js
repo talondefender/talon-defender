@@ -137,11 +137,43 @@ test('community emergency sync blocks invalid lane states and keeps rolling coun
 
 test('background wires emergency sync triggers into breakage and blocked-navigation recovery', async () => {
   const source = await readFile(resolve('js/background.js'), 'utf8');
+  const blockedNavigationStart = source.indexOf('const recordBlockedNavigation = (hostname) => {');
+  const blockedNavigationEnd = source.indexOf('const recordBreakageSignal', blockedNavigationStart);
+  const breakageSignalStart = source.indexOf('const recordBreakageSignal = async');
+  const breakageSignalEnd = source.indexOf('const initAutoBackoff', breakageSignalStart);
+  const webNavigationStart = source.indexOf('if (chrome.webNavigation?.onErrorOccurred)');
+  const webNavigationEnd = source.indexOf("import {", webNavigationStart);
+  const blockedNavigationSource = source.slice(blockedNavigationStart, blockedNavigationEnd);
+  const breakageSignalSource = source.slice(breakageSignalStart, breakageSignalEnd);
+  const webNavigationSource = source.slice(
+    webNavigationStart,
+    webNavigationEnd === -1 ? undefined : webNavigationEnd
+  );
 
   assert.equal(source.includes('triggerEmergencyCommunitySync('), true);
   assert.equal(source.includes('recordCommunityEmergencySyncAttempt('), true);
   assert.equal(source.includes('recordCommunityEmergencySyncSuccess('), true);
-  assert.equal(source.includes("'blocked-navigation-threshold'"), true);
-  assert.equal(source.includes('severe-signal:${normalizedSignal}'), true);
-  assert.equal(source.includes('signal-threshold:${normalizedSignal}'), true);
+  assert.notEqual(blockedNavigationStart, -1);
+  assert.notEqual(blockedNavigationEnd, -1);
+  assert.notEqual(breakageSignalStart, -1);
+  assert.notEqual(breakageSignalEnd, -1);
+  assert.notEqual(webNavigationStart, -1);
+
+  assert.match(blockedNavigationSource, /triggerEmergencyCommunitySync\(\s*hostname,\s*'blocked-navigation-threshold'\s*\)/);
+  assert.doesNotMatch(blockedNavigationSource, /applyAutoBackoff\(/);
+  assert.match(
+    blockedNavigationSource,
+    /Generic top-frame blocked-navigation errors are not proof Talon broke/
+  );
+
+  assert.match(breakageSignalSource, /severe-signal:\$\{normalizedSignal\}/);
+  assert.match(breakageSignalSource, /signal-threshold:\$\{normalizedSignal\}/);
+  assert.match(breakageSignalSource, /applySubsystemBackoff\(/);
+  assert.match(breakageSignalSource, /applyAutoBackoff\(normalizedHostname\)/);
+
+  assert.match(webNavigationSource, /chrome\.webNavigation\?\.onErrorOccurred/);
+  assert.match(webNavigationSource, /details\?\.frameId !== 0/);
+  assert.match(webNavigationSource, /AUTO_BACKOFF_ERROR_RE\.test\(details\?\.error \|\| ''\)/);
+  assert.match(webNavigationSource, /normalizeHttpHostname\(details\?\.url \|\| ''\)/);
+  assert.match(webNavigationSource, /recordBlockedNavigation\(hostname\)/);
 });

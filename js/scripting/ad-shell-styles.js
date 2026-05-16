@@ -30,6 +30,20 @@ const HOST_SCOPED_SELECTORS = Object.freeze([
             '.ad-container[class*="ad-h-" i][class*="ad-w-" i]',
         ],
     },
+    {
+        host: 'foxweather.com',
+        selectors: [
+            '.pre-content:has(> .ad-container[class*="ad-h-" i][class*="ad-w-" i])',
+            '.ad-container[class*="ad-h-" i][class*="ad-w-" i]',
+        ],
+    },
+    {
+        host: 'sdin.jp',
+        selectors: [
+            'aside .rec3:has(> ins.adsbygoogle)',
+            'main > #vdo3:has(> #min > #vdo-fourm)',
+        ],
+    },
 ]);
 
 const hostname = (self.location?.hostname || '').toLowerCase();
@@ -54,12 +68,48 @@ const STYLE_TEXT =
 
 const STYLE_ID = 'ubol-ad-shell-styles';
 const SUBSYSTEM_ID = 'adShellStyles';
+const blockHints = self.TalonBlockHintsController;
 
 const remove = () => {
     try {
         document.getElementById(STYLE_ID)?.remove();
     } catch {
     }
+};
+
+const markMatchedShells = () => {
+    if ( typeof blockHints?.noteElement !== 'function' ) { return 0; }
+    const seen = new Set();
+    let count = 0;
+    for ( const selector of selectors ) {
+        let nodes = [];
+        try {
+            nodes = document.querySelectorAll?.(selector) || [];
+        } catch {
+            nodes = [];
+        }
+        for ( const node of nodes ) {
+            if ( node instanceof Element === false || seen.has(node) ) { continue; }
+            seen.add(node);
+            count += blockHints.noteElement(node, { ancestors: 1 });
+        }
+    }
+    return count;
+};
+
+const applyPrepaint = () => {
+    try {
+        if ( document.getElementById(STYLE_ID) === null ) {
+            const style = document.createElement('style');
+            style.id = STYLE_ID;
+            style.textContent = STYLE_TEXT;
+            (document.head || document.documentElement || document).append(style);
+        }
+        markMatchedShells();
+        return true;
+    } catch {
+    }
+    return false;
 };
 
 const shouldRun = async () => {
@@ -75,16 +125,9 @@ const shouldRun = async () => {
 const inject = async () => {
     if ( await shouldRun() === false ) {
         remove();
-        return;
+        return { applied: false };
     }
-    try {
-        if ( document.getElementById(STYLE_ID) ) { return; }
-        const style = document.createElement('style');
-        style.id = STYLE_ID;
-        style.textContent = STYLE_TEXT;
-        (document.head || document.documentElement || document).append(style);
-    } catch {
-    }
+    return { applied: applyPrepaint() };
 };
 
 self.TalonAdShellStylesController = {
@@ -93,9 +136,11 @@ self.TalonAdShellStylesController = {
 };
 
 if ( document.documentElement ) {
+    applyPrepaint();
     inject().catch(() => {});
 } else {
     document.addEventListener('readystatechange', () => {
+        applyPrepaint();
         inject().catch(() => {});
     }, { once: true });
 }

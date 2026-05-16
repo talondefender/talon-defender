@@ -81,8 +81,10 @@ test('popup exposes reviewer-visible Allowed Sites controls for the current tab'
   assert.match(popupSource, /function renderAllowedSitesControls\(\)/);
   assert.match(popupSource, /setSiteMode\(MODE_NONE\)/);
   assert.match(popupSource, /setSiteMode\(getProtectionLevelForCurrentSite\(\)\)/);
-  assert.match(popupSource, /function isCompatibilityModeActive\(\)/);
-  assert.match(popupSource, /what: "restoreCompatibilityMode"/);
+  assert.doesNotMatch(popupSource, /Compatibility mode is active on this site/);
+  assert.doesNotMatch(popupSource, /Ads may be blocked less aggressively/);
+  assert.doesNotMatch(popupSource, /Restore blocking/);
+  assert.doesNotMatch(popupSource, /what: "restoreCompatibilityMode"/);
   assert.match(backgroundSource, /compatibilityMode: getActiveCompatibilityModeForHostname\(sanitizedHostname\)/);
   assert.match(backgroundSource, /case 'restoreCompatibilityMode':/);
 });
@@ -108,6 +110,58 @@ test('popup current-tab allow action is localized in every bundled locale', asyn
       assert.notEqual(label, englishLabel, `${locale} falls back to English for popupAllowThisSiteButton`);
     }
   }
+});
+
+test('popup protection toggle updates optimistically without blocking on refresh or reload', async () => {
+  const popupSource = await readSource('popup/popup.js');
+  const popupCss = await readSource('popup/popup.css');
+  const clickStart = popupSource.indexOf('async function handleProtectionToggleClick()');
+  const clickEnd = popupSource.indexOf('async function commitSiteEnabled', clickStart);
+  const commitStart = popupSource.indexOf('async function commitSiteEnabled(enabled)');
+  const commitEnd = popupSource.indexOf('async function setSiteMode', commitStart);
+  const statusStart = popupSource.indexOf('function updateStatusSummary()');
+  const statusEnd = popupSource.indexOf('function updateProtectionSummary', statusStart);
+  const clickSource = popupSource.slice(clickStart, clickEnd);
+  const commitSource = popupSource.slice(commitStart, commitEnd);
+  const statusSource = popupSource.slice(statusStart, statusEnd);
+
+  assert.ok(clickStart !== -1);
+  assert.ok(commitStart !== -1);
+  assert.ok(statusStart !== -1);
+  assert.match(popupSource, /let toggleChangeInFlight = false;/);
+  assert.match(clickSource, /if \(toggleChangeInFlight\) \{\s*return;\s*\}/);
+
+  const captureIndex = clickSource.indexOf('const previousState = captureProtectionToggleState();');
+  const optimisticIndex = clickSource.indexOf('applyOptimisticProtectionToggle(nextEnabled);');
+  const commitIndex = clickSource.indexOf('await commitSiteEnabled(nextEnabled);');
+  assert.ok(captureIndex !== -1 && optimisticIndex !== -1 && commitIndex !== -1);
+  assert.ok(captureIndex < optimisticIndex);
+  assert.ok(optimisticIndex < commitIndex);
+  assert.match(clickSource, /restoreProtectionToggleState\(previousState\);/);
+  assert.match(clickSource, /reloadCurrentTab\(\s*"reload tab after protection change",\s*nextEnabled \? null : \{ bypassCache: true \}\s*\)\.catch\(\(\) => \{\}\);/);
+  assert.match(popupSource, /async function reloadCurrentTab\(context, reloadProperties = null\)/);
+  assert.match(popupSource, /chrome\.tabs\.reload\(currentTabId, reloadProperties\);/);
+
+  assert.doesNotMatch(commitSource, /refreshFilteringState\(/);
+  assert.doesNotMatch(commitSource, /refreshPopupPanelData\(/);
+  assert.doesNotMatch(commitSource, /reloadCurrentTab\(/);
+  const writeSnapshotIndex = commitSource.indexOf('await writeGlobalPauseSnapshot(currentModes);');
+  const pauseModesIndex = commitSource.indexOf('modes: PAUSED_FILTERING_MODES');
+  const restoreSnapshotIndex = commitSource.indexOf('modes: snapshot');
+  const clearSnapshotIndex = commitSource.indexOf('await clearGlobalPauseSnapshot();');
+  assert.ok(writeSnapshotIndex !== -1 && pauseModesIndex !== -1);
+  assert.ok(restoreSnapshotIndex !== -1 && clearSnapshotIndex !== -1);
+  assert.ok(writeSnapshotIndex < pauseModesIndex);
+  assert.ok(restoreSnapshotIndex < clearSnapshotIndex);
+  assert.match(commitSource, /if \(snapshotWrittenForThisAttempt\) \{\s*await clearGlobalPauseSnapshot\(\);/);
+
+  assert.match(popupSource, /function ensureToggleMarkup\(\)/);
+  assert.doesNotMatch(statusSource, /toggleButton\.textContent = ""/);
+  assert.doesNotMatch(statusSource, /document\.createElement\("span"\)/);
+  assert.doesNotMatch(statusSource, /appendChild\(track\)/);
+  assert.match(popupCss, /\.switch-track \{[\s\S]*transition: background-color 0\.16s ease;/);
+  assert.match(popupCss, /\.switch-knob \{[\s\S]*transition: transform 0\.16s ease, left 0\.16s ease;/);
+  assert.match(popupCss, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.switch-track,[\s\S]*\.switch-knob,[\s\S]*\.expired-step-button \{/);
 });
 
 test('picker overlay startup requires a one-time background capability claim', async () => {
@@ -210,6 +264,24 @@ test('popup warmup attempts a bounded injectable recovery before reporting start
   assert.match(source, /callback\(buildPopupWarmupResponse\(\{/);
 });
 
+test('first-popup welcome tab open is single-flight guarded', async () => {
+  const source = await readSource('js/background.js');
+  const openerStart = source.indexOf('async function openFirstPopupWelcomeOnce()');
+  const openerEnd = source.indexOf('const runFirstPopupWelcomeOpen', openerStart);
+  const handlerStart = source.indexOf("case 'maybeOpenFirstPopupWelcome':");
+  const handlerEnd = source.indexOf("case 'gotoURL':", handlerStart);
+  const openerSource = source.slice(openerStart, openerEnd);
+  const handlerSource = source.slice(handlerStart, handlerEnd);
+
+  assert.match(source, /import \{ createSingleFlightRunner \} from '\.\/single-flight\.js';/);
+  assert.match(source, /const runFirstPopupWelcomeOpen = createSingleFlightRunner\(openFirstPopupWelcomeOnce\);/);
+  assert.match(handlerSource, /runFirstPopupWelcomeOpen\(\)\.then\(result => \{\s*callback\(result\);/);
+  assert.ok(
+    openerSource.indexOf('localWrite(FIRST_POPUP_WELCOME_SEEN_KEY') <
+      openerSource.indexOf('gotoURL(url)')
+  );
+});
+
 test('automation host-filters first and only loads ruleset state when a gate is present', async () => {
   const source = await readSource('js/scripting/automation.js');
 
@@ -223,18 +295,53 @@ test('automation host-filters first and only loads ruleset state when a gate is 
 
 test('ad shell prepaint is guarded and excludes broad generic ad-slot selectors', async () => {
   const source = await readSource('js/scripting/ad-shell-styles.js');
+  const blockHintsSource = await readSource('js/scripting/block-hints.js');
   const managerSource = await readSource('js/scripting-manager.js');
   const guardSource = await readSource('js/scripting/breakage-guard.js');
   const autoBackoffSource = await readSource('js/auto-backoff.js');
+  const adShellRegister = managerSource.slice(
+    managerSource.indexOf('function registerAdShellStyles'),
+    managerSource.indexOf('function registerRemoteCosmetics')
+  );
+  const remoteCosmeticsRegister = managerSource.slice(
+    managerSource.indexOf('function registerRemoteCosmetics'),
+    managerSource.indexOf('function registerPostHideCleanup')
+  );
+  const postHideRegister = managerSource.slice(
+    managerSource.indexOf('function registerPostHideCleanup'),
+    managerSource.indexOf('async function registerInjectables')
+  );
 
   assert.match(source, /const BASE_SELECTORS = \[/);
   assert.match(source, /const HOST_SCOPED_SELECTORS = Object\.freeze\(\[/);
   assert.match(source, /const SUBSYSTEM_ID = 'adShellStyles';/);
+  assert.match(source, /const blockHints = self\.TalonBlockHintsController;/);
+  assert.match(source, /host: 'foxweather\.com'/);
+  assert.equal(
+    source.includes("'.pre-content:has(> .ad-container[class*=\"ad-h-\" i][class*=\"ad-w-\" i])'"),
+    true
+  );
+  assert.equal(
+    source.includes("'.ad-container[class*=\"ad-h-\" i][class*=\"ad-w-\" i]'"),
+    true
+  );
+  assert.match(source, /host: 'sdin\.jp'/);
+  assert.match(source, /'aside \.rec3:has\(> ins\.adsbygoogle\)'/);
+  assert.match(source, /'main > #vdo3:has\(> #min > #vdo-fourm\)'/);
+  assert.match(source, /const applyPrepaint = \(\) => \{[\s\S]*style\.textContent = STYLE_TEXT;[\s\S]*markMatchedShells\(\);/);
+  assert.match(source, /blockHints\.noteElement\(node, \{ ancestors: 1 \}\)/);
+  assert.match(source, /if \( document\.documentElement \) \{\s*applyPrepaint\(\);\s*inject\(\)\.catch/);
+  assert.match(source, /document\.addEventListener\('readystatechange', \(\) => \{\s*applyPrepaint\(\);\s*inject\(\)\.catch/);
   assert.match(source, /guard\?\.shouldRunSubsystem\?\.\(SUBSYSTEM_ID\) !== false/);
   assert.match(source, /document\.getElementById\(STYLE_ID\)\?\.remove\(\);/);
   assert.match(source, /style\.textContent = STYLE_TEXT;/);
-  assert.match(managerSource, /'\/js\/scripting\/breakage-guard\.js',\s*'\/js\/scripting\/ad-shell-styles\.js'/);
-  assert.match(managerSource, /subsystemSuppressionHostnames\?\.adShellStyles/);
+  assert.match(adShellRegister, /'\/js\/scripting\/breakage-guard\.js',\s*TALON_BLOCK_HINTS_PATH,\s*'\/js\/scripting\/ad-shell-styles\.js'/);
+  assert.match(adShellRegister, /pushExactExcludeMatches\([\s\S]*subsystemSuppressionHostnames\?\.adShellStyles/);
+  assert.doesNotMatch(remoteCosmeticsRegister, /subsystemSuppressionHostnames\?\.adShellStyles/);
+  assert.match(postHideRegister, /id: 'post-hide-cleanup'[\s\S]*runAt: 'document_start'/);
+  assert.match(blockHintsSource, /const HINTS_CHANGED_EVENT = 'talon-block-hints-changed';/);
+  assert.match(blockHintsSource, /const getRecentElements = \( \) => \{/);
+  assert.match(blockHintsSource, /notifyHintsChanged\(count\);/);
   assert.match(guardSource, /'adShellStyles'/);
   assert.match(autoBackoffSource, /'adShellStyles'/);
   assert.doesNotMatch(source, /\[data-ad/);
