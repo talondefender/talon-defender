@@ -56,8 +56,10 @@ const COMMUNITY_URL_DEFAULT = (() => {
     return 'https://api.talondefender.com/v1/community/latest.bundle.json';
 })();
 
-// Base64-encoded Ed25519 public key. Leave empty to disable remote bundles.
-const COMMUNITY_PUBLIC_KEY_B64 = 'yruHWK0iAC1kxojUHLL55jK923qZSPF/DsmuTCT8TUk=';
+const COMMUNITY_DEFAULT_PUBLIC_KEYS_B64 = Object.freeze({
+    default: 'yruHWK0iAC1kxojUHLL55jK923qZSPF/DsmuTCT8TUk=',
+});
+const COMMUNITY_SIGNING_KEY_ID_RE = /^[A-Za-z0-9._:-]{1,64}$/;
 
 const FALLBACK_PATH = 'automation/community-fallback.json';
 
@@ -281,6 +283,76 @@ const base64ToBytes = b64 => {
     } catch {
     }
     return new Uint8Array(0);
+};
+
+const normalizeCommunitySigningKeyId = value => {
+    if ( typeof value !== 'string' ) { return ''; }
+    const normalized = value.trim();
+    return COMMUNITY_SIGNING_KEY_ID_RE.test(normalized) ? normalized : '';
+};
+
+const getCommunitySigningConfig = () => {
+    const publicKeysB64 = Object.assign(Object.create(null), COMMUNITY_DEFAULT_PUBLIC_KEYS_B64);
+    const revokedKeyIds = new Set();
+    let disabled = false;
+    try {
+        const manifest = runtime.getManifest?.() || {};
+        disabled = manifest.talonCommunitySyncDisabled === true;
+        const defaultKey = typeof manifest.talonCommunityPublicKeyB64 === 'string'
+            ? manifest.talonCommunityPublicKeyB64.trim()
+            : '';
+        if ( defaultKey !== '' ) {
+            publicKeysB64.default = defaultKey;
+        }
+        const keyMap = manifest.talonCommunityPublicKeysB64;
+        if ( keyMap instanceof Object ) {
+            for ( const [ kid, value ] of Object.entries(keyMap) ) {
+                const normalizedKid = normalizeCommunitySigningKeyId(kid);
+                if ( normalizedKid === '' ) { continue; }
+                if ( typeof value !== 'string' || value.trim() === '' ) { continue; }
+                publicKeysB64[normalizedKid] = value.trim();
+            }
+        }
+        const revoked = manifest.talonCommunityRevokedKeyIds;
+        if ( Array.isArray(revoked) ) {
+            for ( const kid of revoked ) {
+                const normalizedKid = normalizeCommunitySigningKeyId(kid);
+                if ( normalizedKid !== '' ) {
+                    revokedKeyIds.add(normalizedKid);
+                }
+            }
+        }
+    } catch {
+    }
+    for ( const [ kid, value ] of Object.entries(publicKeysB64) ) {
+        if ( typeof value !== 'string' || value.trim() === '' ) {
+            delete publicKeysB64[kid];
+        }
+    }
+    return { disabled, publicKeysB64, revokedKeyIds };
+};
+
+const getCommunitySigningKeyBytes = (signature, config = getCommunitySigningConfig()) => {
+    if ( config.disabled === true ) {
+        return { error: 'signing-disabled' };
+    }
+    const kid = normalizeCommunitySigningKeyId(signature?.kid) || 'default';
+    if ( config.revokedKeyIds.has(kid) ) {
+        return { error: `signing key revoked: ${kid}` };
+    }
+    const keyB64 = config.publicKeysB64[kid];
+    if ( typeof keyB64 !== 'string' || keyB64.trim() === '' ) {
+        return { error: `unknown signing key: ${kid}` };
+    }
+    const publicKeyBytes = base64ToBytes(keyB64.trim());
+    const signatureBytes = base64ToBytes(signature?.value);
+    if ( publicKeyBytes.length !== 32 ) {
+        return { error: `bad signing key encoding: ${kid}` };
+    }
+    if ( signatureBytes.length !== 64 ) {
+        return { error: 'bad signature encoding' };
+    }
+    return { kid, publicKeyBytes, signatureBytes };
 };
 
 const sha256Hex = async text => {
@@ -1831,7 +1903,11 @@ export async function syncCommunityRules({ force = false } = {}) {
         };
     }
 
-    if ( COMMUNITY_PUBLIC_KEY_B64 === '' ) {
+    const signingConfig = getCommunitySigningConfig();
+    if ( signingConfig.disabled === true ) {
+        return clearCommunityState('signing-disabled');
+    }
+    if ( Object.keys(signingConfig.publicKeysB64).length === 0 ) {
         return applyFallback(new Error('no public key configured'), privateStateResult);
     }
 
@@ -1877,16 +1953,15 @@ export async function syncCommunityRules({ force = false } = {}) {
         return applyFallback(new Error('missing signature'), privateStateResult);
     }
 
-    const publicKeyBytes = base64ToBytes(COMMUNITY_PUBLIC_KEY_B64);
-    const signatureBytes = base64ToBytes(signature.value);
-    if ( publicKeyBytes.length !== 32 || signatureBytes.length !== 64 ) {
-        return applyFallback(new Error('bad signature encoding'), privateStateResult);
+    const signingKey = getCommunitySigningKeyBytes(signature, signingConfig);
+    if ( signingKey.error !== undefined ) {
+        return applyFallback(new Error(signingKey.error), privateStateResult);
     }
 
     const ok = await verifyEd25519(
-        publicKeyBytes,
+        signingKey.publicKeyBytes,
         new TextEncoder().encode(payloadText),
-        signatureBytes
+        signingKey.signatureBytes
     );
     if ( ok !== true ) {
         return applyFallback(new Error('signature invalid'), privateStateResult);
@@ -2063,6 +2138,13 @@ export async function syncCommunityOverlayRules({
             requiresInjectableRefresh: privateStateResult.requiresInjectableRefresh,
         };
     };
+    const signingConfig = getCommunitySigningConfig();
+    if ( signingConfig.disabled === true ) {
+        return persistOverlayError('signing-disabled');
+    }
+    if ( Object.keys(signingConfig.publicKeysB64).length === 0 ) {
+        return persistOverlayError('no public key configured');
+    }
     if ( force !== true ) {
         const negativeUntil = Number(existingEntry?.negativeUntil) || 0;
         if ( negativeUntil > now ) {
@@ -2249,12 +2331,14 @@ export async function syncCommunityOverlayRules({
     if ( signature.algorithm !== 'ed25519' || typeof signature.value !== 'string' ) {
         return persistOverlayError('missing overlay signature');
     }
-    const publicKeyBytes = base64ToBytes(COMMUNITY_PUBLIC_KEY_B64);
-    const signatureBytes = base64ToBytes(signature.value);
+    const signingKey = getCommunitySigningKeyBytes(signature, signingConfig);
+    if ( signingKey.error !== undefined ) {
+        return persistOverlayError(`overlay ${signingKey.error}`);
+    }
     const ok = await verifyEd25519(
-        publicKeyBytes,
+        signingKey.publicKeyBytes,
         new TextEncoder().encode(payloadText),
-        signatureBytes
+        signingKey.signatureBytes
     );
     if ( ok !== true ) {
         return persistOverlayError('overlay signature invalid');

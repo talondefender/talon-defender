@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "description": "Ownership map for uBO Lite parity automation. Import tooling may update upstream-owned paths only; Talon-owned paths require explicit human approval.",
+  "upstreamOwnedPaths": [
+    "rulesets/**",
+    "js/scripting/css-api.js",
+    "js/scripting/css-generic.js",
+    "js/scripting/css-procedural-api.js",
+    "js/scripting/css-specific.js",
+    "js/scripting/isolated-api.js",
+    "js/scripting/prevent-popup.js",
+    "js/scripting/prevent-popup-target.js",
+    "js/offscreen/**"
+  ],
+  "rulesetOnlyAllowedPaths": [
+    "rulesets/**",
+    "ATTRIBUTION.md",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "talonOwnedPaths": [
+    "automation/**",
+    "js/action.js",
+    "js/background.js",
+    "js/breakage-policy.js",
+    "js/community-sync.js",
+    "js/community-*.js",
+    "js/config.js",
+    "js/default-rulesets.js",
+    "js/entitlement.js",
+    "js/entitlement-logic.js",
+    "js/injectable-registration.js",
+    "js/regional-rulesets.js",
+    "js/remote-scriptlet-hotfix.js",
+    "js/runtime-errors.js",
+    "js/settings.js",
+    "js/single-flight.js",
+    "js/site-key.js",
+    "js/scripting/ad-shell-styles.js",
+    "js/scripting/automation.js",
+    "js/scripting/block-hints.js",
+    "js/scripting/breakage-guard.js",
+    "js/scripting/native-heuristics.js",
+    "js/scripting/post-hide-cleanup.js",
+    "js/scripting/remote-cosmetics*.js",
+    "js/scripting/shadow-dom-helper.js",
+    "managed_storage.json",
+    "options/**",
+    "popup/**",
+    "shared/**"
+  ]
+}

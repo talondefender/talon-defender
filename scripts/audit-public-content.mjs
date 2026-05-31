@@ -26,6 +26,8 @@ const allowedTestFiles = new Set([
   "test/shadow-dom-helper.test.js",
   "test/single-flight.test.js",
   "test/site-key.test.js",
+  "test/ubol-parity-audit.test.js",
+  "test/ubol-parity-watch.test.js",
 ]);
 
 const allowedTestUrlHostnames = new Set([

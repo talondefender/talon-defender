@@ -248,6 +248,69 @@ test('fresh install without trial start or license is expired by default', () =>
   assert.equal(state.licenseKeyPresent, false);
 });
 
+test('ruleset and parity updates do not reset paid, trial, expired, or unlicensed state', () => {
+  const now = Date.UTC(2026, 2, 4, 16, 0, 0, 0);
+  const unrelatedUpdateMetadata = {
+    rulesetConfigVersion: '2026.529.1448',
+    upstreamBaseline: 'uBOLite_2026.529.1448',
+    enabledRulesets: ['default', 'ublock-filters'],
+  };
+  const trialStartMs = now - (2 * 24 * 60 * 60 * 1000);
+  const trialEndMs = now + (5 * 24 * 60 * 60 * 1000);
+
+  const paidState = computeEntitlementState({
+    ...unrelatedUpdateMetadata,
+    trialStartMs: now - (DEFAULT_TRIAL_PERIOD_MS * 2),
+    licenseKey: 'TD-PAID-KEY',
+    entitledUntilMs: now + (30 * 24 * 60 * 60 * 1000),
+    graceUntilMs: now + (33 * 24 * 60 * 60 * 1000),
+  }, { now });
+  assert.equal(paidState.status, 'paid');
+  assert.equal(paidState.licenseKeyPresent, true);
+
+  const trialState = computeEntitlementState({
+    ...unrelatedUpdateMetadata,
+    trialStartMs,
+    trialEndMs,
+  }, { now });
+  assert.equal(trialState.status, 'trial');
+  assert.equal(trialState.trialStartMs, trialStartMs);
+  assert.equal(trialState.trialEndMs, trialEndMs);
+
+  const expiredTrialState = computeEntitlementState({
+    ...unrelatedUpdateMetadata,
+    trialStartMs: now - (DEFAULT_TRIAL_PERIOD_MS * 2),
+    trialEndMs: now - 1,
+  }, { now });
+  assert.equal(expiredTrialState.status, 'expired');
+  assert.equal(expiredTrialState.trialEndMs, now - 1);
+
+  const unlicensedState = computeEntitlementState({
+    ...unrelatedUpdateMetadata,
+  }, { now });
+  assert.equal(unlicensedState.status, 'expired');
+  assert.equal(unlicensedState.licenseKeyPresent, false);
+});
+
+test('sync-safe entitlement state preserves existing trial window during update migrations', () => {
+  const now = Date.UTC(2026, 2, 4, 16, 0, 0, 0);
+  const trialStartMs = now - (2 * 24 * 60 * 60 * 1000);
+  const trialEndMs = now + (5 * 24 * 60 * 60 * 1000);
+
+  assert.deepEqual(
+    sanitizeEntitlementSyncState({
+      trialStartMs,
+      trialEndMs,
+      rulesetConfigVersion: '2026.529.1448',
+      upstreamBaseline: 'uBOLite_2026.529.1448',
+    }, { now }),
+    {
+      trialStartMs,
+      trialEndMs,
+    }
+  );
+});
+
 test('background entitlement handlers keep runtime-only refresh and replace-device activation wired correctly', async () => {
   const source = await readText('../js/background.js');
 
@@ -270,6 +333,8 @@ test('license storage keeps raw keys local and clears sync-safe activation token
   const entitlementSource = await readText('../js/entitlement.js');
   const optionsSource = await readText('../options/options.js');
 
+  assert.match(entitlementSource, /export const ENTITLEMENT_STORAGE_KEY = 'talonEntitlement';/);
+  assert.match(entitlementSource, /export const ENTITLEMENT_SYNC_STORAGE_KEY = 'talonEntitlementSync';/);
   assert.match(entitlementSource, /export async function clearLicenseKey\(\) \{/);
   assert.match(
     entitlementSource,

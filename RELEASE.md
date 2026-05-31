@@ -12,6 +12,18 @@ Both store targets:
 Full release readiness gate:
 - `npm run release:gate`
 
+Known-good backup gate:
+- before parity or store-submission work, run `npm run release:archive-current`
+- the backup script copies the current `../Talon Defender Latest/` Chrome, Edge, and source handoff artifacts into `dist/release-backups/`
+- keep the generated `release-backup.json` with the package hashes and rollback notes until the new store rollout is monitored
+- Chrome and Edge rollback normally require a new version number and store resubmission; disable signed backend overlays separately through the backend kill switch when needed
+
+uBO Lite parity gate:
+- run `npm run parity:audit -- --upstream-dir <path-to-pinned-ubol-chromium>` before importing upstream rulesets or runtime code
+- the audit is read-only and must classify drift before any import work starts
+- ruleset-only PRs must not change runtime code, permissions, entitlement, backend behavior, or user-state migration logic
+- any minimum Chrome version increase, new permission, unknown drift, or Talon-owned path overwrite requires explicit human approval
+
 What each release script does:
 - runs the quality gate for the target store
 - fails if packageable runtime files are untracked or missing from the public-safe release manifest
@@ -56,3 +68,8 @@ Store-safe public package gate:
 Smoke gate:
 - `npm run test:chrome-smoke` packages the Chrome extension, loads it with the pinned extension id, checks startup/options data, default rulesets, entitlement paywall recovery, and quota messaging
 - set `TALON_CHROME_SMOKE_REQUIRED=1` when Chrome/Chromium must be present instead of allowing a local skip
+
+License and trial preservation gate:
+- parity releases must preserve `talonEntitlement` and `talonEntitlementSync` state
+- paid, grace-period, trial, expired-trial, and unlicensed states must survive extension update without reset
+- no store submission is allowed when entitlement, paid status, grace status, trial start, or trial expiry changes unexpectedly

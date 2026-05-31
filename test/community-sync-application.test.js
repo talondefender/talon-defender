@@ -190,6 +190,7 @@ const runtimeBaseUrl = 'chrome-extension://talon-defender-test/';
 let remoteBundle = null;
 const remoteOverlayResponses = new Map();
 const overlayFetchLog = [];
+const manifestExtras = {};
 
 const browserStub = {
   declarativeNetRequest: dnr,
@@ -221,6 +222,7 @@ const browserStub = {
       return {
         homepage_url: 'https://talondefender.com',
         permissions: [],
+        ...clone(manifestExtras),
       };
     },
     getURL(path = '') {
@@ -494,6 +496,9 @@ const resetEnvironment = () => {
   remoteBundle = null;
   remoteOverlayResponses.clear();
   overlayFetchLog.length = 0;
+  for (const key of Object.keys(manifestExtras)) {
+    delete manifestExtras[key];
+  }
   permissionsState.broadHostPermissions = true;
   rulesetConfig.communityRulesEnabled = true;
   rulesetConfig.communityRulesURL = '';
@@ -2490,6 +2495,123 @@ test('setAllowAllRules rolls back partial updates when the session companion wri
     lastRollbackAt: storageData.allowAllRulesDiagnosticsV1.lastRollbackAt,
   });
   assert.equal(typeof storageData.allowAllRulesDiagnosticsV1.lastRollbackAt, 'number');
+});
+
+test('community sync accepts packaged signing-key rotation by signature key id', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  manifestExtras.talonCommunityPublicKeysB64 = {
+    next: Buffer.alloc(32, 7).toString('base64'),
+  };
+  const bundle = await createSignedBundle({
+    version: 'rotation-v1',
+    rules: [
+      {
+        action: { type: 'block' },
+        condition: {
+          requestDomains: ['rotation.example'],
+          resourceTypes: ['script'],
+        },
+      },
+    ],
+  });
+  bundle.signature.kid = 'next';
+
+  const result = await applyBaselineBundle(bundle);
+
+  assert.equal(result.source, 'remote');
+  assert.equal(storageData.communityBundleMeta.version, 'rotation-v1');
+  assert.deepEqual(
+    dnrState.dynamicRules
+      .filter(rule => rule.id >= 6000000 && rule.id < 7000000)
+      .map(rule => rule.condition.requestDomains),
+    [['rotation.example']]
+  );
+});
+
+test('community sync rejects unknown or revoked signing key ids with diagnostics', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  const unknownKeyBundle = await createSignedBundle({
+    version: 'unknown-key-v1',
+    rules: [
+      {
+        action: { type: 'block' },
+        condition: {
+          requestDomains: ['unknown-key.example'],
+          resourceTypes: ['script'],
+        },
+      },
+    ],
+  });
+  unknownKeyBundle.signature.kid = 'missing';
+  remoteBundle = unknownKeyBundle;
+
+  const unknownKeyResult = await syncCommunityRules({ force: true });
+  assert.equal(unknownKeyResult.source, 'fallback');
+  assert.match(unknownKeyResult.error, /unknown signing key: missing/);
+  assert.match(storageData.communityBundleLastError, /unknown signing key: missing/);
+
+  resetEnvironment();
+
+  manifestExtras.talonCommunityRevokedKeyIds = ['default'];
+  remoteBundle = await createSignedBundle({
+    version: 'revoked-key-v1',
+    rules: [
+      {
+        action: { type: 'block' },
+        condition: {
+          requestDomains: ['revoked-key.example'],
+          resourceTypes: ['script'],
+        },
+      },
+    ],
+  });
+
+  const revokedKeyResult = await syncCommunityRules({ force: true });
+  assert.equal(revokedKeyResult.source, 'fallback');
+  assert.match(revokedKeyResult.error, /signing key revoked: default/);
+  assert.match(storageData.communityBundleLastError, /signing key revoked: default/);
+});
+
+test('packaged community emergency disable clears active signed hotfix state without fetching', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  await browserStub.storage.local.set({
+    communityBundleRules: [
+      {
+        action: { type: 'block' },
+        condition: {
+          requestDomains: ['stored-hotfix.example'],
+          resourceTypes: ['script'],
+        },
+      },
+    ],
+    communityBundleMeta: {
+      version: 'stored-hotfix-v1',
+      schemaVersion: 2,
+      ttlHours: 6,
+    },
+    communityBundleLastSuccess: Date.UTC(2026, 2, 25, 17, 0, 0, 0),
+  });
+  await updateCommunityRules(storageData.communityBundleRules, {
+    source: 'stored',
+    version: 'stored-hotfix-v1',
+    schemaVersion: 2,
+  });
+  manifestExtras.talonCommunitySyncDisabled = true;
+
+  const result = await syncCommunityRules({ force: true });
+
+  assert.equal(result.source, 'cleanup');
+  assert.equal(result.cleanupReason, 'signing-disabled');
+  assert.equal(Object.hasOwn(storageData, 'communityBundleRules'), false);
+  assert.equal(Object.hasOwn(storageData, 'communityBundleMeta'), false);
+  assert.deepEqual(
+    dnrState.dynamicRules.filter(rule => rule.id >= 6000000 && rule.id < 7000000),
+    []
+  );
+  assert.equal(overlayFetchLog.length, 0);
 });
 
 test('packaged community fallback bundle is intentionally empty', { concurrency: false }, () => {
