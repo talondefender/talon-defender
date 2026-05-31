@@ -29,6 +29,7 @@ import {
 
 import {
     intersectHostnameIters,
+    isIgnorableRuntimeError,
     matchesFromHostnames,
     strArrayEq,
     subtractHostnameIters,
@@ -126,6 +127,7 @@ export function startCustomFilters(tabId, frameId) {
         target: { tabId, frameIds: [ frameId ] },
         injectImmediately: true,
     }).catch(reason => {
+        if ( isIgnorableRuntimeError(reason) ) { return; }
         ubolErr(`startCustomFilters/${reason}`);
     })
 }
@@ -136,6 +138,7 @@ export function terminateCustomFilters(tabId, frameId) {
         target: { tabId, frameIds: [ frameId ] },
         injectImmediately: true,
     }).catch(reason => {
+        if ( isIgnorableRuntimeError(reason) ) { return; }
         ubolErr(`terminateCustomFilters/${reason}`);
     })
 }
@@ -154,6 +157,7 @@ export async function injectCustomFilters(tabId, frameId, hostname) {
                 origin: 'USER',
                 target: { tabId, frameIds: [ frameId ] },
             }).catch(reason => {
+                if ( isIgnorableRuntimeError(reason) ) { return; }
                 ubolErr(`injectCustomFilters/insertCSS/${reason}`);
             })
         );
@@ -166,6 +170,7 @@ export async function injectCustomFilters(tabId, frameId, hostname) {
                 target: { tabId, frameIds: [ frameId ] },
                 injectImmediately: true,
             }).catch(reason => {
+                if ( isIgnorableRuntimeError(reason) ) { return; }
                 ubolErr(`injectCustomFilters/executeScript/${reason}`);
             })
         );

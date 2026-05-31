@@ -249,7 +249,7 @@ dom.on('#gotoPicker', 'click', ( ) => {
             '/js/scripting/picker.js',
         ],
         target: { tabId: currentTab.id },
-    });
+    }).catch(ignoreRuntimeError);
     self.close();
 });
 
@@ -263,7 +263,7 @@ dom.on('#gotoUnpicker', 'click', ( ) => {
             '/js/scripting/unpicker.js',
         ],
         target: { tabId: currentTab.id },
-    });
+    }).catch(ignoreRuntimeError);
     self.close();
 });
 

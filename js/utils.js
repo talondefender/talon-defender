@@ -26,6 +26,7 @@ import {
 import {
     isIgnorableRuntimeError,
     ignoreRuntimeError,
+    ignoreRuntimeLastError,
 } from './runtime-errors.js';
 
 /******************************************************************************/
@@ -420,6 +421,7 @@ export {
     parsedURLromOrigin,
     isIgnorableRuntimeError,
     ignoreRuntimeError,
+    ignoreRuntimeLastError,
     toBroaderHostname,
     isDescendantHostname,
     isDescendantHostnameOfIter,

@@ -1,6 +1,6 @@
 import { t, pluralSuffix } from "../shared/i18n.js";
 import { SUBSCRIBE_URL, TRIAL_EXPIRED_URL, SUPPORT_URL, PRIVACY_URL, RECOVER_LICENSE_URL } from "../shared/links.js";
-import { ignoreRuntimeError, isIgnorableRuntimeError } from "../js/runtime-errors.js";
+import { ignoreRuntimeError, ignoreRuntimeLastError, isIgnorableRuntimeError } from "../js/runtime-errors.js";
 
 const MODE_NONE = 0;
 const MODE_BASIC = 1;
@@ -104,7 +104,7 @@ self.addEventListener("unhandledrejection", (event) => {
 
 try {
   chrome.runtime.sendMessage({ what: "popupWarmup" }, () => {
-    void chrome.runtime?.lastError;
+    ignoreRuntimeLastError(chrome.runtime);
   });
 } catch (_error) {
   // ignore
@@ -213,7 +213,7 @@ function maybeOpenFirstPopupWelcome() {
   try {
     chrome.runtime.sendMessage({ what: "maybeOpenFirstPopupWelcome" }, () => {
       // Accessing lastError prevents noisy console logs when popup closes quickly.
-      void chrome.runtime?.lastError;
+      ignoreRuntimeLastError(chrome.runtime);
     });
   } catch (_error) {
     // ignore
@@ -494,7 +494,7 @@ function openUrlInTab(url) {
   const viaRuntimeMessage = () => {
     try {
       chrome.runtime.sendMessage({ what: "gotoURL", url: target, type: "tab" }, () => {
-        if (chrome.runtime?.lastError) {
+        if (ignoreRuntimeLastError(chrome.runtime)) {
           fallbackOpen();
         } else {
           try { window.close(); } catch (_error) { /* ignore */ }
@@ -510,7 +510,7 @@ function openUrlInTab(url) {
   try {
     if (chrome?.tabs?.create) {
       chrome.tabs.create({ active: true, url: target }, () => {
-        if (chrome.runtime?.lastError) {
+        if (ignoreRuntimeLastError(chrome.runtime)) {
           if (!viaRuntimeMessage()) {
             fallbackOpen();
           }

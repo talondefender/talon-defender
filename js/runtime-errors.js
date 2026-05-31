@@ -47,10 +47,30 @@ const ignoreRuntimeError = error => {
     throw error;
 };
 
+const runtimeFromGlobal = () =>
+    globalThis.chrome?.runtime || globalThis.browser?.runtime;
+
+const runtimeLastErrorFrom = (runtime = runtimeFromGlobal()) => {
+    try {
+        return runtime?.lastError;
+    } catch {
+    }
+    return undefined;
+};
+
+const ignoreRuntimeLastError = runtime => {
+    const error = runtimeLastErrorFrom(runtime);
+    if ( error === undefined || error === null ) { return false; }
+    ignoreRuntimeError(error);
+    return true;
+};
+
 /******************************************************************************/
 
 export {
     errorMessageFrom,
     isIgnorableRuntimeError,
     ignoreRuntimeError,
+    runtimeLastErrorFrom,
+    ignoreRuntimeLastError,
 };

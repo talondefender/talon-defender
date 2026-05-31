@@ -751,6 +751,10 @@ const checkJsFile = async (absPath) => {
       message: 'String-based timer execution detected',
     },
     {
+      re: /\b(?:window|self|globalThis)?\.?atob\s*\(\s*\\?["'][A-Za-z0-9+/]{40,}={0,2}\\?["']\s*\)/g,
+      message: 'Base64-decoded string literal detected (Chrome Web Store readability risk)',
+    },
+    {
       re: /\bcreateElement\s*\(\s*["']script["']\s*\)[\s\S]{0,300}\.src\s*=\s*["']https?:\/\/[^"']+["']/g,
       message: 'Dynamic remote script element creation detected',
     },

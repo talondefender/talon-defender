@@ -60,6 +60,7 @@ import {
     hasBroadHostPermissions,
     hostnamesFromMatches,
     ignoreRuntimeError,
+    ignoreRuntimeLastError,
     isIgnorableRuntimeError,
 } from './utils.js';
 import {
@@ -1299,7 +1300,7 @@ const configureUninstallURL = (source = 'extension_uninstall') => {
     const url = buildUninstallURL(source);
     try {
         runtime.setUninstallURL(url, () => {
-            ignoreRuntimeError();
+            ignoreRuntimeLastError(runtime);
         });
     } catch (reason) {
         ubolErr(`setUninstallURL/${reason}`);
@@ -2778,6 +2779,7 @@ function onMessage(request, sender, callback) {
                 origin: 'USER',
                 target: { tabId, frameIds: [frameId] },
             }).catch(reason => {
+                if ( isIgnorableRuntimeError(reason) ) { return; }
                 ubolErr(`insertCSS/${reason}`);
             });
             return false;
@@ -2793,6 +2795,7 @@ function onMessage(request, sender, callback) {
                 origin: 'USER',
                 target: { tabId, frameIds: [frameId] },
             }).catch(reason => {
+                if ( isIgnorableRuntimeError(reason) ) { return; }
                 ubolErr(`removeCSS/${reason}`);
             });
             return false;
@@ -3119,6 +3122,7 @@ function onMessage(request, sender, callback) {
                 target: { tabId, frameIds: [frameId] },
                 injectImmediately: true,
             }).catch(reason => {
+                if ( isIgnorableRuntimeError(reason) ) { return; }
                 ubolErr(`executeScript/${reason}`);
             }).then(() => {
                 callback();
