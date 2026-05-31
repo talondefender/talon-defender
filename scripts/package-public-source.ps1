@@ -151,6 +151,7 @@ $sourceItems = @(
   "test/entitlement-regression.test.js",
   "test/remote-data-contract.test.js",
   "test/ubol-parity-audit.test.js",
+  "test/ubol-parity-status.test.js",
   "test/ubol-parity-watch.test.js",
   "unpicker-ui.html",
   "web_accessible_resources"

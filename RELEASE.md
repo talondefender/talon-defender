@@ -19,7 +19,9 @@ Known-good backup gate:
 - Chrome and Edge rollback normally require a new version number and store resubmission; disable signed backend overlays separately through the backend kill switch when needed
 
 uBO Lite parity gate:
+- use a private scheduler or backend control plane as the daily tripwire for new stable upstream Chromium releases
 - run `npm run parity:audit -- --upstream-dir <path-to-pinned-ubol-chromium>` before importing upstream rulesets or runtime code
+- run `npm run parity:status -- --report <audit-report.json>` after the audit to produce a ship/no-ship summary
 - the audit is read-only and must classify drift before any import work starts
 - ruleset-only PRs must not change runtime code, permissions, entitlement, backend behavior, or user-state migration logic
 - any minimum Chrome version increase, new permission, unknown drift, or Talon-owned path overwrite requires explicit human approval

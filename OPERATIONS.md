@@ -10,6 +10,7 @@ Core verification:
 - `npm run audit:release-hygiene`
 - `npm run parity:watch -- --baseline-tag <current-upstream-tag>` for read-only latest uBO Lite release detection
 - `npm run parity:audit -- --upstream-dir <path-to-pinned-ubol-chromium>` for read-only uBO Lite drift reports
+- `npm run parity:status -- --report <audit-report.json>` for non-developer ship/no-ship parity summaries
 - update `public-safe-allowlist.txt` whenever a new tracked public file is intentionally added
 
 Packaging:
@@ -38,4 +39,5 @@ Operational rules:
 - public GitHub sync happens from this workspace; `../Talon Defender Latest/` is only the handoff artifact workspace
 - public tests may only use the explicit `.test.js` files and placeholder or product-owned URLs
 - parity imports must use pinned uBO Lite Chromium release artifacts, never floating upstream branches
+- run parity watching from a private scheduler or backend control plane; update the baseline only after the pinned release is reviewed
 - backend hotfix payloads are signed data only; do not add remote JavaScript, remote scriptlet code, arbitrary procedural logic, or command interpreters

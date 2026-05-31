@@ -27,6 +27,7 @@ const allowedTestFiles = new Set([
   "test/single-flight.test.js",
   "test/site-key.test.js",
   "test/ubol-parity-audit.test.js",
+  "test/ubol-parity-status.test.js",
   "test/ubol-parity-watch.test.js",
 ]);
 

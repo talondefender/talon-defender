@@ -1294,6 +1294,7 @@ scripts/release-edge-extension.ps1
 scripts/release-extension.ps1
 scripts/sync-latest-artifacts.ps1
 scripts/ubol-parity-audit.mjs
+scripts/ubol-parity-status.mjs
 scripts/ubol-parity-watch.mjs
 scripts/ubol-source-ownership.json
 scripts/update-public-suffix-data.mjs
@@ -1326,6 +1327,7 @@ test/shadow-dom-helper.test.js
 test/single-flight.test.js
 test/site-key.test.js
 test/ubol-parity-audit.test.js
+test/ubol-parity-status.test.js
 test/ubol-parity-watch.test.js
 THIRD_PARTY_NOTICES.md
 unpicker-ui.html
