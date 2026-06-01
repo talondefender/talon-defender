@@ -14,16 +14,6 @@
 .fa-icon > * {
     pointer-events: none;
     }
-/*
-.fa-icon.disabled,
-.fa-icon[disabled] {
-    color: var(--button-disabled-ink);
-    fill: var(--button-disabled-ink);
-    filter: var(--button-disabled-filter);
-    stroke: var(--button-disabled-ink);
-    pointer-events: none;
-    }
-*/
 .fa-icon > .fa-icon-badge,
 .fa-icon.disabled > .fa-icon-badge {
     visibility: hidden;

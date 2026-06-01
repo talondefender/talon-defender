@@ -164,10 +164,8 @@
 /*
  * Default dark theme starts here
  * 
- * https://github.com/uBlockOrigin/uBlock-issues/issues/1027#issuecomment-629641072
- *   Assign a default background color if dark mode is enabled -- hopefully
- *   this will avoid flashes of white background until the document's own CSS
- *   overrides the default color value below.
+ * Assign a default background color when dark mode is enabled to avoid
+ * flashes of white before document-specific CSS takes over.
  * 
  * */
 @media (prefers-color-scheme: light) {
@@ -244,7 +242,7 @@
 
     /* popup panel */
     --popup-cell-cname-ink: #0054d7; /* h260 S:100 Luv:40 */;
-    --popup-cell-label-mixed-surface: #c29100; /* TODO: fix */
+    --popup-cell-label-mixed-surface: #c29100;
     --popup-icon-x-ink: rgb(var(--red-60));
     --popup-power-ink-rgb: var(--primary-50);
 
@@ -337,7 +335,7 @@
 
     /* popup panel */
     --popup-cell-cname-ink: #93a6ff; /* h260 S:100 Luv:70 */;
-    --popup-cell-label-mixed-surface: hsla(45, 100%, 38%, 1); /* TODO: fix */
+    --popup-cell-label-mixed-surface: hsla(45, 100%, 38%, 1);
     --popup-icon-x-ink: rgb(var(--red-50));
     --popup-power-ink-rgb: var(--primary-60);
 
@@ -501,7 +499,7 @@
     --popup-cell-allow-own-surface-rgb: 151 113   0; /* h:58.5 S:100 Luv:50 */
     --popup-cell-block-own-surface-rgb:   0 120 216; /* h:252  S:100 Luv:50 */
     --popup-cell-noop-own-surface-rgb:  119 119 119; /* h:0    S:0   Luv:50 */
-    --popup-cell-label-mixed-surface: #ff6a00;  /* TODO: fix */
+    --popup-cell-label-mixed-surface: #ff6a00;
 }
 :root.colorBlind:not(.dark) {
     --popup-cell-allow-surface-rgb:     223 178  92; /* h:58.5 S:75  Luv:75 */
@@ -523,12 +521,3 @@
     --popup-ruleset-tool-surface-hover: rgb(var(--yellow-5) / 75%);
     --popup-ruleset-tool-shadow: rgb(var(--gray-85));
 }
-
-/*
- * Experiment: use Firefox for Android dark theme colors
-:root.mobile.dark {
-    --gray-10: 43 42 51;
-    --gray-20: 66 65 77;
-    --ink-rgb: 251 251 254;
-}
-*/

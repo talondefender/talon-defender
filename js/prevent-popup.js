@@ -24,8 +24,6 @@ import { rulesetConfig } from './config.js';
 
 /******************************************************************************/
 
-// https://github.com/uBlockOrigin/uBOL-home/issues/632
-
 export async function registerPreventPopup(context) {
     if ( rulesetConfig.popupBlockMode !== true ) { return; }
     const js = [];

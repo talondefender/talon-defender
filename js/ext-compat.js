@@ -148,8 +148,8 @@ dnr.setAllowAllRules = async function(id, allowed, notAllowed, reverse, priority
             rule0.condition.excludedRequestDomains = notAllowed.slice();
         }
         addDynamicRules.push(rule0);
-        // https://github.com/uBlockOrigin/uBOL-home/issues/114
-        // https://github.com/uBlockOrigin/uBOL-home/issues/247
+        // Keep a paired session rule so allow-all state can be verified and
+        // repaired consistently across browser DNR implementations.
         const rule1 = {
             id: id+1,
             action: { type: 'allow' },

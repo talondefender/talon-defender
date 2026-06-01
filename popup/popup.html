@@ -9,7 +9,6 @@
 
 <body>
   <div class="popup" hidden>
-    <!-- Header -->
     <header class="header card-style-header">
       <div class="card-header-top">
         <div class="brand-group">
@@ -17,7 +16,6 @@
           <h1 class="header-title" data-i18n="extensionName">_</h1>
         </div>
         <div class="header-actions">
-          <!-- The Header Tuck: Settings Icon moved here -->
           <button id="openSettings" class="header-icon-button" data-i18n-aria-label="uiSettings">
             <img src="../icons/settings.svg" alt="" aria-hidden="true" class="header-icon" />
           </button>
@@ -40,13 +38,9 @@
       <button id="runtimeNoticeReload" class="runtime-notice-button" type="button">Reload tab</button>
     </section>
 
-    <!-- Protection Summary (Option 1: The Shield - Polished for Seniors) -->
-    <!-- Priority #1 -->
     <section class="card stats-card shield-style">
       <div class="shield-container">
-        <!-- Hero Visual -->
         <div class="shield-hero">
-          <!-- Reassuring "Pulse" effect on this shield -->
           <div class="shield-icon-wrapper">
             <div class="shield-pulse"></div>
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"
@@ -76,8 +70,6 @@
           </div>
         </div>
 
-        <!-- Value Badge (Consistent Reminder of Value) -->
-
       </div>
     </section>
 
@@ -97,17 +89,13 @@
       </div>
     </section>
 
-    <!-- Subscription Section (Option C: The Golden Ticket) -->
-    <!-- Priority #2 -->
     <section id="subscriptionCard" class="subscription-section" hidden>
-      <!-- Zone 1: Status -->
       <div class="subscription-zone status-zone">
         <h2 class="section-title golden" data-i18n="subscriptionSectionTitle">_</h2>
         <div id="subscriptionStatus" class="status-note bold-status" data-i18n="subscriptionStatusLoading">_</div>
         <div id="subscriptionSubstatus" class="status-note muted text-center" data-i18n="subscriptionTrialAfterNote" hidden>_</div>
       </div>
 
-      <!-- Zone 2: Action -->
       <div class="subscription-zone action-zone">
         <button id="subscribeNow" class="pill-button golden-hero" type="button" data-i18n="licenseGetButton">_</button>
 
@@ -142,11 +130,8 @@
       </div>
     </section>
 
-    <!-- Filter Card Removed (The Header Tuck) -->
-
   </div>
 
-  <!-- Trial/License Expired Overlay -->
   <div id="expiredOverlay" class="expired-overlay" hidden>
     <div class="expired-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="expiredOverlayTitle">
       <div class="expired-overlay-header">

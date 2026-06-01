@@ -26,8 +26,7 @@
 }
 
 /**
-    Common uBO spacing.
-    Ref: https://github.com/uBlockOrigin/uBlock-issues/issues/1005
+    Shared spacing tokens for extension views.
 */
 :root {
     --default-gap-xxlarge: 40px;
@@ -40,7 +39,7 @@
     --button-font-size: max(calc(var(--font-size) * 0.875), 14px);
     }
 
-/* Common uBO styles */
+/* Shared extension styles */
 body {
     background-color: var(--surface-1);
     border: 0;
@@ -167,12 +166,8 @@ section.notice {
     }
 
 /**
-    Checkbox design borrowed from:
-    - https://material.io/components/selection-controls
-    Motivation:
-    - To comply with design suggestions to make uBO comply with
-      Firefox Preview design guidelines.
-    - To have a single checkbox design across all platforms.
+    Checkbox styling follows Material selection-control conventions and keeps
+    extension controls visually consistent across platforms.
 */
 .checkbox {
     box-sizing: border-box;

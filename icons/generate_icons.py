@@ -1,39 +1,47 @@
-import os
+import argparse
+from pathlib import Path
+
 from PIL import Image
 
-def generate_icons(source_path, output_dir):
-    try:
-        # Open the source image
-        img = Image.open(source_path)
-        
-        # Define sizes
-        sizes = [16, 32, 48, 128]
-        
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-            
-        print(f"Generating icons from {source_path}...")
-        
+
+DEFAULT_SIZES = (16, 32, 48, 128)
+
+
+def generate_icons(source_path, output_dir, sizes=DEFAULT_SIZES):
+    source = Path(source_path)
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+
+    print(f"Generating icons from {source}...")
+
+    with Image.open(source) as img:
         for size in sizes:
-            # Resize image
             resized_img = img.resize((size, size), Image.Resampling.LANCZOS)
-            
-            # Save as PNG
-            output_filename = f"icon{size}.png"
-            output_path = os.path.join(output_dir, output_filename)
+            output_path = output / f"icon{size}.png"
             resized_img.save(output_path, "PNG")
             print(f"Saved {output_path}")
-            
-        print("Icon generation complete.")
-        
-    except Exception as e:
-        print(f"Error generating icons: {e}")
+
+    print("Icon generation complete.")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Generate PNG extension icons.")
+    parser.add_argument("source", help="Source image path.")
+    parser.add_argument(
+        "--output",
+        default=Path(__file__).resolve().parent,
+        help="Output directory. Defaults to this icons folder.",
+    )
+    parser.add_argument(
+        "--sizes",
+        type=int,
+        nargs="+",
+        default=DEFAULT_SIZES,
+        help="Icon sizes to generate.",
+    )
+    return parser.parse_args()
+
 
 if __name__ == "__main__":
-    # Source image path (using the uploaded image path from metadata)
-    source_image = r"C:/Users/marty/.gemini/antigravity/brain/b2051dd2-a475-48c0-82aa-304a09a689e3/uploaded_image_1765934174869.png"
-    
-    # Output directory
-    icons_dir = r"c:\dev\Talon Defender V2\icons"
-    
-    generate_icons(source_image, icons_dir)
+    args = parse_args()
+    generate_icons(args.source, args.output, args.sizes)

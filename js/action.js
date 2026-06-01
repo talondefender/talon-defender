@@ -83,8 +83,7 @@ export function setToolbarIcon(tabId, enabled) {
 
 /******************************************************************************/
 
-// https://github.com/uBlockOrigin/uBOL-home/issues/198
-//  Ensure the toolbar icon reflects the no-filtering mode of "trusted sites"
+// Keep the toolbar icon aligned with no-filtering mode for trusted sites.
 
 export async function registerToolbarIconToggler(context) {
     const { none } = context.filteringModeDetails;

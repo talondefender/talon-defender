@@ -1080,9 +1080,8 @@ const recordBlockedNavigation = (hostname) => {
             hostname,
             'blocked-navigation-threshold'
         ).catch(ubolErr);
-        // Generic top-frame blocked-navigation errors are not proof Talon broke
-        // the site. Keep this path hotfix-only; Talon breakage signals handle
-        // compatibility backoff when the page itself reports breakage evidence.
+        // A blocked top-frame navigation only triggers hotfix recovery here.
+        // Compatibility backoff waits for direct page breakage evidence.
     }
 };
 
@@ -2692,7 +2691,7 @@ async function onPermissionsRemoved() {
     return true;
 }
 
-// https://github.com/uBlockOrigin/uBOL-home/issues/280
+// Reconcile browser permission grants after optional permission flows.
 async function onPermissionsAdded(permissions) {
     const details = pendingPermissionRequest;
     pendingPermissionRequest = undefined;
@@ -3925,7 +3924,7 @@ async function startSession() {
         browser.action?.setBadgeText?.({ text: '' });
     }
 
-    // Switch to basic filtering if uBOL doesn't have broad permissions at
+    // Switch to basic filtering if the extension lacks broad permissions at
     // install time.
     if (process.firstRun) {
         const enableOptimal = await hasBroadHostPermissions();
@@ -4098,8 +4097,7 @@ async function start() {
 
 /******************************************************************************/
 
-// https://github.com/uBlockOrigin/uBOL-home/issues/199
-// Force a restart of the extension once when an "internal error" occurs
+// Retry once after a startup error so initialization does not remain stuck.
 
 const isFullyInitialized = start().then(() => {
     localRemove('goodStart');
@@ -4205,7 +4203,7 @@ browser.commands.onCommand.addListener((...args) => {
 
 async function openInstallWelcomeAfterAllowlistReady(url) {
     // Static rules can already be active on first install; wait only for the
-    // internal Talon allowlist, not for unrelated extension startup work.
+    // install-welcome allowlist, not for unrelated extension startup work.
     await ensureInstallWelcomeAllowlistReady().catch(reason => {
         ubolErr(`runtime.onInstalled/allowlist/${reason}`);
     });

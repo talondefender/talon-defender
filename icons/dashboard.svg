@@ -9,6 +9,5 @@
   <rect x="14" y="3" width="7" height="7" rx="1.5" stroke="url(#dashGrad)" stroke-width="2" stroke-opacity="0.6"/>
   <rect x="14" y="14" width="7" height="7" rx="1.5" stroke="url(#dashGrad)" stroke-width="2" stroke-opacity="0.6"/>
   <rect x="3" y="14" width="7" height="7" rx="1.5" stroke="url(#dashGrad)" stroke-width="2"/>
-  <!-- Active Indicator -->
   <circle cx="6.5" cy="6.5" r="1.5" fill="#38BDF8"/>
 </svg>

@@ -16,7 +16,7 @@ export const COMMUNITY_RULE_SCHEMA_VERSION_CURRENT =
     COMMUNITY_RULE_SCHEMA_VERSION_REQUEST_TACTICS;
 
 // Keep community block rules below packaged redirect/allow compatibility rules.
-// Broad remote blocks must not override uBO's anti-breakage shims.
+// Broad remote blocks must not override packaged anti-breakage rules.
 export const COMMUNITY_RULE_PRIORITY_BLOCK = 10;
 export const COMMUNITY_RULE_PRIORITY_REDIRECT = 1100;
 export const COMMUNITY_RULE_PRIORITY_ALLOW = 1200;

@@ -161,10 +161,6 @@ test('background wires emergency sync triggers into breakage and blocked-navigat
 
   assert.match(blockedNavigationSource, /triggerEmergencyCommunitySync\(\s*hostname,\s*'blocked-navigation-threshold'\s*\)/);
   assert.doesNotMatch(blockedNavigationSource, /applyAutoBackoff\(/);
-  assert.match(
-    blockedNavigationSource,
-    /Generic top-frame blocked-navigation errors are not proof Talon broke/
-  );
 
   assert.match(breakageSignalSource, /severe-signal:\$\{normalizedSignal\}/);
   assert.match(breakageSignalSource, /signal-threshold:\$\{normalizedSignal\}/);

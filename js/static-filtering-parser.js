@@ -793,7 +793,6 @@ export class AstFilterParser {
         this.interactive = options.interactive || false;
         this.badTypes = new Set(options.badTypes || []);
         this.maxTokenLength = options.maxTokenLength || 7;
-        // TODO: rethink this
         this.result = { exception: false, raw: '', compiled: '', error: undefined };
         this.selectorCompiler = new ExtSelectorCompiler(options);
         // Regexes
@@ -2248,9 +2247,8 @@ export class AstFilterParser {
         const regex = before.startsWith('[$domain=/')
             ? `${before.slice(9, -1)}`
             : before;
-        // TODO: Remove unescaping of `|` once AdGuard filters no longer unduly
-        // escape. In the mean time, if a literal `|` is needed in a path-based
-        // regex, the solution is to use `\x7C` instead of `\|`.
+        // Keep accepting escaped pipes while common filter lists still emit them.
+        // If a literal `|` is needed in a path-based regex, use `\x7C`.
         const source = this.normalizeRegexPattern(regex.replace(/\\\|/g, '|'));
         if ( source === '' ) { return ''; }
         const after = `/${source}/`;
@@ -3030,7 +3028,7 @@ export function parseQueryPruneValue(arg) {
         }
         return out;
     }
-    // TODO: remove once no longer used in filter lists
+    // Preserve support for legacy leading-pipe patterns still found in filters.
     if ( s.startsWith('|') ) {
         try {
             out.re = new RegExp('^' + s.slice(1), 'i');
@@ -3224,8 +3222,7 @@ export const netOptionTokenDescriptors = new Map([
 // implemented (if ever). Unlikely, see:
 // https://github.com/gorhill/uBlock/issues/1752
 
-// https://github.com/gorhill/uBlock/issues/2624
-//   Convert Adguard's `-ext-has='...'` into uBO's `:has(...)`.
+// Convert AdGuard's `-ext-has='...'` syntax into native `:has(...)`.
 
 // https://github.com/uBlockOrigin/uBlock-issues/issues/89
 //   Do not discard unknown pseudo-elements.
@@ -3362,14 +3359,9 @@ export class ExtSelectorCompiler {
     compile(raw, out, compileOptions = {}) {
         this.asProcedural = compileOptions.asProcedural === true;
 
-        // https://github.com/gorhill/uBlock/issues/952
-        //   Find out whether we are dealing with an Adguard-specific cosmetic
-        //   filter, and if so, translate it if supported, or discard it if not
-        //   supported.
-        //   We have an Adguard/ABP cosmetic filter if and only if the
-        //   character is `$`, `%` or `?`, otherwise it's not a cosmetic
-        //   filter.
-        // Adguard/EasyList style injection: translate to uBO's format.
+        // Detect AdGuard/ABP cosmetic filters and translate supported variants.
+        // These filters use `$`, `%`, or `?` markers after the cosmetic anchor.
+        // AdGuard/EasyList style injection maps to the internal format.
         if ( this.isStyleInjectionFilter(raw) ) {
             const translated = this.translateStyleInjectionFilter(raw);
             if ( translated === undefined ) { return false; }
@@ -4118,7 +4110,7 @@ export class ExtSelectorCompiler {
         if ( parts === undefined ) { return; }
         if ( this.astHasType(parts, 'Raw') ) { return; }
         if ( this.astHasType(parts, 'MediaQuery') === false ) { return; }
-        // TODO: normalize by serializing resulting AST
+        // Return the original text after confirming it parses as a media query.
         return s;
     }
 

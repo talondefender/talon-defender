@@ -41,7 +41,7 @@ export class ModeEditor {
             const message = ev.data;
             if ( message instanceof Object === false ) { return; }
             if ( message.filteringModeDetails === undefined ) { return; }
-            // TODO: merge with ongoing edits?
+            // Broadcast state is authoritative; replace the editor buffer.
             const text = textFromModes(message.filteringModeDetails);
             this.editor.setEditorText(text, true);
         };

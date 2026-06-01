@@ -196,7 +196,7 @@ export async function adminReadEx(key) {
         if ( local ) {
             cacheValue = local.data;
         }
-        localRemove(`admin_${key}`); // TODO: remove eventually
+        localRemove(`admin_${key}`); // Remove legacy underscore cache keys.
     }
     adminRead(key).then(async value => {
         const adminKey = `admin.${key}`;

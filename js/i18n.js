@@ -63,8 +63,8 @@ if ( isBackgroundProcess !== true ) {
 
     const expandHtmlEntities = (( ) => {
         const entities = new Map([
-            // TODO: Remove quote entities once no longer present in translation
-            // files. Other entities must stay.
+            // Backward compatibility for older translations that still contain
+            // quote entities. Other entities must stay.
             [ '&shy;', '\u00AD' ],
             [ '&ldquo;', '“' ],
             [ '&rdquo;', '”' ],
@@ -206,8 +206,8 @@ if ( isBackgroundProcess !== true ) {
             for ( let part of parts ) {
                 if ( part === '' ) { continue; }
                 if ( part.startsWith('{{') && part.endsWith('}}') ) {
-                    // TODO: remove detection of ':' once it no longer appears
-                    //       in translation files.
+                    // Accept the older {{name:...}} token form while existing
+                    // translations still contain it.
                     const pos = part.indexOf(':');
                     if ( pos !== -1 ) {
                         part = part.slice(0, pos) + part.slice(-2);

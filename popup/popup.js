@@ -40,7 +40,6 @@ const supportLinkButton = document.getElementById("supportLink");
 
 const popupRootEl = document.querySelector(".popup");
 
-// Trial/expired overlay elements
 const expiredOverlayEl = document.getElementById("expiredOverlay");
 const expiredOverlayBadgeEl = document.getElementById("expiredOverlayBadge");
 const expiredOverlayTitleEl = document.getElementById("expiredOverlayTitle");
@@ -259,7 +258,7 @@ function localizeHtml() {
       if (element.tagName === "INPUT" || element.tagName === "TEXTAREA") {
         element.placeholder = msg;
       } else {
-        element.textContent = msg; // Only set if we actually found a translation
+        element.textContent = msg;
       }
     }
   }
@@ -497,7 +496,7 @@ function openUrlInTab(url) {
         if (ignoreRuntimeLastError(chrome.runtime)) {
           fallbackOpen();
         } else {
-          try { window.close(); } catch (_error) { /* ignore */ }
+          try { window.close(); } catch {}
         }
       });
       return true;
@@ -516,7 +515,7 @@ function openUrlInTab(url) {
           }
           return;
         }
-        try { window.close(); } catch (_error) { /* ignore */ }
+        try { window.close(); } catch {}
       });
       return;
     }
@@ -1422,9 +1421,7 @@ async function setSiteMode(level) {
 }
 
 
-// Removed refreshFilterCatalog logic (Header Tuck Option)
 async function refreshFilterCatalog() {
-  // No-op
   return Promise.resolve();
 }
 
@@ -1542,13 +1539,11 @@ function updateStatusSummary() {
     return;
   }
 
-  // Update text
   const message = currentEnabledState ? t("popupStatusProtectionActive") : t("popupStatusProtectionPaused");
   statusLabel.textContent = message;
   statusLabel.className = currentEnabledState ? "status-text active" : "status-text paused";
-  statusLabel.style.color = ""; // Remove inline style if any
+  statusLabel.style.color = "";
 
-  // Update Header Class
   if (headerEl) {
     headerEl.classList.toggle("paused", !currentEnabledState);
   }
