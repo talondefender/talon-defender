@@ -84,12 +84,13 @@ test('remote scriptlet denylist and audit override sanitization remain bounded',
   assert.equal(resolveAuditOverride(overrides, 'news.example.com', 'nativeHeuristics'), undefined);
 });
 
-test('manifest and public allowlist expose only the Talon-owned YouTube ad-skip runtime', async () => {
+test('manifest and public allowlist expose only the Talon-owned YouTube runtime lanes', async () => {
   const watchPrefix = 'youtube' + '-watch';
   const relayHtmlPath = `web_accessible_resources/${watchPrefix}-relay.html`;
   const relayScriptPath = `web_accessible_resources/${watchPrefix}-relay.js`;
   const bootstrapPath = `js/scripting/${watchPrefix}-bootstrap.js`;
   const talonYouTubePath = 'js/scripting/youtube-ad-skip.js';
+  const talonYouTubeGuardPath = 'js/scripting/youtube-player-guard.js';
   const manifest = JSON.parse(await readSource('manifest.json'));
   const allowlist = await readSource('public-safe-allowlist.txt');
   const contentScripts = Array.isArray(manifest.content_scripts) ? manifest.content_scripts : [];
@@ -113,6 +114,7 @@ test('manifest and public allowlist expose only the Talon-owned YouTube ad-skip 
   );
 
   assert.equal(allowlist.includes(talonYouTubePath), true);
+  assert.equal(allowlist.includes(talonYouTubeGuardPath), true);
   assert.equal(allowlist.includes(bootstrapPath), false);
   assert.equal(allowlist.includes(relayHtmlPath), false);
   assert.equal(allowlist.includes(relayScriptPath), false);
@@ -129,6 +131,7 @@ test('deleted YouTube relay and Postmedia runtime files are gone from the worksp
   const watchPrefix = 'youtube' + '-watch';
 
   assert.equal(await pathExists('js/scripting/youtube-ad-skip.js'), true);
+  assert.equal(await pathExists('js/scripting/youtube-player-guard.js'), true);
   assert.equal(await pathExists(`js/scripting/${watchPrefix}-bootstrap.js`), false);
   assert.equal(await pathExists(`web_accessible_resources/${watchPrefix}-relay.html`), false);
   assert.equal(await pathExists(`web_accessible_resources/${watchPrefix}-relay.js`), false);

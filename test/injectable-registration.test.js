@@ -250,7 +250,7 @@ test('remote cosmetics registration splits broad and host-gated lanes', async ()
   assert.equal(remoteCosmeticsSource.includes("id: 'remote-cosmetics'"), false);
 });
 
-test('scripting manager registers only the Talon-owned YouTube lane, not old compatibility lanes', async () => {
+test('scripting manager registers only the Talon-owned YouTube lanes, not old compatibility lanes', async () => {
   const watchPrefix = 'youtube' + '-watch';
   const source = await fs.readFile(
     new URL('../js/scripting-manager.js', import.meta.url),
@@ -259,6 +259,11 @@ test('scripting manager registers only the Talon-owned YouTube lane, not old com
 
   assert.match(source, /TALON_YOUTUBE_AD_SKIP_ID = 'talon-youtube-ad-skip'/);
   assert.match(source, /TALON_YOUTUBE_AD_SKIP_PATH = '\/js\/scripting\/youtube-ad-skip\.js'/);
+  assert.match(source, /TALON_YOUTUBE_PLAYER_GUARD_ID = 'talon-youtube-player-guard'/);
+  assert.match(source, /TALON_YOUTUBE_PLAYER_GUARD_PATH = '\/js\/scripting\/youtube-player-guard\.js'/);
+  assert.match(source, /function registerYouTubePlayerGuard\(context\)/);
+  assert.match(source, /registerYouTubePlayerGuard\(context\)/);
+  assert.match(source, /world: 'MAIN'/);
   assert.match(source, /function registerYouTubeAdSkip\(context\)/);
   assert.match(source, /registerYouTubeAdSkip\(context\)/);
   assert.match(source, /getScriptletExcludedHostnames/);

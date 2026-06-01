@@ -144,10 +144,16 @@ test('uBO parity registration excludes YouTube scriptlets and keeps Talon lane s
 
   assert.match(managerSource, /const TALON_YOUTUBE_AD_SKIP_ID = 'talon-youtube-ad-skip';/);
   assert.match(managerSource, /const TALON_YOUTUBE_AD_SKIP_PATH = '\/js\/scripting\/youtube-ad-skip\.js';/);
+  assert.match(managerSource, /const TALON_YOUTUBE_PLAYER_GUARD_ID = 'talon-youtube-player-guard';/);
+  assert.match(managerSource, /const TALON_YOUTUBE_PLAYER_GUARD_PATH = '\/js\/scripting\/youtube-player-guard\.js';/);
+  assert.match(managerSource, /function registerYouTubePlayerGuard\(context\)/);
+  assert.match(managerSource, /registerYouTubePlayerGuard\(context\)/);
+  assert.match(managerSource, /world: 'MAIN'/);
   assert.match(managerSource, /const getScriptletExcludedHostnames = \( \) => YOUTUBE_AD_SKIP_HOSTNAMES;/);
   assert.match(managerSource, /function registerYouTubeAdSkip\(context\)/);
   assert.match(managerSource, /registerYouTubeAdSkip\(context\)/);
   assert.match(managerSource, /excludeMatches\.push\(\.\.\.ut\.matchesFromHostnames\(scriptletExcludedHostnames\)\)/);
   assert.match(managerSource, /targetHostnames = ut\.subtractHostnameIters\(\s*targetHostnames,\s*scriptletExcludedHostnames\s*\);/);
   assert.match(ownershipSource, /"js\/scripting\/youtube-ad-skip\.js"/);
+  assert.match(ownershipSource, /"js\/scripting\/youtube-player-guard\.js"/);
 });

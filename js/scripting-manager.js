@@ -82,6 +82,8 @@ const TALON_SHADOW_DOM_HELPER_PATH = '/js/scripting/shadow-dom-helper.js';
 const TALON_BLOCK_HINTS_PATH = '/js/scripting/block-hints.js';
 const TALON_YOUTUBE_AD_SKIP_PATH = '/js/scripting/youtube-ad-skip.js';
 const TALON_YOUTUBE_AD_SKIP_ID = 'talon-youtube-ad-skip';
+const TALON_YOUTUBE_PLAYER_GUARD_PATH = '/js/scripting/youtube-player-guard.js';
+const TALON_YOUTUBE_PLAYER_GUARD_ID = 'talon-youtube-player-guard';
 const YOUTUBE_AD_SKIP_HOSTNAMES = Object.freeze([
     'youtube.com',
     'youtube-nocookie.com',
@@ -1143,6 +1145,54 @@ function registerYouTubeAdSkip(context) {
 
 /******************************************************************************/
 
+function registerYouTubePlayerGuard(context) {
+    const { before, filteringModeDetails, subsystemSuppressionHostnames } = context;
+    const matches = getYouTubeAdSkipMatches(filteringModeDetails);
+    if ( matches.length === 0 ) { return; }
+
+    normalizeMatches(matches);
+
+    const excludeMatches = getYouTubeAdSkipExcludeMatches(filteringModeDetails);
+    pushExactExcludeMatches(
+        excludeMatches,
+        subsystemSuppressionHostnames?.youtubeAdSkip
+    );
+
+    const registered = before.get(TALON_YOUTUBE_PLAYER_GUARD_ID);
+    before.delete(TALON_YOUTUBE_PLAYER_GUARD_ID); // Important!
+
+    const directive = {
+        id: TALON_YOUTUBE_PLAYER_GUARD_ID,
+        js: [
+            TALON_YOUTUBE_PLAYER_GUARD_PATH,
+        ],
+        allFrames: true,
+        matches,
+        runAt: 'document_start',
+        world: 'MAIN',
+    };
+    if ( excludeMatches.length !== 0 ) {
+        directive.excludeMatches = excludeMatches;
+    }
+
+    if ( registered === undefined ) {
+        context.toAdd.push(directive);
+        return;
+    }
+
+    if (
+        ut.strArrayEq(registered.js, directive.js, false) === false ||
+        ut.strArrayEq(registered.matches, matches) === false ||
+        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false ||
+        registered.world !== directive.world
+    ) {
+        context.toRemove.push(TALON_YOUTUBE_PLAYER_GUARD_ID);
+        context.toAdd.push(directive);
+    }
+}
+
+/******************************************************************************/
+
 function registerAdShellStyles(context) {
     const {
         before,
@@ -1522,6 +1572,7 @@ const buildInjectablesRegistrationPlan = async () => {
         registerSpecific(context),
         registerNativeHeuristics(context),
         registerAutomation(context),
+        registerYouTubePlayerGuard(context),
         registerYouTubeAdSkip(context),
         registerAdShellStyles(context),
         registerRemoteCosmetics(context),

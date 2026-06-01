@@ -88,7 +88,7 @@ export const RISK_MANIFEST = Object.freeze([
         hostScope: 'youtube.com and youtube-nocookie.com only',
         runTiming: 'document_start',
         frameScope: 'all frames',
-        mutationType: 'skip visible YouTube ads, hide YouTube ad surfaces, and temporarily accelerate ad video playback',
+        mutationType: 'prune YouTube player ad metadata, correct SSAP ad restart loops, skip visible YouTube ads, hide YouTube ad surfaces, and temporarily accelerate ad video playback',
         protectedExposure: 'low',
     },
     {
