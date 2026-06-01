@@ -13,15 +13,12 @@ const STYLE_ID = 'talon-youtube-ad-skip-style';
 const FAST_PLAYBACK_RATE = 16;
 const CHECK_INTERVAL_MS = 250;
 const HIDDEN_CHECK_INTERVAL_MS = 1500;
-const SHORT_AD_MAX_DURATION_SECONDS = 90;
-const AD_END_OFFSET_SECONDS = 0.25;
 
 const YOUTUBE_HOST_RE = /(^|\.)youtube(?:-nocookie)?\.com$/i;
 
 const AD_STATE_SELECTOR = [
     '.html5-video-player.ad-showing',
     '#movie_player.ad-showing',
-    '.ad-showing',
 ].join(',');
 
 const SKIP_BUTTON_SELECTOR = [
@@ -166,20 +163,6 @@ const createController = env => {
         try {
             if ( Number(video.playbackRate) < FAST_PLAYBACK_RATE ) {
                 video.playbackRate = FAST_PLAYBACK_RATE;
-            }
-        } catch {
-        }
-        try {
-            const duration = Number(video.duration);
-            const currentTime = Number(video.currentTime);
-            if (
-                Number.isFinite(duration) &&
-                Number.isFinite(currentTime) &&
-                duration > 0 &&
-                duration <= SHORT_AD_MAX_DURATION_SECONDS &&
-                currentTime < duration - AD_END_OFFSET_SECONDS
-            ) {
-                video.currentTime = Math.max(0, duration - AD_END_OFFSET_SECONDS);
             }
         } catch {
         }

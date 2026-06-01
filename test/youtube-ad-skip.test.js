@@ -95,13 +95,31 @@ test('YouTube ad skip clicks visible skip controls, accelerates ads, and restore
   assert.equal(state.skipClicks, 1);
   assert.equal(video.muted, true);
   assert.equal(video.playbackRate, 16);
-  assert.equal(video.currentTime, 29.75);
+  assert.equal(video.currentTime, 2);
   assert.equal(state.styles.length, 1);
 
   state.adShowing = false;
   assert.equal(controller.tick(), false);
   assert.equal(video.muted, false);
   assert.equal(video.playbackRate, 1);
+});
+
+test('YouTube ad skip does not seek the player and trigger short-video restart loops', async () => {
+  const source = await readSource('js/scripting/youtube-ad-skip.js');
+  const { context, state, video } = createHarness();
+  video.duration = 45;
+  video.currentTime = 0;
+  vm.runInNewContext(source, context);
+
+  const controller = context.__talonYoutubeAdSkipCreateController(context);
+  assert.equal(controller.tick(), true);
+  assert.equal(video.currentTime, 0);
+
+  video.currentTime = 0;
+  assert.equal(controller.tick(), true);
+  assert.equal(video.currentTime, 0);
+  assert.equal(state.skipClicks, 2);
+  assert.equal(video.playbackRate, 16);
 });
 
 test('YouTube ad skip is Talon-owned runtime without remote code or page-script injection', async () => {
@@ -116,6 +134,7 @@ test('YouTube ad skip is Talon-owned runtime without remote code or page-script 
   assert.doesNotMatch(source, /\bXMLHttpRequest\b/);
   assert.doesNotMatch(source, /createElement\(['"]script['"]\)/);
   assert.doesNotMatch(source, /runtime\.getURL/);
+  assert.doesNotMatch(source, /currentTime\s*=/);
   assert.doesNotMatch(source, /analytics|posthog/i);
 });
 
