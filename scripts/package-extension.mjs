@@ -238,9 +238,12 @@ const pruneUnbundledRulesetArtifacts = async (allowedIds) => {
   await pruneRulesetDirectoryById('rulesets/scripting/generic', allowedIds);
   await pruneRulesetDirectoryById('rulesets/scripting/procedural', allowedIds);
   await pruneRulesetDirectoryById('rulesets/scripting/specific', allowedIds);
+  await pruneRulesetDirectoryById('rulesets/scripting/popup', allowedIds);
   await pruneRulesetDirectoryById('rulesets/scripting/generichigh', allowedIds);
+  await pruneRulesetDirectoryById('rulesets/scripting/scriptlet/main', allowedIds);
+  await pruneRulesetDirectoryById('rulesets/scripting/scriptlet/isolated', allowedIds);
   await pruneRulesetDirectoryById(
-    'rulesets/scripting/scriptlet',
+    'js/scripting/scriptlet-token',
     new Set([ ...allowedIds, ...EXTRA_PACKAGED_SCRIPTLET_IDS ]),
     'prefix-before-dot'
   );
@@ -248,6 +251,7 @@ const pruneUnbundledRulesetArtifacts = async (allowedIds) => {
   await pruneRulesetDetailsFile(allowedIds);
   await pruneTupleDetailsFile('rulesets/generic-details.json', allowedIds);
   await pruneTupleDetailsFile('rulesets/scriptlet-details.json', allowedIds);
+  await pruneTupleDetailsFile('js/scripting/scriptlet-token-details.json', allowedIds);
 };
 
 const writeSourceCodeMetadata = async (manifest) => {

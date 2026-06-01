@@ -56,8 +56,24 @@ test('parity status blocks mixed runtime, permission, and license drift', () => 
   assert.equal(status.manualReviewRequired, true);
   assert.ok(status.blockers.some(blocker => /license review/.test(blocker)));
   assert.ok(status.blockers.some(blocker => /Store-facing/.test(blocker)));
-  assert.ok(status.blockers.some(blocker => /Runtime/.test(blocker)));
+  assert.ok(status.blockers.some(blocker => /Runtime drift/.test(blocker)));
   assert.match(formatParityStatusMarkdown(status), /Do not import uBO Lite runtime or rulesets automatically/);
+});
+
+test('parity status distinguishes runtime-only and layout-only blockers', () => {
+  const runtimeOnly = buildParityStatus({
+    driftClasses: ['runtime-code'],
+    runtimeSchemaDiffs: [
+      { key: 'usesUserScripts', local: false, upstream: true },
+    ],
+  });
+  const layoutOnly = buildParityStatus({
+    driftClasses: ['compiled-layout'],
+    scriptingLayoutDiff: { added: ['popup'], removed: [] },
+  });
+
+  assert.ok(runtimeOnly.blockers.includes('Runtime drift needs a separate runtime migration.'));
+  assert.ok(layoutOnly.blockers.includes('Compiled scripting layout drift needs a separate runtime migration.'));
 });
 
 test('parity status reports complete parity when no drift exists', () => {

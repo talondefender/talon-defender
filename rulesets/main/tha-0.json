@@ -537,7 +537,6 @@
 {"action":{"type":"block"},"condition":{"urlFilter":"||restrainingorderlawyers.com"},"id":536,"priority":10},
 {"action":{"type":"block"},"condition":{"urlFilter":"||reuseu.com"},"id":537,"priority":10},
 {"action":{"type":"block"},"condition":{"urlFilter":"||rimpub.com"},"id":538,"priority":10},
-{"action":{"type":"block"},"condition":{"urlFilter":"||rishigoutam.com"},"id":539,"priority":10},
 {"action":{"type":"block"},"condition":{"urlFilter":"||riyanfashion.com"},"id":540,"priority":10},
 {"action":{"type":"block"},"condition":{"urlFilter":"||rootboundmarketing.com"},"id":541,"priority":10},
 {"action":{"type":"block"},"condition":{"urlFilter":"||runaroundthailand.com"},"id":542,"priority":10},
@@ -757,5 +756,6 @@
 {"action":{"redirect":{"extensionPath":"/web_accessible_resources/1x1.gif"},"type":"redirect"},"condition":{"initiatorDomains":["shopee.co.th"],"resourceTypes":["xmlhttprequest"],"urlFilter":"||shopee.co.th/__t__"},"id":756,"priority":11},
 {"action":{"redirect":{"extensionPath":"/web_accessible_resources/1x1.gif"},"type":"redirect"},"condition":{"initiatorDomains":["shopee.co.th"],"resourceTypes":["xmlhttprequest"],"urlFilter":"||tracking.shopee.co.th^"},"id":757,"priority":11},
 {"action":{"redirect":{"extensionPath":"/web_accessible_resources/noop-1s.mp4"},"type":"redirect"},"condition":{"initiatorDomains":["thmovieshd.com"],"resourceTypes":["media"],"urlFilter":"||b-cdn.net/ssd1/ads/*.mp4"},"id":758,"priority":41},
-{"action":{"redirect":{"extensionPath":"/web_accessible_resources/noop-0.1s.mp3"},"type":"redirect"},"condition":{"domainType":"thirdParty","initiatorDomains":["hdd.moviefun24.com"],"resourceTypes":["media"]},"id":759,"priority":11}
+{"action":{"redirect":{"extensionPath":"/web_accessible_resources/noop-0.1s.mp3"},"type":"redirect"},"condition":{"domainType":"thirdParty","initiatorDomains":["hdd.moviefun24.com"],"resourceTypes":["media"]},"id":759,"priority":11},
+{"action":{"type":"block"},"condition":{"resourceTypes":["image"],"urlFilter":"||veewin.top/*banner"},"id":760,"priority":10}
 ]

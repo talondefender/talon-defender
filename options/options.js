@@ -55,11 +55,13 @@ const ATTRIBUTIONS_URL =
 const LICENSE_RUNTIME_MESSAGE_TIMEOUT_MS = 12000;
 
 const EXTRA_PROTECTION_RULESETS = [
+  "annoyances-ai",
   "annoyances-cookies",
-  "annoyances-notifications",
-  "annoyances-others",
+  "annoyances-overlays",
   "annoyances-social",
-  "annoyances-widgets"
+  "annoyances-widgets",
+  "annoyances-others",
+  "annoyances-notifications"
 ];
 
 const FILTER_TOGGLES = [

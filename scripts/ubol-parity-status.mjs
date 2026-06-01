@@ -22,6 +22,10 @@ export function buildParityStatus(report = {}) {
   const permissionRemoved = normalizeList(report.manifestDiffs?.permissions?.removed);
   const resourceAdded = normalizeList(report.manifestDiffs?.resources?.added);
   const resourceRemoved = normalizeList(report.manifestDiffs?.resources?.removed);
+  const permissionExceptionAdded = normalizeList(report.manifestDiffExceptions?.permissions?.added);
+  const permissionExceptionRemoved = normalizeList(report.manifestDiffExceptions?.permissions?.removed);
+  const resourceExceptionAdded = normalizeList(report.manifestDiffExceptions?.resources?.added);
+  const resourceExceptionRemoved = normalizeList(report.manifestDiffExceptions?.resources?.removed);
   const runtimeDiffs = Array.isArray(report.runtimeSchemaDiffs)
     ? report.runtimeSchemaDiffs
       .filter(diff => diff instanceof Object && typeof diff.key === 'string')
@@ -53,14 +57,19 @@ export function buildParityStatus(report = {}) {
   ) {
     blockers.push('Store-facing manifest, permission, package, or browser-support drift needs review.');
   }
-  if (
-    driftSet.has('runtime-code') ||
+  const hasRuntimeDrift = driftSet.has('runtime-code') || runtimeDiffs.length !== 0;
+  const hasLayoutDrift =
     driftSet.has('compiled-layout') ||
-    runtimeDiffs.length !== 0 ||
     layoutAdded.length !== 0 ||
-    layoutRemoved.length !== 0
-  ) {
-    blockers.push('Runtime and compiled scripting layout drift needs a separate runtime migration.');
+    layoutRemoved.length !== 0;
+  if (hasRuntimeDrift || hasLayoutDrift) {
+    if (hasRuntimeDrift && hasLayoutDrift) {
+      blockers.push('Runtime and compiled scripting layout drift need a separate runtime migration.');
+    } else if (hasRuntimeDrift) {
+      blockers.push('Runtime drift needs a separate runtime migration.');
+    } else {
+      blockers.push('Compiled scripting layout drift needs a separate runtime migration.');
+    }
   }
   if (driftSet.has('unknown')) {
     blockers.push('Unknown drift must be classified before automation can continue.');
@@ -107,6 +116,16 @@ export function buildParityStatus(report = {}) {
         added: resourceAdded,
         removed: resourceRemoved,
       },
+      manifestDiffExceptions: {
+        permissions: {
+          added: permissionExceptionAdded,
+          removed: permissionExceptionRemoved,
+        },
+        resources: {
+          added: resourceExceptionAdded,
+          removed: resourceExceptionRemoved,
+        },
+      },
       minimumChromeVersion: {
         local: minimumChromeVersion.local || '',
         upstream: minimumChromeVersion.upstream || '',
@@ -148,6 +167,14 @@ export function formatParityStatusMarkdown(status) {
     `- Runtime diffs: ${formatList(status.details.runtimeDiffs)}`,
     `- Scripting layout added: ${formatList(status.details.scriptingLayout.added)}`,
     `- Scripting layout removed: ${formatList(status.details.scriptingLayout.removed)}`,
+    `- Documented permission exceptions: ${formatList([
+      ...status.details.manifestDiffExceptions.permissions.added,
+      ...status.details.manifestDiffExceptions.permissions.removed,
+    ])}`,
+    `- Documented resource exceptions: ${formatList([
+      ...status.details.manifestDiffExceptions.resources.added,
+      ...status.details.manifestDiffExceptions.resources.removed,
+    ])}`,
   ];
 
   if (status.details.impact instanceof Object && Object.keys(status.details.impact).length !== 0) {

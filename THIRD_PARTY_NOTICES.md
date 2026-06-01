@@ -1,6 +1,6 @@
 ## Third-Party Notices
 
-Last updated: 2026-03-25
+Last updated: 2026-06-01
 
 Talon Defender is distributed under `GPL-3.0-or-later` and includes third-party code and data.
 
@@ -22,6 +22,11 @@ Talon Defender is distributed under `GPL-3.0-or-later` and includes third-party 
 - Source package: `css-tree`
 - License: MIT
 
+### RegexAnalyzer (`lib/regexanalyzer/regex.js`)
+- Source and license note: `lib/regexanalyzer/README.md`
+- Notes:
+  - Used by the packaged uBO Lite offscreen custom-filter compiler.
+
 ### Inter font (`css/fonts/Inter`)
 - Source: https://github.com/rsms/inter
 - License: SIL Open Font License 1.1
@@ -34,8 +39,9 @@ Talon Defender is distributed under `GPL-3.0-or-later` and includes third-party 
 
 Compiled rulesets bundled in release packages are the manifest-backed set in `manifest.json`:
 - the six default public rulesets
-- the five additional annoyance rulesets
+- additional non-default privacy, mobile, LAN, and annoyance rulesets
 - the public-safe regional language rulesets declared for locale auto-enable
+- documented upstream exclusions in `rulesets/ruleset-license-policy.json` are not bundled
 
 The authoritative upstream source and license map for every bundled ruleset is:
 - `rulesets/ruleset-license-policy.json`

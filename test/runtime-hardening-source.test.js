@@ -52,14 +52,83 @@ test('manifest permissions stay limited to the reviewed blocker surface', async 
   const manifest = JSON.parse(await readSource('manifest.json'));
 
   assert.deepEqual(manifest.permissions, [
+    'activeTab',
     'alarms',
     'declarativeNetRequest',
+    'offscreen',
     'scripting',
     'storage',
+    'userScripts',
     'webNavigation',
   ]);
   assert.deepEqual(manifest.host_permissions, ['<all_urls>']);
   assert.equal(manifest.permissions.includes('cookies'), false);
+});
+
+test('packaged uBO popup prevention is wired through the reviewed runtime surface', async () => {
+  const configSource = await readSource('js/config.js');
+  const managerSource = await readSource('js/scripting-manager.js');
+  const preventPopupSource = await readSource('js/prevent-popup.js');
+  const packageSource = await readSource('scripts/package-extension.mjs');
+  const manifest = JSON.parse(await readSource('manifest.json'));
+  const rulesetDetails = JSON.parse(await readSource('rulesets/ruleset-details.json'));
+
+  assert.match(configSource, /popupBlockMode: true/);
+  assert.match(managerSource, /import \{ registerPreventPopup \} from '\.\/prevent-popup\.js';/);
+  assert.match(managerSource, /registerPreventPopup\(context\)/);
+  assert.match(preventPopupSource, /rulesetConfig\.popupBlockMode !== true/);
+  assert.match(preventPopupSource, /rulesets\/scripting\/popup\/\$\{id\}\.js/);
+  assert.match(packageSource, /pruneRulesetDirectoryById\('rulesets\/scripting\/popup', allowedIds\)/);
+  assert.equal(manifest.permissions.includes('offscreen'), true);
+  assert.equal(manifest.permissions.includes('userScripts'), true);
+  assert.equal(rulesetDetails.some(details => Number(details.popups) > 0), true);
+  assert.equal(await pathExists('js/scripting/prevent-popup.js'), true);
+  assert.equal(await pathExists('js/scripting/prevent-popup-target.js'), true);
+  assert.equal(await pathExists('rulesets/scripting/popup/easylist.js'), true);
+});
+
+test('packaged uBO scriptlet bundles are wired while Talon token compatibility stays separate', async () => {
+  const manifest = JSON.parse(await readSource('manifest.json'));
+  const managerSource = await readSource('js/scripting-manager.js');
+  const validateSource = await readSource('scripts/validate-mv3-package.mjs');
+
+  assert.equal(manifest.permissions.includes('offscreen'), true);
+  assert.equal(manifest.permissions.includes('userScripts'), true);
+  assert.equal(await pathExists('rulesets/scripting/scriptlet/main/ublock-filters.js'), true);
+  assert.equal(await pathExists('rulesets/scripting/scriptlet/isolated/ublock-filters.js'), true);
+  assert.equal(
+    await pathExists('js/scripting/scriptlet-token/ublock-experimental.trusted-json-edit-xhr-request.js'),
+    true
+  );
+  assert.equal(await pathExists('js/scripting/scriptlet-token-details.json'), true);
+  assert.match(
+    managerSource,
+    /\/rulesets\/scripting\/scriptlet\/\$\{world\.toLowerCase\(\)\}\/\$\{rulesetId\}\.js/
+  );
+  assert.match(managerSource, /getScriptletTokenDetails\(\)/);
+  assert.match(managerSource, /registerRemoteScriptlets\(context, scriptletTokenDetails\)/);
+  assert.match(validateSource, /\^js\\\/scripting\\\/scriptlet-token\\\//);
+});
+
+test('uBO Lite offscreen and userScripts runtime is packaged behind entitlement sync', async () => {
+  const extSource = await readSource('js/ext.js');
+  const filterManagerSource = await readSource('js/filter-manager.js');
+  const backgroundSource = await readSource('js/background.js');
+  const ownershipSource = await readSource('scripts/ubol-source-ownership.json');
+
+  assert.equal(await pathExists('js/offscreen/compile-filters.html'), true);
+  assert.equal(await pathExists('js/resources/scriptlets.js'), true);
+  assert.equal(await pathExists('lib/regexanalyzer/regex.js'), true);
+  assert.match(extSource, /export const supportsUserScripts/);
+  assert.match(filterManagerSource, /export async function registerSandboxFilters/);
+  assert.match(filterManagerSource, /browser\.offscreen\.createDocument/);
+  assert.match(filterManagerSource, /browser\.userScripts\.register/);
+  assert.match(backgroundSource, /registerSandboxFilters\(\)/);
+  assert.match(backgroundSource, /runtime\.onUserScriptMessage\.addListener/);
+  assert.match(backgroundSource, /unregisterAllUserScripts/);
+  assert.match(ownershipSource, /"js\/offscreen\/\*\*"/);
+  assert.match(ownershipSource, /"js\/resources\/\*\*"/);
+  assert.match(ownershipSource, /"lib\/regexanalyzer\/\*\*"/);
 });
 
 test('popup exposes reviewer-visible Allowed Sites controls for the current tab', async () => {

@@ -35,6 +35,7 @@ export const rulesetConfig = {
     autoReload: true,
     showBlockedCount: false,
     strictBlockMode: webextFlavor !== 'safari',
+    popupBlockMode: true,
     developerMode: false,
     hasBroadHostPermissions: true,
     communityRulesEnabled: true,

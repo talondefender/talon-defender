@@ -16,10 +16,13 @@ const targetDir = path.resolve(process.cwd(), getArgValue('--dir') || 'dist/exte
 const violations = [];
 
 const APPROVED_MANIFEST_PERMISSIONS = new Map([
+  ['activeTab', 'Matches uBO Lite picker/custom-filter capability on the active page.'],
   ['alarms', 'Schedules entitlement checks, community sync retries, and lifecycle reminders.'],
   ['declarativeNetRequest', 'Applies MV3 blocking, redirect, allow, and allow-all rules.'],
+  ['offscreen', 'Compiles user custom filters in an MV3-safe offscreen document.'],
   ['scripting', 'Registers packaged content scripts and packaged scriptlet interpreters.'],
   ['storage', 'Stores user settings, entitlement state, diagnostics, and signed remote data.'],
+  ['userScripts', 'Registers compiled user custom scriptlet filters when the browser supports the API.'],
   ['webNavigation', 'Coordinates navigation-aware refresh and compatibility handling.'],
 ]);
 
@@ -83,10 +86,13 @@ const URL_METADATA_PATHS = [
   /^LICENSE\.txt$/,
   /^css\/fonts\/Inter\/LICENSE\.txt$/,
   /^lib\/codemirror\/README\.md$/,
+  /^lib\/regexanalyzer\/(?:README|CHANGES)\.md$/,
 ];
 
 const URL_DATA_PATHS = [
   /^rulesets\//,
+  /^js\/scripting\/scriptlet-token\//,
+  /^js\/scripting\/scriptlet-token-details\.json$/,
   /^shared\/public-suffix-data\.js$/,
 ];
 
@@ -240,7 +246,7 @@ const hasWebAccessibleResource = (manifest, expectedPath) => {
 };
 
 const REQUIRED_ALIASED_SCRIPTLET_PATHS = [
-  'rulesets/scripting/scriptlet/ublock-experimental.trusted-json-edit-xhr-request.js',
+  'js/scripting/scriptlet-token/ublock-experimental.trusted-json-edit-xhr-request.js',
 ];
 
 const FORBIDDEN_PUBLIC_REMOTE_TACTICS_PATHS = [
@@ -696,6 +702,13 @@ const checkHtmlFile = async (absPath) => {
     const rawRef = (match[2] || '').trim();
     if (rawRef === '') { continue; }
     if (isExternalReference(rawRef)) { continue; }
+    if (
+      relPath === 'js/offscreen/compile-filters.html' &&
+      attr === 'href' &&
+      rawRef === 'img/icon_64.png'
+    ) {
+      continue;
+    }
 
     const cleanRef = rawRef.split(/[?#]/)[0];
     if (cleanRef === '') { continue; }

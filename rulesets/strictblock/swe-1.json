@@ -13,6 +13,7 @@
    "analytics.alandpost.com",
    "analytics.citreamedia.com",
    "analytics.gen.shield.monitoringservice.co",
+   "analytics.samnytt.se",
    "analytics.teknikveckan.se",
    "analytics.undeco.se",
    "annons.dagen.se",
@@ -36,9 +37,11 @@
    "images-ads.aland.com",
    "imp.laget.se",
    "ingest.analytics.nation.dev",
+   "insights.hemnet.se",
    "insights.tv4.a2d.tv",
    "js.evtr.nordiskemedier.dk",
    "lanapengar.expressen.se",
+   "load.znq.tt.se",
    "logger.tv.nu",
    "m1.analytics.sitevision-cloud.se",
    "mediaserver.gvcaffiliates.com.cdn.cloudflare.net",
@@ -67,13 +70,16 @@
    "telemetry.bambuser.io",
    "tracing.yelp.com",
    "track.intersport.se",
+   "track.mediaintelliview.com",
    "track.yetric.net",
    "tracking.fasab6f.se",
    "tvm-tv4-freewheel.akamaized.net",
    "ues.vk.se",
+   "um.merinfo.se",
    "umami.nordiskehandel.cloud",
    "views.sociablekit.com",
-   "wb-analytics.onecruiter.com"
+   "wb-analytics.onecruiter.com",
+   "webstat.abf.se"
   ],
   "resourceTypes": [
    "main_frame"
@@ -90,7 +96,7 @@
   "type": "redirect"
  },
  "condition": {
-  "regexFilter": "^[a-z-]+://(?:[^/?#]+\\.)?aftonbladet\\.se\\.\\S*?\\..*",
+  "regexFilter": "^[^:]+:\\/\\/([^:/]+\\.)?aftonbladet\\.se\\..*?\\..*",
   "resourceTypes": [
    "main_frame"
   ]

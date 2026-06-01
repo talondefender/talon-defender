@@ -37,12 +37,15 @@
    "mt67.net",
    "nextdaymedia-ads.s3.amazonaws.com",
    "nojazz.eu",
+   "preroll.omroepvenlo.nl",
    "proxy.optoutadserving.com",
    "publize.net",
    "traffic.12flirt.com",
    "trickyrock.com",
    "viadata.store",
-   "x9t7g4m2qk2.azurewebsites.net"
+   "x9t7g4m2qk2.azurewebsites.net",
+   "zsp1.ah.be",
+   "zsp1.ah.nl"
   ],
   "resourceTypes": [
    "main_frame"

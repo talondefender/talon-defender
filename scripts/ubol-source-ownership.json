@@ -8,15 +8,36 @@
     "js/scripting/css-procedural-api.js",
     "js/scripting/css-specific.js",
     "js/scripting/isolated-api.js",
+    "js/prevent-popup.js",
     "js/scripting/prevent-popup.js",
     "js/scripting/prevent-popup-target.js",
-    "js/offscreen/**"
+    "js/offscreen/**",
+    "js/resources/**",
+    "js/static-filtering-parser.js",
+    "js/ubo-parser.js",
+    "lib/regexanalyzer/**"
   ],
   "rulesetOnlyAllowedPaths": [
     "rulesets/**",
     "ATTRIBUTION.md",
     "THIRD_PARTY_NOTICES.md"
   ],
+  "manifestPermissionExceptions": {
+    "localExtra": {
+      "alarms": "Talon-owned entitlement checks, community sync retries, and lifecycle reminders.",
+      "webNavigation": "Talon-owned frame-aware reload hints and compatibility diagnostics."
+    },
+    "upstreamExtra": {}
+  },
+  "webAccessibleResourceExceptions": {
+    "localExtra": {
+      "automation/directives.json": "Talon-owned packaged heuristic directives.",
+      "automation/native-heuristics.json": "Talon-owned packaged native-ad heuristic vocabulary."
+    },
+    "upstreamExtra": {
+      "zapper-ui.html": "Talon does not ship uBO Lite's zapper command or UI."
+    }
+  },
   "talonOwnedPaths": [
     "automation/**",
     "js/action.js",
@@ -42,6 +63,8 @@
     "js/scripting/native-heuristics.js",
     "js/scripting/post-hide-cleanup.js",
     "js/scripting/remote-cosmetics*.js",
+    "js/scripting/scriptlet-token/**",
+    "js/scripting/scriptlet-token-details.json",
     "js/scripting/shadow-dom-helper.js",
     "managed_storage.json",
     "options/**",

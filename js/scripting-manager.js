@@ -21,7 +21,15 @@
 
 import * as ut from './utils.js';
 
-import { browser, localRead, localRemove, localWrite } from './ext.js';
+import {
+    browser,
+    localKeys,
+    localRead,
+    localRemove,
+    localWrite,
+    sessionKeys,
+    sessionRemove,
+} from './ext.js';
 import { ubolErr, ubolLog } from './debug.js';
 
 import {
@@ -37,6 +45,7 @@ import {
 import { getEnabledRulesetsDetails } from './ruleset-manager.js';
 import { getFilteringModeDetails } from './mode-manager.js';
 import { registerCustomFilters } from './filter-manager.js';
+import { registerPreventPopup } from './prevent-popup.js';
 import { runInjectableRegistrationFlow } from './injectable-registration.js';
 import { registerToolbarIconToggler } from './action.js';
 import { createSingleFlightRunner } from './single-flight.js';
@@ -64,7 +73,7 @@ const SUPPRESSIBLE_SUBSYSTEMS = Object.freeze([
 const SCRIPTLET_PATH_ALIASES = new Map([
     [
         'ublock-filters.trusted-json-edit-xhr-request',
-        '/rulesets/scripting/scriptlet/ublock-experimental.trusted-json-edit-xhr-request.js',
+        '/js/scripting/scriptlet-token/ublock-experimental.trusted-json-edit-xhr-request.js',
     ],
 ]);
 const TALON_PUBLIC_SUFFIX_DATA_PATH = '/shared/public-suffix-data.js';
@@ -113,6 +122,16 @@ function getScriptletDetails() {
     return promise;
 }
 
+function getScriptletTokenDetails() {
+    let promise = resourceDetailPromises.get('scriptlet-token');
+    if ( promise !== undefined ) { return promise; }
+    promise = fetchJSON('/js/scripting/scriptlet-token-details').then(
+        entries => new Map(entries)
+    );
+    resourceDetailPromises.set('scriptlet-token', promise);
+    return promise;
+}
+
 function getGenericDetails() {
     let promise = resourceDetailPromises.get('generic');
     if ( promise !== undefined ) { return promise; }
@@ -150,7 +169,12 @@ const normalizeMatches = matches => {
 };
 
 const getScriptletPath = id =>
-    SCRIPTLET_PATH_ALIASES.get(id) || `/rulesets/scripting/scriptlet/${id}.js`;
+    SCRIPTLET_PATH_ALIASES.get(id) || `/js/scripting/scriptlet-token/${id}.js`;
+
+async function resetCSSCache() {
+    const keys = await sessionKeys() || [];
+    return sessionRemove(keys.filter(a => a.startsWith('cache.css.')));
+}
 
 const exactMatchesFromHostnames = hostnames => {
     const out = [];
@@ -598,16 +622,24 @@ function registerProcedural(context) {
 
 /******************************************************************************/
 
-function registerSpecific(context) {
+async function registerSpecific(context) {
     const { before, filteringModeDetails, rulesetsDetails } = context;
 
-    const js = [];
-    for ( const rulesetDetails of rulesetsDetails ) {
-        const count = rulesetDetails.css?.specific || 0;
-        if ( count === 0 ) { continue; }
-        js.push(`/rulesets/scripting/specific/${rulesetDetails.id}.js`);
+    {
+        const keys = await localKeys() || [];
+        await Promise.all([
+            localRemove(keys.filter(a => a.startsWith('css.specific.'))),
+            localRemove(keys.filter(a => a.startsWith('css.procedural.'))),
+        ]);
     }
-    if ( js.length === 0 ) { return; }
+
+    const rulesetIds = [];
+    for ( const rulesetDetails of rulesetsDetails ) {
+        const count = rulesetDetails.css?.specific ?? 0;
+        if ( count === 0 ) { continue; }
+        rulesetIds.push(rulesetDetails.id);
+    }
+    if ( rulesetIds.length === 0 ) { return; }
 
     const { none, basic, optimal, complete } = filteringModeDetails;
     const matches = [
@@ -616,8 +648,21 @@ function registerSpecific(context) {
     ];
     if ( matches.length === 0 ) { return; }
 
+    {
+        const promises = [];
+        for ( const id of rulesetIds ) {
+            promises.push(
+                fetchJSON(`/rulesets/scripting/specific/${id}`).then(data => {
+                    return localWrite(`css.specific.${id}`, data);
+                })
+            );
+        }
+        await Promise.all(promises);
+    }
+
     normalizeMatches(matches);
 
+    const js = rulesetIds.map(id => `/rulesets/scripting/specific/${id}.js`);
     js.unshift('/js/scripting/css-api.js', '/js/scripting/isolated-api.js');
     js.push('/js/scripting/css-specific.js');
 
@@ -679,40 +724,28 @@ function registerScriptlet(context, scriptletDetails) {
     ];
 
     for ( const rulesetId of rulesetsDetails.map(v => v.id) ) {
-        const scriptletList = scriptletDetails.get(rulesetId);
-        if ( scriptletList === undefined ) { continue; }
+        const worlds = scriptletDetails.get(rulesetId);
+        if ( worlds instanceof Object === false ) { continue; }
 
-        for ( const [ token, details ] of scriptletList ) {
-            const id = `${rulesetId}.${token}`;
+        for ( const world of Object.keys(worlds) ) {
+            if ( world !== 'MAIN' && world !== 'ISOLATED' ) { continue; }
+            const id = `${rulesetId}.${world.toLowerCase()}`;
             const registered = before.get(id);
-            const localExcludedHostnames = getScriptletExcludedHostnames(id);
+            const hostnames = Array.isArray(worlds[world]) ? worlds[world] : [];
 
             const matches = [];
             const excludeMatches = [];
             let targetHostnames = [];
             if ( hasBroadHostPermission ) {
                 excludeMatches.push(...permissionRevokedMatches);
-                if ( details.hostnames.length > 100 ) {
-                    targetHostnames = [ '*' ];
-                } else {
-                    targetHostnames = details.hostnames;
-                }
+                targetHostnames = hostnames;
             } else if ( permissionGrantedHostnames.length !== 0 ) {
-                if ( details.hostnames.includes('*') ) {
+                if ( hostnames.includes('*') ) {
                     targetHostnames = permissionGrantedHostnames;
                 } else {
                     targetHostnames = ut.intersectHostnameIters(
-                        details.hostnames,
+                        hostnames,
                         permissionGrantedHostnames
-                    );
-                }
-            }
-            if ( localExcludedHostnames.length !== 0 ) {
-                if ( targetHostnames.includes('*') ) {
-                    excludeMatches.push(...ut.matchesFromHostnames(localExcludedHostnames));
-                } else {
-                    targetHostnames = targetHostnames.filter(
-                        hostname => localExcludedHostnames.includes(hostname) === false
                     );
                 }
             }
@@ -724,12 +757,12 @@ function registerScriptlet(context, scriptletDetails) {
 
             const directive = {
                 id,
-                js: [ getScriptletPath(id) ],
+                js: [ `/rulesets/scripting/scriptlet/${world.toLowerCase()}/${rulesetId}.js` ],
                 matches,
-                allFrames: shouldUseAllFramesForScriptlet(rulesetId, token),
-                matchOriginAsFallback: shouldUseOriginFallbackForScriptlet(rulesetId, token),
+                allFrames: true,
+                matchOriginAsFallback: true,
                 runAt: 'document_start',
-                world: details.world,
+                world,
             };
             if ( excludeMatches.length !== 0 ) {
                 directive.excludeMatches = excludeMatches;
@@ -1313,6 +1346,7 @@ const buildInjectablesRegistrationPlan = async () => {
         filteringModeDetails,
         rulesetsDetails,
         scriptletDetails,
+        scriptletTokenDetails,
         genericDetails,
         remoteCosmetics,
         remoteScriptlets,
@@ -1323,6 +1357,7 @@ const buildInjectablesRegistrationPlan = async () => {
         getFilteringModeDetails(),
         getEnabledRulesetsDetails(),
         getScriptletDetails(),
+        getScriptletTokenDetails(),
         getGenericDetails(),
         readOptionalLocalValue(
             PUBLIC_REMOTE_COSMETICS_KEY,
@@ -1371,7 +1406,8 @@ const buildInjectablesRegistrationPlan = async () => {
     await Promise.all([
         registerProcedural(context),
         registerScriptlet(context, scriptletDetails),
-        registerRemoteScriptlets(context, scriptletDetails),
+        registerRemoteScriptlets(context, scriptletTokenDetails),
+        registerPreventPopup(context),
         registerSpecific(context),
         registerNativeHeuristics(context),
         registerAutomation(context),
@@ -1436,6 +1472,7 @@ const registerInjectablesImpl = async () => {
         await Promise.all([
             localRemove('$scripting.unregisterContentScripts').catch(() => {}),
             localRemove('$scripting.registerContentScripts').catch(() => {}),
+            resetCSSCache().catch(() => {}),
         ]);
     }
     await writeInjectableSyncDiagnostics(result);

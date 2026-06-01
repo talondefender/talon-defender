@@ -28,20 +28,27 @@ Entitlement behavior now:
 
 Expired behavior now:
 - when status becomes `expired`, the extension enables a paywall override with `dnr.setAllowAllRules(..., true, ...)`
-- registered content scripts are unregistered while the paywall is active
+- registered content scripts and registered user scripts are unregistered while the paywall is active
 - the toolbar icon switches to the warning shield and the badge shows `!`
 - picker mode and other entitled behavior are blocked while the paywall is active
 - in practice, expired status suspends blocking until the user restores entitlement
 
 Bundled filtering surface now:
 - default rulesets enabled in the manifest are `ublock-filters`, `easylist`, `easyprivacy`, `pgl`, `ublock-badware`, and `urlhaus-full`
-- entering complete mode now auto-enables the full bundled annoyance family: `annoyances-cookies`, `annoyances-notifications`, `annoyances-others`, `annoyances-overlays`, `annoyances-social`, and `annoyances-widgets`
-- the public Settings page now exposes an `Extra protection` toggle for the five non-default annoyance packs, so users no longer need to understand the hidden complete-mode concept
+- entering complete mode now auto-enables the full bundled annoyance family: `annoyances-ai`, `annoyances-cookies`, `annoyances-overlays`, `annoyances-social`, `annoyances-widgets`, `annoyances-others`, and `annoyances-notifications`
+- the public Settings page now exposes an `Extra protection` toggle for the seven non-default annoyance packs, so users no longer need to understand the hidden complete-mode concept
 - legacy or markerless ruleset selections now reset once to the canonical install defaults so reused Chrome storage cannot leave the public protection checkboxes blank, while later user checkbox changes persist normally across refreshes and restarts
 - the public Options page now bootstraps its protection checkboxes from a canonical background snapshot through the trusted early-message path, loads ruleset state in parallel with entitlement state, starts from a neutral `Loading...` row state instead of a fake all-disabled render, listens for runtime ruleset broadcasts, and renders multi-ruleset toggles as `active`, `partial`, or `disabled` so early startup races cannot falsely show all protections unchecked
 - the public popup now exposes a current-tab `Allowed Sites` control that adds the active hostname to no-filtering mode and can turn protection back on for that site, while Settings keeps the manual Allowed Sites list for arbitrary host entry and removal
 - the public package now also bundles a public-safe regional language ruleset family disabled by default and auto-enables locale-matched entries on fresh installs and untouched profiles
-- release packaging prunes unbundled ruleset artifacts so the shipped package only contains manifest-backed resources
+- packaged uBO Lite-derived rulesets are aligned to the latest reviewed stable Chromium baseline for the 51 public-safe manifest-backed rulesets, including the current compiled specific-cosmetic JSON layout
+- upstream `bgr-0`, `dpollock-0`, and `pol-0` are documented exclusions in `rulesets/ruleset-license-policy.json`; they are not bundled because their license status is unknown or non-commercial
+- obsolete split `generichigh` and per-ruleset `procedural` generated cosmetic directories have been removed from the public source surface; specific cosmetic registration now stores compiled `rulesets/scripting/specific/*.json` data before registering the uBO Lite specific cosmetic content scripts
+- uBO Lite's packaged popup-prevention runtime is now wired for manifest-backed rulesets with popup metadata, using packaged `rulesets/scripting/popup/*.js` data and the upstream `prevent-popup` content scripts
+- uBO Lite's packaged static scriptlet runtime now uses the compiled `rulesets/scripting/scriptlet/main/*.js` and `rulesets/scripting/scriptlet/isolated/*.js` bundle layout; Talon's signed community scriptlet hotfix lane keeps packaged-token compatibility under `js/scripting/scriptlet-token/`
+- uBO Lite's `offscreen` and `userScripts` custom-filter compiler lane is now packaged and entitlement-gated, including the upstream offscreen compiler, scriptlet resource library, and regex analyzer support files
+- release packaging and source hygiene both prune unbundled ruleset artifacts so the shipped package and public source surface only carry manifest-backed public-safe ruleset resources, plus explicitly preserved scriptlet aliases
+- remaining manifest/resource parity differences are documented Talon product exceptions: entitlement alarms, frame-aware navigation diagnostics, packaged automation vocabulary, and omission of uBO Lite's zapper UI
 
 Community bundle behavior now:
 - the default bundle URL is `https://api.talondefender.com/v1/community/latest.bundle.json`

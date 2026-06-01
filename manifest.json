@@ -42,19 +42,39 @@
         "path": "/rulesets/main/pgl.json"
       },
       {
+        "id": "ublock-badware",
+        "enabled": true,
+        "path": "/rulesets/main/ublock-badware.json"
+      },
+      {
+        "id": "urlhaus-full",
+        "enabled": true,
+        "path": "/rulesets/main/urlhaus-full.json"
+      },
+      {
+        "id": "adguard-mobile",
+        "enabled": false,
+        "path": "/rulesets/main/adguard-mobile.json"
+      },
+      {
+        "id": "block-lan",
+        "enabled": false,
+        "path": "/rulesets/main/block-lan.json"
+      },
+      {
+        "id": "adguard-spyware-url",
+        "enabled": false,
+        "path": "/rulesets/main/adguard-spyware-url.json"
+      },
+      {
+        "id": "annoyances-ai",
+        "enabled": false,
+        "path": "/rulesets/main/annoyances-ai.json"
+      },
+      {
         "id": "annoyances-cookies",
         "enabled": false,
         "path": "/rulesets/main/annoyances-cookies.json"
-      },
-      {
-        "id": "annoyances-notifications",
-        "enabled": false,
-        "path": "/rulesets/main/annoyances-notifications.json"
-      },
-      {
-        "id": "annoyances-others",
-        "enabled": false,
-        "path": "/rulesets/main/annoyances-others.json"
       },
       {
         "id": "annoyances-overlays",
@@ -72,94 +92,29 @@
         "path": "/rulesets/main/annoyances-widgets.json"
       },
       {
-        "id": "ublock-badware",
-        "enabled": true,
-        "path": "/rulesets/main/ublock-badware.json"
-      },
-      {
-        "id": "urlhaus-full",
-        "enabled": true,
-        "path": "/rulesets/main/urlhaus-full.json"
-      },
-      {
-        "id": "deu-0",
+        "id": "annoyances-others",
         "enabled": false,
-        "path": "/rulesets/main/deu-0.json"
+        "path": "/rulesets/main/annoyances-others.json"
       },
       {
-        "id": "fra-0",
+        "id": "annoyances-notifications",
         "enabled": false,
-        "path": "/rulesets/main/fra-0.json"
+        "path": "/rulesets/main/annoyances-notifications.json"
       },
       {
-        "id": "spa-0",
+        "id": "alb-0",
         "enabled": false,
-        "path": "/rulesets/main/spa-0.json"
+        "path": "/rulesets/main/alb-0.json"
       },
       {
-        "id": "spa-1",
+        "id": "ara-0",
         "enabled": false,
-        "path": "/rulesets/main/spa-1.json"
+        "path": "/rulesets/main/ara-0.json"
       },
       {
-        "id": "ita-0",
+        "id": "chn-0",
         "enabled": false,
-        "path": "/rulesets/main/ita-0.json"
-      },
-      {
-        "id": "nld-0",
-        "enabled": false,
-        "path": "/rulesets/main/nld-0.json"
-      },
-      {
-        "id": "jpn-1",
-        "enabled": false,
-        "path": "/rulesets/main/jpn-1.json"
-      },
-      {
-        "id": "kor-1",
-        "enabled": false,
-        "path": "/rulesets/main/kor-1.json"
-      },
-      {
-        "id": "swe-1",
-        "enabled": false,
-        "path": "/rulesets/main/swe-1.json"
-      },
-      {
-        "id": "fin-0",
-        "enabled": false,
-        "path": "/rulesets/main/fin-0.json"
-      },
-      {
-        "id": "tur-0",
-        "enabled": false,
-        "path": "/rulesets/main/tur-0.json"
-      },
-      {
-        "id": "vie-1",
-        "enabled": false,
-        "path": "/rulesets/main/vie-1.json"
-      },
-      {
-        "id": "ukr-0",
-        "enabled": false,
-        "path": "/rulesets/main/ukr-0.json"
-      },
-      {
-        "id": "rus-0",
-        "enabled": false,
-        "path": "/rulesets/main/rus-0.json"
-      },
-      {
-        "id": "rus-1",
-        "enabled": false,
-        "path": "/rulesets/main/rus-1.json"
-      },
-      {
-        "id": "rou-1",
-        "enabled": false,
-        "path": "/rulesets/main/rou-1.json"
+        "path": "/rulesets/main/chn-0.json"
       },
       {
         "id": "cze-0",
@@ -167,9 +122,34 @@
         "path": "/rulesets/main/cze-0.json"
       },
       {
+        "id": "deu-0",
+        "enabled": false,
+        "path": "/rulesets/main/deu-0.json"
+      },
+      {
+        "id": "est-0",
+        "enabled": false,
+        "path": "/rulesets/main/est-0.json"
+      },
+      {
+        "id": "fin-0",
+        "enabled": false,
+        "path": "/rulesets/main/fin-0.json"
+      },
+      {
+        "id": "fra-0",
+        "enabled": false,
+        "path": "/rulesets/main/fra-0.json"
+      },
+      {
         "id": "grc-0",
         "enabled": false,
         "path": "/rulesets/main/grc-0.json"
+      },
+      {
+        "id": "hrv-0",
+        "enabled": false,
+        "path": "/rulesets/main/hrv-0.json"
       },
       {
         "id": "hun-0",
@@ -182,34 +162,9 @@
         "path": "/rulesets/main/idn-0.json"
       },
       {
-        "id": "mkd-0",
+        "id": "ind-0",
         "enabled": false,
-        "path": "/rulesets/main/mkd-0.json"
-      },
-      {
-        "id": "lva-0",
-        "enabled": false,
-        "path": "/rulesets/main/lva-0.json"
-      },
-      {
-        "id": "ltu-0",
-        "enabled": false,
-        "path": "/rulesets/main/ltu-0.json"
-      },
-      {
-        "id": "svn-0",
-        "enabled": false,
-        "path": "/rulesets/main/svn-0.json"
-      },
-      {
-        "id": "tha-0",
-        "enabled": false,
-        "path": "/rulesets/main/tha-0.json"
-      },
-      {
-        "id": "chn-0",
-        "enabled": false,
-        "path": "/rulesets/main/chn-0.json"
+        "path": "/rulesets/main/ind-0.json"
       },
       {
         "id": "irn-0",
@@ -217,9 +172,109 @@
         "path": "/rulesets/main/irn-0.json"
       },
       {
+        "id": "isl-0",
+        "enabled": false,
+        "path": "/rulesets/main/isl-0.json"
+      },
+      {
         "id": "isr-0",
         "enabled": false,
         "path": "/rulesets/main/isr-0.json"
+      },
+      {
+        "id": "ita-0",
+        "enabled": false,
+        "path": "/rulesets/main/ita-0.json"
+      },
+      {
+        "id": "jpn-1",
+        "enabled": false,
+        "path": "/rulesets/main/jpn-1.json"
+      },
+      {
+        "id": "kor-1",
+        "enabled": false,
+        "path": "/rulesets/main/kor-1.json"
+      },
+      {
+        "id": "ltu-0",
+        "enabled": false,
+        "path": "/rulesets/main/ltu-0.json"
+      },
+      {
+        "id": "lva-0",
+        "enabled": false,
+        "path": "/rulesets/main/lva-0.json"
+      },
+      {
+        "id": "mkd-0",
+        "enabled": false,
+        "path": "/rulesets/main/mkd-0.json"
+      },
+      {
+        "id": "nld-0",
+        "enabled": false,
+        "path": "/rulesets/main/nld-0.json"
+      },
+      {
+        "id": "nor-0",
+        "enabled": false,
+        "path": "/rulesets/main/nor-0.json"
+      },
+      {
+        "id": "rou-1",
+        "enabled": false,
+        "path": "/rulesets/main/rou-1.json"
+      },
+      {
+        "id": "rus-0",
+        "enabled": false,
+        "path": "/rulesets/main/rus-0.json"
+      },
+      {
+        "id": "rus-1",
+        "enabled": false,
+        "path": "/rulesets/main/rus-1.json"
+      },
+      {
+        "id": "spa-0",
+        "enabled": false,
+        "path": "/rulesets/main/spa-0.json"
+      },
+      {
+        "id": "spa-1",
+        "enabled": false,
+        "path": "/rulesets/main/spa-1.json"
+      },
+      {
+        "id": "svn-0",
+        "enabled": false,
+        "path": "/rulesets/main/svn-0.json"
+      },
+      {
+        "id": "swe-1",
+        "enabled": false,
+        "path": "/rulesets/main/swe-1.json"
+      },
+      {
+        "id": "tha-0",
+        "enabled": false,
+        "path": "/rulesets/main/tha-0.json"
+      },
+      {
+        "id": "tur-0",
+        "enabled": false,
+        "path": "/rulesets/main/tur-0.json"
+      },
+      {
+        "id": "ukr-0",
+        "enabled": false,
+        "path": "/rulesets/main/ukr-0.json"
+      },
+      {
+        "id": "vie-1",
+        "enabled": false,
+        "path": "/rulesets/main/vie-1.json"
       }
     ]
   },
@@ -238,24 +293,27 @@
   },
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtFarJBdV0gpkL++8IG2QWivFFtMTaFWCBmCgkLLycLvv2zQAxK0soVEAUQtfmFyxUgLTuhHZ2k5/qbQXohs3nBFEjQi+cLbIdg88eK4Gk7KE+d9l1CAb7kqcSg2x+SCRu/+hIZ0/bOEPMm6ltTkvz0qa9jLKBQ5fmwQ+o0W4Waebu0tbajURgmI4BHVzS9aRQUjIUqrXzM9SjAFb8N2G5LmJPEaQ4o+ySwPFnclYeKr/piy9NbV6JqDPgEDqHXyPiKw9AegZYxHggc1e9uScSDeAVt+1kRqCd27+ZgQgL4Hyj4qbNou+cv7fGd03+WR5L9GS6d7o5u17jQPfVKvfvQIDAQAB",
   "manifest_version": 3,
-  "minimum_chrome_version": "137.0",
+  "minimum_chrome_version": "122.0",
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self';"
   },
   "name": "__MSG_extensionName__",
   "options_page": "options/options.html",
   "permissions": [
+    "activeTab",
     "alarms",
     "declarativeNetRequest",
+    "offscreen",
     "scripting",
     "storage",
+    "userScripts",
     "webNavigation"
   ],
   "short_name": "Talon",
   "storage": {
     "managed_schema": "managed_storage.json"
   },
-  "version": "0.1.5",
+  "version": "0.1.6",
   "web_accessible_resources": [
     {
       "resources": [
@@ -300,6 +358,8 @@
         "web_accessible_resources/amazon_apstag.js",
         "web_accessible_resources/google-ima.js",
         "web_accessible_resources/fingerprint2.js",
+        "web_accessible_resources/sensors-analytics.js",
+        "web_accessible_resources/adthrive_abd.js",
         "web_accessible_resources/noop.txt",
         "web_accessible_resources/1x1.gif",
         "web_accessible_resources/noop.css",
@@ -323,9 +383,11 @@
         "web_accessible_resources/fingerprint3.js",
         "web_accessible_resources/noop-vmap1.xml",
         "web_accessible_resources/noop-vast3.xml",
+        "web_accessible_resources/noop-vast2.xml",
         "web_accessible_resources/noop-0.1s.mp3",
         "web_accessible_resources/noop-1s.mp4",
         "web_accessible_resources/nobab2.js",
+        "web_accessible_resources/nitropay_ads.js",
         "web_accessible_resources/chartbeat.js",
         "web_accessible_resources/noop.json",
         "web_accessible_resources/noeval-silent.js",

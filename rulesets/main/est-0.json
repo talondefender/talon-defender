@@ -1,5 +1,5 @@
 [
-{"action":{"redirect":{"transform":{"queryTransform":{"removeParams":["dsrc"]}}},"type":"redirect"},"condition":{"resourceTypes":["main_frame","sub_frame","xmlhttprequest"],"urlFilter":"||delfi.ee^"},"id":1,"priority":2},
+{"action":{"redirect":{"transform":{"queryTransform":{"removeParams":["dsrc"]}}},"type":"redirect"},"condition":{"requestDomains":["delfi.ee"],"resourceTypes":["image","main_frame","sub_frame","xmlhttprequest"],"urlFilter":"^dsrc="},"id":1},
 {"action":{"type":"block"},"condition":{"urlFilter":"/js/ads_"},"id":2,"priority":10},
 {"action":{"type":"block"},"condition":{"urlFilter":"://ads."},"id":3,"priority":10},
 {"action":{"type":"block"},"condition":{"urlFilter":"://ads2."},"id":4,"priority":10},
@@ -70,5 +70,6 @@
 {"action":{"type":"allow"},"condition":{"initiatorDomains":["play.tv3.ee"],"resourceTypes":["xmlhttprequest"],"urlFilter":"||static.go3.tv/file/go3/resources/scripts/tv3play/onetrust/lv/onetrust.html"},"id":69,"priority":30},
 {"action":{"type":"block"},"condition":{"domainType":"thirdParty","excludedInitiatorDomains":["gmx.com","mail.com"],"urlFilter":"||ui-portal.de^"},"id":70,"priority":10},
 {"action":{"type":"allow"},"condition":{"urlFilter":"||auth-delfi-ee.tinypass.com^"},"id":71,"priority":30},
-{"action":{"type":"block"},"condition":{"urlFilter":"||v.postimees.ee/reklaam/"},"id":72,"priority":10}
+{"action":{"type":"block"},"condition":{"urlFilter":"||v.postimees.ee/reklaam/"},"id":72,"priority":10},
+{"action":{"type":"allow"},"condition":{"requestDomains":["itella.ee"],"resourceTypes":["image","main_frame","sub_frame","xmlhttprequest"],"urlFilter":"^trackingCode="},"id":73}
 ]

@@ -19,21 +19,16 @@
     Home: https://github.com/gorhill/uBlock
 */
 
-// ruleset: adguard-spyware-url
-
 // Important!
 // Isolate from global scope
 (function uBOL_cssSpecificImports() {
 
 /******************************************************************************/
 
-const argsList = ["",".hello_from_adguard_tracking_params"];
-const argsSeqs = [0,1];
-const hostnamesMap = new Map([["adguard.info",1],["adguard.com",1],["adguard.app",1]]);
-const hasEntities = false;
+const rulesetId = "adguard-spyware-url";
 
 self.specificImports = self.specificImports || [];
-self.specificImports.push({ argsList, argsSeqs, hostnamesMap, hasEntities });
+self.specificImports.push(rulesetId);
 
 /******************************************************************************/
 

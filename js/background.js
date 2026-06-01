@@ -39,10 +39,13 @@ import {
     addCustomFilters,
     customFiltersFromHostname,
     getAllCustomFilters,
+    getSandboxFilters,
     hasCustomFilters,
     injectCustomFilters,
+    registerSandboxFilters,
     removeAllCustomFilters,
     removeCustomFilters,
+    setSandboxFilters,
     startCustomFilters,
     terminateCustomFilters,
 } from './filter-manager.js';
@@ -1167,6 +1170,8 @@ import {
     browser,
     localRead, localRemove, localWrite,
     runtime,
+    sessionAccessLevel,
+    supportsUserScripts,
     webextFlavor,
 } from './ext.js';
 
@@ -2043,11 +2048,20 @@ async function syncInjectablesAndRefreshTabs({
     let registerResult = true;
     let reloadHint = null;
     let registrationChanged = false;
+    let sandboxRulesChanged = false;
     if ( runtimeOnly !== true ) {
-        registerResult = await registerInjectablesIfEntitled().catch(reason => ({
-            ok: false,
-            lastError: String(reason || 'register injectables failed'),
-        }));
+        const [ injectableResult, sandboxResult ] = await Promise.all([
+            registerInjectablesIfEntitled().catch(reason => ({
+                ok: false,
+                lastError: String(reason || 'register injectables failed'),
+            })),
+            registerSandboxFilters().catch(reason => {
+                ubolErr(`registerSandboxFilters/${reason}`);
+                return false;
+            }),
+        ]);
+        registerResult = injectableResult;
+        sandboxRulesChanged = sandboxResult === true;
         registrationChanged = registerResult instanceof Object && registerResult.ok === true && (
             (Number(registerResult.toAddCount) || 0) !== 0 ||
             (Number(registerResult.toRemoveCount) || 0) !== 0
@@ -2057,6 +2071,9 @@ async function syncInjectablesAndRefreshTabs({
             : null;
         if ( reloadHint instanceof Object ) {
             await markTabsForRemoteScriptletReload(reloadHint).catch(ubolErr);
+        }
+        if ( sandboxRulesChanged ) {
+            await updateUserRules().catch(ubolErr);
         }
     }
     const runtimeFingerprint = refreshOpenTabs === true
@@ -2077,6 +2094,7 @@ async function syncInjectablesAndRefreshTabs({
         runtimeRefreshed: shouldRefreshOpenTabs,
         reloadHint,
         runtimeFingerprint,
+        sandboxRulesChanged,
     };
 }
 
@@ -2319,6 +2337,17 @@ async function unregisterAllContentScripts() {
     }
 }
 
+async function unregisterAllUserScripts() {
+    if ( supportsUserScripts !== true ) { return; }
+    try {
+        const registered = await browser.userScripts.getScripts();
+        if ( Array.isArray(registered) === false || registered.length === 0 ) { return; }
+        await browser.userScripts.unregister();
+    } catch (reason) {
+        ubolErr(`unregisterUserScripts/${reason}`);
+    }
+}
+
 async function enablePaywall({ broadcast = true } = {}) {
     paywallActive = true;
     try {
@@ -2367,6 +2396,7 @@ async function enablePaywall({ broadcast = true } = {}) {
         ubolErr(`paywall/setAllowAllRules/${reason}`);
     }
     await unregisterAllContentScripts();
+    await unregisterAllUserScripts();
     if (broadcast) {
         broadcastMessage({ entitlement: entitlementStatus });
     }
@@ -2582,12 +2612,13 @@ function getCurrentVersion() {
 /******************************************************************************/
 
 const ANNOYANCE_RULESET_IDS = [
+    'annoyances-ai',
     'annoyances-cookies',
-    'annoyances-notifications',
-    'annoyances-others',
     'annoyances-overlays',
     'annoyances-social',
     'annoyances-widgets',
+    'annoyances-others',
+    'annoyances-notifications',
 ];
 let annoyancesAdjusting = false;
 
@@ -2721,12 +2752,16 @@ async function setDeveloperMode(state) {
     }
     toggleDeveloperMode(rulesetConfig.developerMode);
     broadcastMessage({ developerMode: rulesetConfig.developerMode });
-    await Promise.all([
-        updateUserRules(),
-        saveRulesetConfig(),
-    ]);
+    await saveRulesetConfig();
+    const sandboxRulesChanged = await registerSandboxFilters().catch(reason => {
+        ubolErr(`setDeveloperMode/registerSandboxFilters/${reason}`);
+        return false;
+    });
+    await updateUserRules();
     if ( cleanupResult.requiresInjectableRefresh ) {
         await syncInjectablesAndRefreshTabs({ runtimeOnly: false }).catch(ubolErr);
+    } else if ( sandboxRulesChanged ) {
+        await syncInjectablesAndRefreshTabs({ runtimeOnly: true }).catch(ubolErr);
     }
 }
 
@@ -3252,6 +3287,7 @@ function onMessage(request, sender, callback) {
                     isSideloaded,
                     developerMode: rulesetConfig.developerMode,
                     disabledFeatures,
+                    supportsUserScripts,
                 });
                 process.firstRun = false;
             }).catch(reason => {
@@ -3271,6 +3307,7 @@ function onMessage(request, sender, callback) {
                     isSideloaded,
                     developerMode: rulesetConfig.developerMode,
                     disabledFeatures: [],
+                    supportsUserScripts,
                 });
             });
             return true;
@@ -3742,6 +3779,39 @@ function onMessage(request, sender, callback) {
             });
             return true;
 
+        case 'getSandboxFilters':
+            if (isEntitled() === false) {
+                callback('');
+                return true;
+            }
+            getSandboxFilters().then(text => {
+                callback(text || '');
+            }).catch(reason => {
+                ubolErr(`getSandboxFilters/${reason}`);
+                callback('');
+            });
+            return true;
+
+        case 'setSandboxFilters':
+            if (isEntitled() === false) {
+                enablePaywall().catch(ubolErr);
+                callback({ error: 'subscription_required' });
+                return true;
+            }
+            setSandboxFilters(request.text).then(() =>
+                registerSandboxFilters()
+            ).then(changed => {
+                if ( changed ) {
+                    return updateUserRules();
+                }
+            }).then(() => {
+                callback();
+            }).catch(reason => {
+                ubolErr(`setSandboxFilters/${reason}`);
+                callback({ error: `${reason}` });
+            });
+            return true;
+
         case 'getConsoleOutput':
             callback(getConsoleOutput());
             return true;
@@ -3821,6 +3891,7 @@ async function startSession() {
     // Permissions may have been removed while the extension was disabled
     await syncWithBrowserPermissions();
     await ensureAnnoyancesForCompleteDefault().catch(ubolErr);
+    sessionAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' });
 
     // Community intelligence sync (runs after DNR state is settled)
     try {
@@ -3989,6 +4060,7 @@ async function start() {
     }
 
     configureUninstallURL('extension_start');
+    sessionAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' });
 
     // Prime dynamic registrations from cached state so popup state and warm
     // wakeups do not stall on empty content-script registration.
@@ -4076,6 +4148,33 @@ runtime.onMessage.addListener((request, sender, callback) => {
     });
     return true;
 });
+
+if ( supportsUserScripts && runtime.onUserScriptMessage ) {
+    browser.userScripts.configureWorld({ messaging: true });
+    runtime.onUserScriptMessage.addListener((request, sender, callback) => {
+        const safeCallback = (response) => {
+            try {
+                callback(response);
+            } catch (reason) {
+                const message = reason === undefined ? 'undefined' : reason;
+                ubolErr(`runtime.onUserScriptMessage/respond/${message}`);
+            }
+        };
+        isFullyInitialized.then(() => {
+            let handled = false;
+            try {
+                handled = onMessage(request, sender, safeCallback);
+            } catch (reason) {
+                ubolErr(`onUserScriptMessage/${reason}`);
+            }
+            if (handled !== true) { safeCallback(); }
+        }).catch(reason => {
+            ubolErr(`runtime.onUserScriptMessage/${reason}`);
+            safeCallback();
+        });
+        return true;
+    });
+}
 
 browser.permissions.onRemoved.addListener((...args) => {
     isFullyInitialized.then(() => {

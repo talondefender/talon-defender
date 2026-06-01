@@ -279,7 +279,111 @@
       "sourceUrl": "https://easylist.to/",
       "proof": "https://easylist.to/pages/licence.html",
       "attributionRequired": true
+    },
+    "adguard-mobile": {
+      "license": "GPL-3.0-only AND GPL-3.0-or-later",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/AdguardTeam/AdguardFilters#adguard-filters",
+      "proof": "https://raw.githubusercontent.com/AdguardTeam/AdguardFilters/master/LICENSE; https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/LICENSE",
+      "attributionRequired": true
+    },
+    "block-lan": {
+      "license": "GPL-3.0-or-later",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/uBlockOrigin/uAssets",
+      "proof": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/LICENSE",
+      "attributionRequired": true
+    },
+    "adguard-spyware-url": {
+      "license": "GPL-3.0-or-later",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/uBlockOrigin/uAssets",
+      "proof": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/LICENSE",
+      "attributionRequired": true
+    },
+    "annoyances-ai": {
+      "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/easylist/easylist#fanboy-lists",
+      "proof": "https://easylist.to/pages/licence.html",
+      "attributionRequired": true
+    },
+    "alb-0": {
+      "license": "Unlicense",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/AnXh3L0/blocklist",
+      "proof": "https://raw.githubusercontent.com/AnXh3L0/blocklist/master/albanian-easylist-addition/Albania.txt",
+      "attributionRequired": true
+    },
+    "ara-0": {
+      "license": "CC-BY-SA-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/easylist/listear",
+      "proof": "https://raw.githubusercontent.com/easylist/listear/master/Liste_AR.txt",
+      "attributionRequired": true
+    },
+    "est-0": {
+      "license": "CC0-1.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/sander85/uBO-et",
+      "proof": "https://raw.githubusercontent.com/sander85/uBO-et/main/LICENSE",
+      "attributionRequired": false
+    },
+    "hrv-0": {
+      "license": "Dandelicence-1.4",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/DandelionSprout/adfilt",
+      "proof": "https://raw.githubusercontent.com/DandelionSprout/adfilt/master/LICENSE.md",
+      "attributionRequired": true,
+      "notes": "License permits commercial use, with redistribution, attribution, availability, and endorsement restrictions."
+    },
+    "ind-0": {
+      "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://easylist.to/",
+      "proof": "https://easylist.to/pages/licence.html",
+      "attributionRequired": true
+    },
+    "isl-0": {
+      "license": "MPL-2.0",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/brave/adblock-lists",
+      "proof": "https://raw.githubusercontent.com/brave/adblock-lists/master/LICENSE",
+      "attributionRequired": true
+    },
+    "nor-0": {
+      "license": "Dandelicence-1.4",
+      "commercialUse": "allowed",
+      "sourceUrl": "https://github.com/DandelionSprout/adfilt",
+      "proof": "https://raw.githubusercontent.com/DandelionSprout/adfilt/master/LICENSE.md",
+      "attributionRequired": true,
+      "notes": "License permits commercial use, with redistribution, attribution, availability, and endorsement restrictions."
     }
   },
-  "allowlistedUnknown": {}
+  "allowlistedUnknown": {},
+  "excludedUpstreamRulesets": {
+    "bgr-0": {
+      "reason": "license-undetermined",
+      "commercialUse": "unknown",
+      "sourceUrl": "https://stanev.org/abp/adblock_bg.txt",
+      "proof": "Source list header and homepage do not publish redistribution/commercial-use license terms.",
+      "reviewedAt": "2026-06-01"
+    },
+    "dpollock-0": {
+      "reason": "non-commercial-license",
+      "license": "custom non-commercial terms",
+      "commercialUse": "non-commercial",
+      "sourceUrl": "https://someonewhocares.org/hosts/hosts",
+      "proof": "Source header permits copying and distribution for non-commercial uses only.",
+      "reviewedAt": "2026-06-01"
+    },
+    "pol-0": {
+      "reason": "non-commercial-license",
+      "license": "CC-BY-NC-SA-4.0",
+      "commercialUse": "non-commercial",
+      "sourceUrl": "https://github.com/MajkiIT/polish-ads-filter",
+      "proof": "https://raw.githubusercontent.com/MajkiIT/polish-ads-filter/master/LICENSE",
+      "reviewedAt": "2026-06-01"
+    }
+  }
 }

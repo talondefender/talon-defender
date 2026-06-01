@@ -24,6 +24,7 @@ const makeFixture = async ({
   rulesets = ['easylist'],
   detailsOverrides = {},
   licensePolicyRulesets = { easylist: { commercialUse: 'allowed' } },
+  licensePolicyExtras = {},
   extraFiles = {},
 } = {}) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'talon-ubol-parity-'));
@@ -57,6 +58,7 @@ const makeFixture = async ({
   })));
   await writeJson(root, 'rulesets/ruleset-license-policy.json', {
     rulesets: licensePolicyRulesets,
+    ...licensePolicyExtras,
   });
   for (const id of rulesets) {
     await writeJson(root, `rulesets/main/${id}.json`, [
@@ -119,6 +121,85 @@ test('parity auditor blocks permission and browser support drift', async () => {
   assert.equal(report.automationBlocked, true);
 });
 
+test('parity auditor honors documented manifest and resource exceptions', async () => {
+  const extensionDir = await makeFixture({
+    permissions: [
+      'alarms',
+      'declarativeNetRequest',
+      'scripting',
+      'storage',
+      'webNavigation',
+    ],
+  });
+  const upstreamDir = await makeFixture();
+  const ownershipMapPath = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'talon-ownership-')), 'map.json');
+  await fs.writeFile(
+    ownershipMapPath,
+    `${JSON.stringify({
+      version: 1,
+      upstreamOwnedPaths: ['rulesets/**'],
+      talonOwnedPaths: [],
+      rulesetOnlyAllowedPaths: ['rulesets/**'],
+      manifestPermissionExceptions: {
+        localExtra: {
+          alarms: 'fixture Talon-owned alarm permission',
+          webNavigation: 'fixture Talon-owned navigation permission',
+        },
+        upstreamExtra: {},
+      },
+      webAccessibleResourceExceptions: {
+        localExtra: {
+          'automation/directives.json': 'fixture Talon-owned automation data',
+        },
+        upstreamExtra: {
+          'zapper-ui.html': 'fixture omitted upstream UI',
+        },
+      },
+    }, null, 2)}\n`,
+    'utf8'
+  );
+  const extensionManifestPath = path.join(extensionDir, 'manifest.json');
+  const upstreamManifestPath = path.join(upstreamDir, 'manifest.json');
+  const extensionManifest = JSON.parse(await fs.readFile(extensionManifestPath, 'utf8'));
+  const upstreamManifest = JSON.parse(await fs.readFile(upstreamManifestPath, 'utf8'));
+  extensionManifest.web_accessible_resources[0].resources.push('automation/directives.json');
+  upstreamManifest.web_accessible_resources[0].resources.push('zapper-ui.html');
+  await fs.writeFile(extensionManifestPath, `${JSON.stringify(extensionManifest, null, 2)}\n`, 'utf8');
+  await fs.writeFile(upstreamManifestPath, `${JSON.stringify(upstreamManifest, null, 2)}\n`, 'utf8');
+
+  const report = await buildParityReport({ extensionDir, upstreamDir, ownershipMapPath });
+
+  assert.deepEqual(report.manifestDiffs.permissions.removed, []);
+  assert.deepEqual(report.manifestDiffs.resources.added, []);
+  assert.deepEqual(report.manifestDiffs.resources.removed, []);
+  assert.deepEqual(report.manifestDiffExceptions.permissions.removed, ['alarms', 'webNavigation']);
+  assert.deepEqual(report.manifestDiffExceptions.resources.added, ['zapper-ui.html']);
+  assert.equal(report.driftClasses.includes('manifest-permission'), false);
+  assert.equal(report.driftClasses.includes('store-packaging'), false);
+});
+
+test('parity auditor detects recursive compiled scriptlet layout drift', async () => {
+  const extensionDir = await makeFixture({
+    extraFiles: {
+      'rulesets/scripting/scriptlet/easylist.set-constant.js': '// old token bundle\n',
+    },
+  });
+  const upstreamDir = await makeFixture({
+    extraFiles: {
+      'rulesets/scripting/scriptlet/main/easylist.js': '// main-world bundle\n',
+      'rulesets/scripting/scriptlet/isolated/easylist.js': '// isolated-world bundle\n',
+    },
+  });
+
+  const report = await buildParityReport({ extensionDir, upstreamDir });
+
+  assert.equal(report.driftClasses.includes('compiled-layout'), true);
+  assert.equal(report.automationBlocked, true);
+  assert.equal(report.scriptingLayoutDiff.added.includes('scriptlet/main'), true);
+  assert.equal(report.scriptingLayoutDiff.added.includes('scriptlet/isolated'), true);
+  assert.equal(report.scriptingLayoutDiff.removed.includes('scriptlet/*.js'), true);
+});
+
 test('parity auditor excludes upstream test and experimental rulesets by default', async () => {
   const extensionDir = await makeFixture();
   const upstreamDir = await makeFixture({
@@ -150,6 +231,57 @@ test('parity auditor blocks unapproved upstream rulesets', async () => {
   assert.deepEqual(report.licenseBlockedRuleIds, ['new-region']);
   assert.equal(report.driftClasses.includes('license-blocked'), true);
   assert.equal(report.automationBlocked, true);
+});
+
+test('parity auditor does not treat invalid license policy entries as approved', async () => {
+  const extensionDir = await makeFixture({
+    licensePolicyRulesets: {
+      easylist: { commercialUse: 'allowed' },
+      'new-region': { commercialUse: 'non-commercial', proof: 'fixture-license-proof' },
+      'unknown-region': { commercialUse: 'unknown' },
+    },
+  });
+  const upstreamDir = await makeFixture({
+    rulesets: ['easylist', 'new-region', 'unknown-region'],
+    licensePolicyRulesets: {
+      easylist: { commercialUse: 'allowed' },
+      'new-region': { commercialUse: 'allowed' },
+      'unknown-region': { commercialUse: 'allowed' },
+    },
+  });
+
+  const report = await buildParityReport({ extensionDir, upstreamDir });
+
+  assert.deepEqual(report.licenseBlockedRuleIds, ['new-region', 'unknown-region']);
+  assert.equal(report.driftClasses.includes('license-blocked'), true);
+  assert.equal(report.automationBlocked, true);
+});
+
+test('parity auditor honors documented upstream ruleset exclusions', async () => {
+  const extensionDir = await makeFixture({
+    licensePolicyExtras: {
+      excludedUpstreamRulesets: {
+        'non-commercial-region': {
+          reason: 'non-commercial-license',
+          proof: 'fixture-license-proof',
+        },
+      },
+    },
+  });
+  const upstreamDir = await makeFixture({
+    rulesets: ['easylist', 'non-commercial-region'],
+    licensePolicyRulesets: {
+      easylist: { commercialUse: 'allowed' },
+      'non-commercial-region': { commercialUse: 'allowed' },
+    },
+  });
+
+  const report = await buildParityReport({ extensionDir, upstreamDir });
+
+  assert.deepEqual(report.excludedUpstreamRuleIds, ['non-commercial-region']);
+  assert.equal(report.rulesetIdDiff.added.includes('non-commercial-region'), false);
+  assert.equal(report.licenseBlockedRuleIds.includes('non-commercial-region'), false);
+  assert.equal(report.driftClasses.includes('license-blocked'), false);
 });
 
 test('parity auditor reports Talon-owned overwrite attempts', async () => {

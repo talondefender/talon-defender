@@ -694,9 +694,11 @@ async function updateUserRules() {
     const [
         allDynamicRules,
         userRulesText = '',
+        sandboxRules,
     ] = await Promise.all([
         dnr.getDynamicRules(),
         localRead('userDnrRules'),
+        localRead('sandboxFilters.dnrRules'),
     ]);
     const userRules = [];
     const nonUserRules = [];
@@ -714,6 +716,9 @@ async function updateUserRules() {
 
     const parsed = rulesFromText(effectiveRulesText);
     const { rules } = parsed;
+    if ( Array.isArray(sandboxRules) ) {
+        sandboxRules.forEach(rule => rules.push(rule));
+    }
     const rejectedRegexes = [];
     let addRules = await pruneInvalidRegexRules('user', rules, rejectedRegexes);
     const out = { added: 0, removed: 0, errors: [] };

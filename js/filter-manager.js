@@ -25,6 +25,8 @@ import {
     localRead,
     localRemove,
     localWrite,
+    runtime,
+    supportsUserScripts,
 } from './ext.js';
 
 import {
@@ -36,6 +38,14 @@ import {
 } from './utils.js';
 
 import { ubolErr } from './debug.js';
+import { getFilteringModeDetails } from './mode-manager.js';
+import { rulesetConfig } from './config.js';
+
+/******************************************************************************/
+
+const isProcedural = a => a.startsWith('{');
+const isScriptlet = a => a.startsWith('+js');
+const isCSS = a => isProcedural(a) === false && isScriptlet(a) === false;
 
 /******************************************************************************/
 
@@ -111,7 +121,7 @@ async function getAllCustomFilterKeys() {
 
 export async function getAllCustomFilters() {
     const collect = async key => {
-        const selectors = await readFromStorage(key);
+        const selectors = await readFromStorage(key) || [];
         return [ key.slice(5), selectors.map(a => a.startsWith('0') ? a.slice(1) : a) ];
     };
     const keys = await getAllCustomFilterKeys();
@@ -149,7 +159,7 @@ export async function injectCustomFilters(tabId, frameId, hostname) {
     const selectors = await customFiltersFromHostname(hostname);
     if ( selectors.length === 0 ) { return; }
     const promises = [];
-    const plainSelectors = selectors.filter(a => a.startsWith('{') === false);
+    const plainSelectors = selectors.filter(a => isCSS(a));
     if ( plainSelectors.length !== 0 ) {
         promises.push(
             browser.scripting.insertCSS({
@@ -162,11 +172,14 @@ export async function injectCustomFilters(tabId, frameId, hostname) {
             })
         );
     }
-    const proceduralSelectors = selectors.filter(a => a.startsWith('{'));
+    const proceduralSelectors = selectors.filter(a => isProcedural(a));
     if ( proceduralSelectors.length !== 0 ) {
         promises.push(
             browser.scripting.executeScript({
-                files: [ '/js/scripting/css-procedural-api.js' ],
+                files: [
+                    '/js/scripting/css-api.js',
+                    '/js/scripting/css-procedural-api.js',
+                ],
                 target: { tabId, frameIds: [ frameId ] },
                 injectImmediately: true,
             }).catch(reason => {
@@ -182,11 +195,12 @@ export async function injectCustomFilters(tabId, frameId, hostname) {
 /******************************************************************************/
 
 export async function registerCustomFilters(context) {
-    const siteKeys = await getAllCustomFilterKeys();
-    if ( siteKeys.length === 0 ) { return; }
+    const customFilters = new Map(await getAllCustomFilters());
+    if ( customFilters.size === 0 ) { return; }
 
     const { none } = context.filteringModeDetails;
-    let hostnames = siteKeys.map(a => a.slice(5));
+    let hostnames = Array.from(customFilters.keys());
+    let excludeHostnames = [];
     if ( none.has('all-urls') ) {
         const { basic, optimal, complete } = context.filteringModeDetails;
         hostnames = intersectHostnameIters(hostnames, [
@@ -194,7 +208,11 @@ export async function registerCustomFilters(context) {
         ]);
     } else if ( none.size !== 0 ) {
         hostnames = [ ...subtractHostnameIters(hostnames, none) ];
+        excludeHostnames = Array.from(none);
     }
+    hostnames = hostnames.filter(a =>
+        customFilters.get(a).some(a => isCSS(a) || isProcedural(a))
+    );
     if ( hostnames.length === 0 ) { return; }
 
     const registered = context.before.get('css-user');
@@ -204,12 +222,21 @@ export async function registerCustomFilters(context) {
         id: 'css-user',
         js: [ '/js/scripting/css-user.js' ],
         matches: matchesFromHostnames(hostnames),
+        allFrames: true,
+        matchOriginAsFallback: true,
         runAt: 'document_start',
     };
+    if ( excludeHostnames.length !== 0 ) {
+        directive.excludeMatches = matchesFromHostnames(excludeHostnames);
+    }
 
     if ( registered === undefined ) {
         context.toAdd.push(directive);
-    } else if ( strArrayEq(registered.matches, directive.matches) === false ) {
+    } else if (
+        strArrayEq(registered.matches, directive.matches) === false ||
+        strArrayEq(registered.excludeMatches, directive.excludeMatches) === false ||
+        Boolean(registered.matchOriginAsFallback) !== Boolean(directive.matchOriginAsFallback)
+    ) {
         context.toRemove.push('css-user');
         context.toAdd.push(directive);
     }
@@ -285,4 +312,143 @@ async function removeCustomFiltersByKey(key, toRemove) {
         removeFromStorage(key);
     }
     return true;
+}
+
+/******************************************************************************/
+
+export function getSandboxFilters() {
+    return localRead('sandboxFilters');
+}
+
+export function setSandboxFilters(text = '') {
+    text = typeof text === 'string' ? text.trim() : '';
+    return text !== ''
+        ? localWrite('sandboxFilters', text)
+        : localRemove('sandboxFilters');
+}
+
+/******************************************************************************/
+
+export async function registerSandboxFilters() {
+    if ( supportsUserScripts !== true ) { return false; }
+    const { none, basic, optimal, complete } = await getFilteringModeDetails();
+    const notNone = [ ...basic, ...optimal, ...complete ];
+    const customFilters = await getAllCustomFilters();
+    const lines = [];
+    for ( const [ hostname, selectors ] of customFilters ) {
+        for ( const selector of selectors ) {
+            if ( isScriptlet(selector) === false ) { continue; }
+            lines.push(`${hostname}##${selector}`);
+        }
+    }
+    if ( rulesetConfig.developerMode ) {
+        const sandboxFilters = await getSandboxFilters();
+        if ( sandboxFilters ) {
+            lines.push(sandboxFilters);
+        }
+    }
+    const text = lines.join('\n').trim();
+    const result = await parseRawFilters(text) || {};
+    const toRemove = await browser.userScripts.getScripts();
+    if ( toRemove.length !== 0 ) {
+        await browser.userScripts.unregister();
+    }
+    const toAdd = [];
+    const hostnames = none.has('all-urls')
+        ? [ ...notNone ]
+        : [];
+    const excludeHostnames = none.has('all-urls') === false
+        ? [ ...none ]
+        : [];
+    const matches = hostnames.length !== 0
+        ? matchesFromHostnames(hostnames)
+        : [ '<all_urls>' ];
+    const excludeMatches = excludeHostnames.length !== 0
+        ? matchesFromHostnames(excludeHostnames)
+        : [];
+    if ( result.ISOLATED?.length ) {
+        const directive = {
+            id: 'user.isolated',
+            world: 'USER_SCRIPT',
+            allFrames: true,
+            js: [ { code: result.ISOLATED.join('\n\n') } ],
+            runAt: 'document_start',
+            matches: matches.slice(),
+        };
+        if ( excludeMatches.length !== 0 ) {
+            directive.excludeMatches = excludeMatches.slice();
+        }
+        toAdd.push(directive);
+    }
+    if ( result.MAIN?.length ) {
+        const directive = {
+            id: 'user.main',
+            world: 'MAIN',
+            allFrames: true,
+            js: [ { code: result.MAIN.join('\n\n') } ],
+            runAt: 'document_start',
+            matches: matches.slice(),
+        };
+        if ( excludeMatches.length !== 0 ) {
+            directive.excludeMatches = excludeMatches.slice();
+        }
+        toAdd.push(directive);
+    }
+    if ( toAdd.length ) {
+        await browser.userScripts.register(toAdd);
+    }
+    const beforeRules = await localRead('sandboxFilters.dnrRules');
+    const afterRules = rulesetConfig.developerMode && result.dnrRules?.length
+        ? result.dnrRules
+        : undefined;
+    const modified = JSON.stringify(afterRules) !== JSON.stringify(beforeRules);
+    if ( modified ) {
+        if ( Array.isArray(afterRules) ) {
+            await localWrite('sandboxFilters.dnrRules', afterRules);
+        } else {
+            await localRemove('sandboxFilters.dnrRules');
+        }
+    }
+    return modified;
+}
+
+/******************************************************************************/
+
+async function parseRawFilters(text) {
+    if ( Boolean(text) === false ) { return; }
+    let offscreenResolve;
+    const offscreenPromise = new Promise(resolve => {
+        offscreenResolve = resolve;
+    });
+    const handler = (request, sender, callback) => {
+        if ( typeof request !== 'object' ) { return; }
+        switch ( request?.what ) {
+        case 'getRawFilters':
+            callback(text);
+            break;
+        case 'compiledRawFilters':
+            offscreenResolve(request);
+            break;
+        default:
+            break;
+        }
+    };
+    runtime.onMessage.addListener(handler);
+    let timeoutResolve;
+    const timeoutPromise = new Promise(resolve => {
+        timeoutResolve = resolve;
+    });
+    self.setTimeout(timeoutResolve, 2000);
+    const [ result ] = await Promise.all([
+        Promise.race([ offscreenPromise, timeoutPromise ]),
+        browser.offscreen.createDocument({
+            url: '/js/offscreen/compile-filters.html',
+            reasons: [ 'WORKERS' ],
+            justification: 'Compile user custom filters from the service worker without dynamic module import',
+        }),
+    ]).finally(async () => {
+        runtime.onMessage.removeListener(handler);
+        await browser.offscreen.closeDocument().catch(() => {});
+    });
+    return result;
 }

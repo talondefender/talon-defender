@@ -34,6 +34,13 @@ export const webextFlavor = (( ) => {
     return extURL.startsWith('moz-extension:') ? 'firefox' : 'chromium';
 })();
 
+export const supportsUserScripts = (() => {
+    if ( browser.offscreen === undefined ) { return false; }
+    try { browser.userScripts.getScripts(); }
+    catch { return false; }
+    return true;
+})();
+
 /******************************************************************************/
 
 // The extension's service worker can be evicted at any time, so when we
@@ -105,6 +112,24 @@ export async function sessionRemove(key) {
     if ( browser.storage instanceof Object === false ) { return; }
     if ( browser.storage.session instanceof Object === false ) { return; }
     return browser.storage.session.remove(key);
+}
+
+export async function sessionKeys() {
+    if ( browser.storage instanceof Object === false ) { return; }
+    if ( browser.storage.session instanceof Object === false ) { return; }
+    if ( browser.storage.session.getKeys ) {
+        return browser.storage.session.getKeys();
+    }
+    const bin = await browser.storage.session.get(null);
+    if ( bin instanceof Object === false ) { return; }
+    return Object.keys(bin);
+}
+
+export async function sessionAccessLevel(level) {
+    try {
+        browser.storage.session.setAccessLevel(level);
+    } catch {
+    }
 }
 
 /******************************************************************************/

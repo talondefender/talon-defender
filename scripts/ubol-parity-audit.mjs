@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultOwnershipMapPath = path.join(scriptDir, 'ubol-source-ownership.json');
 
-const EXCLUDED_UPSTREAM_RULESETS = new Set([
+const BUILTIN_EXCLUDED_UPSTREAM_RULESETS = new Set([
   'ubol-tests',
   'ublock-experimental',
 ]);
@@ -21,6 +21,16 @@ const RULESET_HASH_ROOTS = [
   'rulesets/scripting/popup',
   'rulesets/scripting/scriptlet',
 ];
+
+const RULESET_DETAILS_HASH_PATHS = new Set([
+  'rulesets/generic-details.json',
+  'rulesets/scriptlet-details.json',
+  'rulesets/ruleset-details.json',
+]);
+
+const LOCAL_ONLY_RULESET_PATHS = new Set([
+  'rulesets/ruleset-license-policy.json',
+]);
 
 const DETAILS_COUNT_PATHS = [
   'filters.accepted',
@@ -68,6 +78,12 @@ const readJsonOr = async (absPath, fallback) => {
 const fileHash = async absPath => {
   const hash = crypto.createHash('sha256');
   hash.update(await fs.readFile(absPath));
+  return hash.digest('hex');
+};
+
+const contentHash = value => {
+  const hash = crypto.createHash('sha256');
+  hash.update(value);
   return hash.digest('hex');
 };
 
@@ -138,6 +154,43 @@ const compareArrays = (localValues, upstreamValues) => {
   };
 };
 
+const normalizeExceptionMap = value => {
+  if (isObject(value) === false) { return new Map(); }
+  return new Map(Object.keys(value).map(key => [normalizeRelativePath(key), value[key]]));
+};
+
+const normalizePermissionExceptionMap = value => {
+  if (isObject(value) === false) { return new Map(); }
+  return new Map(Object.keys(value).map(key => [String(key || '').trim(), value[key]]));
+};
+
+const applyDiffExceptions = (diff, { added = new Map(), removed = new Map() } = {}) => {
+  const ignoredAdded = [];
+  const ignoredRemoved = [];
+  const filteredAdded = [];
+  const filteredRemoved = [];
+  for (const value of diff.added || []) {
+    if (added.has(value)) {
+      ignoredAdded.push(value);
+    } else {
+      filteredAdded.push(value);
+    }
+  }
+  for (const value of diff.removed || []) {
+    if (removed.has(value)) {
+      ignoredRemoved.push(value);
+    } else {
+      filteredRemoved.push(value);
+    }
+  }
+  return {
+    added: filteredAdded,
+    removed: filteredRemoved,
+    ignoredAdded,
+    ignoredRemoved,
+  };
+};
+
 const flattenWebAccessibleResources = manifest => {
   const out = [];
   for (const entry of manifest?.web_accessible_resources || []) {
@@ -172,12 +225,56 @@ const detailsById = details => {
   return out;
 };
 
-const collectHashMap = async (rootDir, relativePaths) => {
+const rulesetIdFromAssetPath = relativePath => {
+  const normalized = normalizeRelativePath(relativePath);
+  const patterns = [
+    /^rulesets\/(?:main|regex|strictblock|urlskip)\/([^/]+)\.json$/,
+    /^rulesets\/scripting\/(?:generic|popup)\/([^/]+)\.js$/,
+    /^rulesets\/scripting\/specific\/([^/]+)\.(?:js|json)$/,
+    /^rulesets\/scripting\/scriptlet\/(?:main|isolated)\/([^/]+)\.js$/,
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(normalized);
+    if (match) { return match[1]; }
+  }
+  return '';
+};
+
+const isExcludedRulesetAssetPath = (relativePath, excludedRuleIds = new Set()) => {
+  const rulesetId = rulesetIdFromAssetPath(relativePath);
+  return rulesetId !== '' && excludedRuleIds.has(rulesetId);
+};
+
+const normalizedDetailsForHash = (relativePath, details, excludedRuleIds = new Set()) => {
+  if (Array.isArray(details) === false) { return details; }
+  if (relativePath === 'rulesets/ruleset-details.json') {
+    return details.filter(entry => excludedRuleIds.has(entry?.id) === false);
+  }
+  if (RULESET_DETAILS_HASH_PATHS.has(relativePath)) {
+    return details.filter(entry => excludedRuleIds.has(entry?.[0]) === false);
+  }
+  return details;
+};
+
+const hashPath = async (rootDir, relativePath, { excludedRuleIds = new Set() } = {}) => {
+  const absPath = path.join(rootDir, relativePath);
+  if (RULESET_DETAILS_HASH_PATHS.has(relativePath)) {
+    const normalized = normalizedDetailsForHash(
+      relativePath,
+      await readJson(absPath),
+      excludedRuleIds
+    );
+    return contentHash(JSON.stringify(normalized));
+  }
+  return fileHash(absPath);
+};
+
+const collectHashMap = async (rootDir, relativePaths, options = {}) => {
   const out = {};
   for (const relativePath of sortStrings(relativePaths.map(normalizeRelativePath))) {
     const absPath = path.join(rootDir, relativePath);
     if (await pathExists(absPath) === false) { continue; }
-    out[relativePath] = await fileHash(absPath);
+    out[relativePath] = await hashPath(rootDir, relativePath, options);
   }
   return out;
 };
@@ -203,6 +300,7 @@ const collectOwnedHashPaths = async (rootDir, ownershipMap) => {
   const files = await walkFiles(rootDir);
   return sortStrings(
     files.filter(relativePath =>
+      LOCAL_ONLY_RULESET_PATHS.has(relativePath) === false &&
       matchesAnyPattern(relativePath, ownershipMap.upstreamOwnedPaths || [])
     )
   );
@@ -226,6 +324,26 @@ const compareHashMaps = (localHashes, upstreamHashes) => {
   };
 };
 
+const filterExcludedRulesetHashPaths = (relativePaths, excludedRuleIds = new Set()) =>
+  sortStrings(
+    relativePaths
+      .map(normalizeRelativePath)
+      .filter(relativePath => isExcludedRulesetAssetPath(relativePath, excludedRuleIds) === false)
+  );
+
+const hashDeltaPaths = hashDeltas =>
+  sortStrings([
+    ...hashDeltas.added,
+    ...hashDeltas.removed,
+    ...hashDeltas.changed,
+  ]);
+
+const hasRulesetHashDrift = hashDeltas =>
+  hashDeltaPaths(hashDeltas).some(relativePath => relativePath.startsWith('rulesets/'));
+
+const hasRuntimeHashDrift = hashDeltas =>
+  hashDeltaPaths(hashDeltas).some(relativePath => relativePath.startsWith('rulesets/') === false);
+
 const totalFileBytes = async (rootDir, relativePaths) => {
   let total = 0;
   for (const relativePath of relativePaths) {
@@ -241,14 +359,23 @@ const totalFileBytes = async (rootDir, relativePaths) => {
 };
 
 const collectScriptingLayout = async rootDir => {
-  const scriptingRoot = path.join(rootDir, 'rulesets/scripting');
-  let entries = [];
-  try {
-    entries = await fs.readdir(scriptingRoot, { withFileTypes: true });
-  } catch {
-    return [];
+  const files = await walkFiles(rootDir, 'rulesets/scripting');
+  const layout = new Set();
+  for (const relativePath of files) {
+    const pathParts = normalizeRelativePath(relativePath)
+      .replace(/^rulesets\/scripting\//, '')
+      .split('/')
+      .filter(Boolean);
+    if (pathParts.length === 0) { continue; }
+    const fileName = pathParts.at(-1);
+    const dirParts = pathParts.slice(0, -1);
+    for (let depth = 1; depth <= dirParts.length; depth += 1) {
+      layout.add(dirParts.slice(0, depth).join('/'));
+    }
+    const ext = path.posix.extname(fileName) || '.[no-ext]';
+    layout.add([...dirParts, `*${ext}`].filter(Boolean).join('/'));
   }
-  return sortStrings(entries.filter(entry => entry.isDirectory()).map(entry => entry.name));
+  return sortStrings([...layout]);
 };
 
 const collectRuntimeSchema = async rootDir => {
@@ -311,13 +438,56 @@ const readInventory = async rootDir => {
   };
 };
 
-const getApprovedRuleIds = licensePolicy => new Set(Object.keys(licensePolicy?.rulesets || {}));
+const hasText = value => typeof value === 'string' && value.trim() !== '';
 
-const rulesetIdsFromResources = (resources, { includeExcluded = false } = {}) =>
+const isObject = value =>
+  value !== null &&
+  typeof value === 'object' &&
+  Array.isArray(value) === false;
+
+const getCommercialUse = entry => hasText(entry?.commercialUse)
+  ? entry.commercialUse.trim().toLowerCase()
+  : '';
+
+const hasLicenseProof = (licensePolicy, id, entry) => {
+  const allowlistedUnknown = isObject(licensePolicy?.allowlistedUnknown)
+    ? licensePolicy.allowlistedUnknown
+    : {};
+  return hasText(allowlistedUnknown[id]) || hasText(entry?.proof);
+};
+
+const isApprovedLicenseEntry = (licensePolicy, id, entry) => {
+  if (isObject(entry) === false) { return false; }
+  const commercialUse = getCommercialUse(entry);
+  if (commercialUse === 'allowed') { return true; }
+  if (commercialUse === 'unknown') {
+    return hasLicenseProof(licensePolicy, id, entry);
+  }
+  return false;
+};
+
+const getApprovedRuleIds = licensePolicy =>
+  new Set(Object.entries(licensePolicy?.rulesets || {})
+    .filter(([id, entry]) => isApprovedLicenseEntry(licensePolicy, id, entry))
+    .map(([id]) => id));
+
+const getExcludedUpstreamRuleIds = licensePolicy =>
+  new Set([
+    ...BUILTIN_EXCLUDED_UPSTREAM_RULESETS,
+    ...Object.keys(licensePolicy?.excludedUpstreamRulesets || {}),
+  ]);
+
+const rulesetIdsFromResources = (
+  resources,
+  {
+    includeExcluded = false,
+    excludedRuleIds = BUILTIN_EXCLUDED_UPSTREAM_RULESETS,
+  } = {}
+) =>
   sortStrings(
     resources
       .map(entry => entry.id)
-      .filter(id => includeExcluded || EXCLUDED_UPSTREAM_RULESETS.has(id) === false)
+      .filter(id => includeExcluded || excludedRuleIds.has(id) === false)
   );
 
 const compareRulesetCounts = (localInventory, upstreamInventory, upstreamRuleIds) => {
@@ -357,8 +527,11 @@ const classifyDrift = ({
   if (rulesetIdDiff.added.length || rulesetIdDiff.removed.length || rulesetCountDeltas.length) {
     classes.add('rules-data-only');
   }
-  if (hashDeltas.added.length || hashDeltas.removed.length || hashDeltas.changed.length) {
+  if (hasRulesetHashDrift(hashDeltas)) {
     classes.add('rules-data-only');
+  }
+  if (hasRuntimeHashDrift(hashDeltas)) {
+    classes.add('runtime-code');
   }
   if (scriptingLayoutDiff.added.length || scriptingLayoutDiff.removed.length) {
     classes.add('compiled-layout');
@@ -422,21 +595,38 @@ export async function buildParityReport({
     readInventory(resolvedUpstreamDir),
   ]);
 
-  const upstreamOwnedPaths = sortStrings([
-    ...await collectOwnedHashPaths(resolvedExtensionDir, ownershipMap),
-    ...await collectOwnedHashPaths(resolvedUpstreamDir, ownershipMap),
-  ]);
+  const excludedRuleIds = getExcludedUpstreamRuleIds(localInventory.licensePolicy);
+  const upstreamOwnedPaths = filterExcludedRulesetHashPaths(
+    sortStrings([
+      ...await collectOwnedHashPaths(resolvedExtensionDir, ownershipMap),
+      ...await collectOwnedHashPaths(resolvedUpstreamDir, ownershipMap),
+    ]),
+    excludedRuleIds
+  );
   const [localOwnedHashes, upstreamOwnedHashes] = await Promise.all([
-    collectHashMap(resolvedExtensionDir, upstreamOwnedPaths),
-    collectHashMap(resolvedUpstreamDir, upstreamOwnedPaths),
+    collectHashMap(resolvedExtensionDir, upstreamOwnedPaths, { excludedRuleIds }),
+    collectHashMap(resolvedUpstreamDir, upstreamOwnedPaths, { excludedRuleIds }),
   ]);
   const hashDeltas = compareHashMaps(localOwnedHashes, upstreamOwnedHashes);
-
+  const localRulesetHashPaths = filterExcludedRulesetHashPaths(
+    localInventory.rulesetHashPaths,
+    excludedRuleIds
+  );
+  const upstreamRulesetHashPaths = filterExcludedRulesetHashPaths(
+    upstreamInventory.rulesetHashPaths,
+    excludedRuleIds
+  );
+  const [localRulesetBytes, upstreamRulesetBytes] = await Promise.all([
+    totalFileBytes(resolvedExtensionDir, localRulesetHashPaths),
+    totalFileBytes(resolvedUpstreamDir, upstreamRulesetHashPaths),
+  ]);
   const localRuleIds = rulesetIdsFromResources(localInventory.ruleResources);
-  const upstreamRuleIds = rulesetIdsFromResources(upstreamInventory.ruleResources);
+  const upstreamRuleIds = rulesetIdsFromResources(upstreamInventory.ruleResources, {
+    excludedRuleIds,
+  });
   const upstreamSkippedRuleIds = sortStrings(
     rulesetIdsFromResources(upstreamInventory.ruleResources, { includeExcluded: true })
-      .filter(id => EXCLUDED_UPSTREAM_RULESETS.has(id))
+      .filter(id => excludedRuleIds.has(id))
   );
   const rulesetIdDiff = compareArrays(localRuleIds, upstreamRuleIds);
   const rulesetCountDeltas = compareRulesetCounts(
@@ -444,7 +634,17 @@ export async function buildParityReport({
     upstreamInventory,
     upstreamRuleIds
   );
-  const manifestDiffs = {
+  const permissionExceptionConfig = ownershipMap.manifestPermissionExceptions || {};
+  const resourceExceptionConfig = ownershipMap.webAccessibleResourceExceptions || {};
+  const permissionExceptions = {
+    added: normalizePermissionExceptionMap(permissionExceptionConfig.upstreamExtra),
+    removed: normalizePermissionExceptionMap(permissionExceptionConfig.localExtra),
+  };
+  const resourceExceptions = {
+    added: normalizeExceptionMap(resourceExceptionConfig.upstreamExtra),
+    removed: normalizeExceptionMap(resourceExceptionConfig.localExtra),
+  };
+  const rawManifestDiffs = {
     permissions: compareArrays(
       localInventory.manifestSummary.permissions,
       upstreamInventory.manifestSummary.permissions
@@ -461,6 +661,11 @@ export async function buildParityReport({
       local: localInventory.manifestSummary.minimumChromeVersion,
       upstream: upstreamInventory.manifestSummary.minimumChromeVersion,
     },
+  };
+  const manifestDiffs = {
+    ...rawManifestDiffs,
+    permissions: applyDiffExceptions(rawManifestDiffs.permissions, permissionExceptions),
+    resources: applyDiffExceptions(rawManifestDiffs.resources, resourceExceptions),
   };
   const scriptingLayoutDiff = compareArrays(
     localInventory.scriptingLayout,
@@ -491,6 +696,12 @@ export async function buildParityReport({
     licenseBlockedRuleIds,
   });
   const mixedDrift = driftClasses.length > 1;
+  const localScriptingAssetCount = localRulesetHashPaths.filter(pathName =>
+    pathName.startsWith('rulesets/scripting/')
+  ).length;
+  const upstreamScriptingAssetCount = upstreamRulesetHashPaths.filter(pathName =>
+    pathName.startsWith('rulesets/scripting/')
+  ).length;
   const automationBlocked =
     ownershipViolations.length !== 0 ||
     driftClasses.includes('unknown') ||
@@ -514,6 +725,16 @@ export async function buildParityReport({
     automationBlocked,
     manualReviewRequired: automationBlocked,
     ownershipViolations,
+    manifestDiffExceptions: {
+      permissions: {
+        added: manifestDiffs.permissions.ignoredAdded,
+        removed: manifestDiffs.permissions.ignoredRemoved,
+      },
+      resources: {
+        added: manifestDiffs.resources.ignoredAdded,
+        removed: manifestDiffs.resources.ignoredRemoved,
+      },
+    },
     manifestDiffs,
     rulesetIdDiff,
     rulesetCountDeltas,
@@ -523,13 +744,12 @@ export async function buildParityReport({
     runtimeSchemaDiffs,
     licenseBlockedRuleIds,
     impact: {
-      localRulesetBytes: localInventory.rulesetBytes,
-      upstreamRulesetBytes: upstreamInventory.rulesetBytes,
-      rulesetByteDelta: upstreamInventory.rulesetBytes - localInventory.rulesetBytes,
-      localScriptingAssetCount: localInventory.scriptingAssetCount,
-      upstreamScriptingAssetCount: upstreamInventory.scriptingAssetCount,
-      scriptingAssetCountDelta:
-        upstreamInventory.scriptingAssetCount - localInventory.scriptingAssetCount,
+      localRulesetBytes,
+      upstreamRulesetBytes,
+      rulesetByteDelta: upstreamRulesetBytes - localRulesetBytes,
+      localScriptingAssetCount,
+      upstreamScriptingAssetCount,
+      scriptingAssetCountDelta: upstreamScriptingAssetCount - localScriptingAssetCount,
       localRulesetCount: localRuleIds.length,
       upstreamRulesetCount: upstreamRuleIds.length,
       rulesetCountDelta: upstreamRuleIds.length - localRuleIds.length,
