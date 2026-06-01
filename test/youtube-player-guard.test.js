@@ -41,6 +41,7 @@ function createHarness(overrides = {}) {
   };
   const context = {
     __talonYoutubePlayerGuardTest: true,
+    Array: class HarnessArray extends Array {},
     clearInterval: () => {},
     document,
     fetch: async () => new Response('{}', {
@@ -204,6 +205,83 @@ test('YouTube player guard sanitizes player fetch responses only on YouTube play
   );
 });
 
+test('YouTube player guard returns player fetch responses without pre-reading the body', async () => {
+  let jsonReads = 0;
+  let textReads = 0;
+  let cloneReads = 0;
+  class CountingResponse extends Response {
+    json() {
+      jsonReads += 1;
+      return super.json();
+    }
+    text() {
+      textReads += 1;
+      return super.text();
+    }
+    clone() {
+      cloneReads += 1;
+      return super.clone();
+    }
+  }
+  const { context, controller } = await createController({
+    Response: CountingResponse,
+    fetch: async url => new CountingResponse(JSON.stringify({
+      adPlacements: [{ id: 'pre' }],
+      streamingData: { formats: [{ itag: 18 }] },
+      url,
+    }), {
+      headers: { 'content-type': 'application/json' },
+      status: 200,
+      statusText: 'OK',
+    }),
+  });
+
+  assert.equal(controller.install(), true);
+  const response = await context.fetch(`${youtubeOrigin}/youtubei/v1/player?key=x`);
+
+  assert.equal(jsonReads, 0);
+  assert.equal(textReads, 0);
+  assert.equal(cloneReads, 0);
+  assert.equal(response.status, 200);
+
+  const body = await response.json();
+  assert.equal(jsonReads, 1);
+  assert.equal(textReads, 0);
+  assert.equal(cloneReads, 0);
+  assert.equal(body.adPlacements, undefined);
+  assert.deepEqual(body.streamingData, { formats: [{ itag: 18 }] });
+});
+
+test('YouTube player guard skips heavy player-response parsing when no ad metadata keys are present', async () => {
+  let parseCount = 0;
+  const { context, controller } = await createController({
+    JSON: {
+      parse(text) {
+        parseCount += 1;
+        return JSON.parse(text);
+      },
+      stringify: JSON.stringify,
+    },
+    fetch: async url => new Response(JSON.stringify({
+      streamingData: { formats: [{ itag: 18 }] },
+      videoDetails: { videoId: 'clean' },
+      url,
+    }), {
+      headers: { 'content-type': 'application/json' },
+      status: 200,
+      statusText: 'OK',
+    }),
+  });
+
+  assert.equal(controller.install(), true);
+  const response = await context.fetch(`${youtubeOrigin}/youtubei/v1/player?key=x`);
+  const body = await response.json();
+
+  assert.equal(parseCount, 0);
+  assert.deepEqual(body.streamingData, { formats: [{ itag: 18 }] });
+  assert.equal(controller.textMayContainAdMetadata(JSON.stringify(body)), false);
+});
+
 test('YouTube player guard corrects only the armed SSAP restart loop shape', async () => {
   const withoutExperiment = await createController();
 
@@ -255,6 +333,29 @@ test('YouTube player guard corrects only the armed SSAP restart loop shape', asy
   video.loop = true;
   assert.equal(controller.correctSsapLoop(), false);
   assert.equal(video.currentTime, 0);
+});
+
+test('YouTube player guard installs the global SSAP array hook only when the SSAP experiment is enabled', async () => {
+  const { context, controller } = await createController();
+  const nativePush = context.Array.prototype.push;
+
+  assert.equal(controller.installSsapGuard(), false);
+  assert.strictEqual(context.Array.prototype.push, nativePush);
+
+  context.yt = {
+    config_: {
+      EXPERIMENT_FLAGS: {
+        html5_enable_ssap_entity_id: true,
+      },
+    },
+  };
+
+  assert.equal(controller.installSsapGuard(), true);
+  assert.notStrictEqual(context.Array.prototype.push, nativePush);
+
+  const installedPush = context.Array.prototype.push;
+  assert.equal(controller.installSsapGuard(), true);
+  assert.strictEqual(context.Array.prototype.push, installedPush);
 });
 
 test('YouTube player guard suppresses YouTube abnormality reset callbacks', async () => {

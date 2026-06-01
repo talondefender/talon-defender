@@ -36,8 +36,10 @@ const createController = env => {
     let ssapIntervalId;
     let ssapIntervalStartedAt = 0;
     let ssapObserver;
+    let ssapGuardInstalled = false;
     let abnormalityGuardInstalled = false;
     let abnormalityGuardHits = 0;
+    const abnormalityCallbackCache = new WeakMap();
     let iframeFetchBridgeInstalled = false;
 
     const isYouTubeHost = () =>
@@ -125,6 +127,10 @@ const createController = env => {
         return value;
     };
 
+    const textMayContainAdMetadata = text =>
+        AD_KEYS.some(key => text.includes(key)) ||
+        text.includes('adClientParams');
+
     const sanitizeJsonText = text => {
         if ( typeof text !== 'string' || text === '' ) { return text; }
         if ( typeof nativeJSONParse !== 'function' ||
@@ -136,6 +142,7 @@ const createController = env => {
             ? text.slice(0, text.indexOf('\n') + 1 || 0)
             : '';
         const body = xssiPrefix === '' ? text : text.slice(xssiPrefix.length);
+        if ( textMayContainAdMetadata(body) === false ) { return text; }
         let parsed;
         try {
             parsed = nativeJSONParse.call(win.JSON, body);
@@ -184,43 +191,48 @@ const createController = env => {
         return false;
     };
 
-    const rebuildResponse = (response, text) => {
-        if ( typeof win.Response !== 'function' ) { return response; }
+    const promiseThen = (value, onFulfilled) => {
+        const promise = win.Promise.resolve(value);
+        if ( typeof nativePromiseThen === 'function' ) {
+            return nativePromiseThen.call(promise, onFulfilled);
+        }
+        return promise.then(onFulfilled);
+    };
+
+    const wrapPlayerResponse = response => {
+        if ( isObject(response) === false || typeof win.Proxy !== 'function' ) {
+            return response;
+        }
         try {
-            const rebuilt = new win.Response(text, {
-                status: response.status,
-                statusText: response.statusText,
-                headers: response.headers,
+            return new win.Proxy(response, {
+                get(target, property, receiver) {
+                    if ( property === 'json' && typeof target.json === 'function' ) {
+                        return (...args) =>
+                            promiseThen(
+                                win.Reflect.apply(target.json, target, args),
+                                value => pruneAds(value)
+                            );
+                    }
+                    if ( property === 'text' && typeof target.text === 'function' ) {
+                        return (...args) =>
+                            promiseThen(
+                                win.Reflect.apply(target.text, target, args),
+                                text => sanitizeJsonText(text)
+                            );
+                    }
+                    if ( property === 'clone' && typeof target.clone === 'function' ) {
+                        return (...args) =>
+                            wrapPlayerResponse(
+                                win.Reflect.apply(target.clone, target, args)
+                            );
+                    }
+                    const value = win.Reflect.get(target, property, target);
+                    return typeof value === 'function' ? value.bind(target) : value;
+                },
             });
-            for ( const propertyName of [ 'url', 'type', 'redirected' ] ) {
-                try {
-                    Object.defineProperty(rebuilt, propertyName, {
-                        configurable: true,
-                        value: response[propertyName],
-                    });
-                } catch {
-                }
-            }
-            return rebuilt;
         } catch {
         }
         return response;
-    };
-
-    const sanitizeFetchResponse = async response => {
-        if ( isObject(response) === false ||
-            typeof response.clone !== 'function' ) {
-            return response;
-        }
-        let originalText;
-        try {
-            originalText = await response.clone().text();
-        } catch {
-            return response;
-        }
-        const sanitizedText = sanitizeJsonText(originalText);
-        if ( sanitizedText === originalText ) { return response; }
-        return rebuildResponse(response, sanitizedText);
     };
 
     const installFetchGuard = () => {
@@ -232,8 +244,7 @@ const createController = env => {
                     const shouldSanitize = isPlayerResponseUrl(args[0]);
                     const responsePromise = win.Reflect.apply(target, thisArg, args);
                     if ( shouldSanitize === false ) { return responsePromise; }
-                    return win.Promise.resolve(responsePromise)
-                        .then(sanitizeFetchResponse);
+                    return promiseThen(responsePromise, wrapPlayerResponse);
                 },
             });
             return true;
@@ -430,6 +441,8 @@ const createController = env => {
     };
 
     const installSsapGuard = () => {
+        if ( ssapGuardInstalled ) { return true; }
+        if ( isSsapExperimentEnabled() === false ) { return false; }
         const nativePush = win.Array?.prototype?.push;
         if ( typeof nativePush !== 'function' ) { return false; }
         try {
@@ -443,6 +456,7 @@ const createController = env => {
                     return result;
                 },
             });
+            ssapGuardInstalled = true;
             return true;
         } catch {
         }
@@ -451,11 +465,21 @@ const createController = env => {
 
     const isAbnormalityCallback = value => {
         if ( typeof value !== 'function' ) { return false; }
+        if ( abnormalityCallbackCache.has(value) ) {
+            return abnormalityCallbackCache.get(value);
+        }
+        let matched = false;
         try {
-            return String(value).includes('onAbnormalityDetected');
+            const name = typeof value.name === 'string' ? value.name : '';
+            matched = name.includes('onAbnormalityDetected') ||
+                String(value).includes('onAbnormalityDetected');
         } catch {
         }
-        return false;
+        try {
+            abnormalityCallbackCache.set(value, matched);
+        } catch {
+        }
+        return matched;
     };
 
     const installAbnormalityGuard = () => {
@@ -541,11 +565,17 @@ const createController = env => {
         }
     };
 
+    const ensureSsapGuards = () => {
+        if ( installSsapGuard() ) {
+            startSsapObserver();
+        }
+    };
+
     const installNavigationListeners = () => {
         const onNavigate = () => {
             refreshNavigationState();
+            ensureSsapGuards();
             correctSsapLoop();
-            startSsapObserver();
         };
         try {
             doc?.addEventListener?.('yt-navigate-start', onNavigate);
@@ -565,10 +595,9 @@ const createController = env => {
         installJsonParseGuard();
         installFetchGuard();
         installXhrGuard();
-        installSsapGuard();
+        ensureSsapGuards();
         installAbnormalityGuard();
         installIframeFetchBridge();
-        startSsapObserver();
         installNavigationListeners();
         return true;
     };
@@ -594,6 +623,7 @@ const createController = env => {
         recordSsapRange,
         refresh: install,
         sanitizeJsonText,
+        textMayContainAdMetadata,
     };
 };
 

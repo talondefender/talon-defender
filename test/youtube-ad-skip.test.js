@@ -9,11 +9,18 @@ const readSource = relativePath =>
 function createHarness() {
   const state = {
     adShowing: true,
+    playerClassShowing: true,
+    skipShowing: true,
     hiddenInterruptions: 0,
     interruptionShowing: false,
+    observerCallback: null,
+    observerOptions: null,
+    playerObserverCallback: null,
+    playerObserverOptions: null,
     skipClicks: 0,
     styles: [],
     listeners: [],
+    timeoutCallbacks: [],
   };
   const video = {
     muted: false,
@@ -35,7 +42,13 @@ function createHarness() {
       state.styles.push(element);
     },
   };
+  const playerElement = {
+    nodeType: 1,
+    matches: selector => selector.includes('.html5-video-player') || selector.includes('#movie_player'),
+    querySelectorAll: () => [],
+  };
   const interruptionToast = {
+    nodeType: 1,
     hidden: false,
     textContent: 'Experiencing interruptions? Find out why',
     style: {
@@ -48,6 +61,8 @@ function createHarness() {
         state.hiddenInterruptions += 1;
       }
     },
+    matches: selector => selector.includes('tp-yt-paper-toast') || selector.includes('[role="alert"]'),
+    querySelectorAll: () => [],
   };
   const document = {
     visibilityState: 'visible',
@@ -73,10 +88,13 @@ function createHarness() {
         return [video];
       }
       if (selector.includes('ytp-ad-skip') || selector.includes('skip-ad')) {
-        return state.adShowing ? [skipButton] : [];
+        return state.adShowing && state.skipShowing ? [skipButton] : [];
       }
       if (selector.includes('.ad-showing')) {
-        return state.adShowing ? [{ className: 'ad-showing' }] : [];
+        return state.adShowing && state.playerClassShowing ? [{ className: 'ad-showing' }] : [];
+      }
+      if (selector === '.html5-video-player,#movie_player') {
+        return [playerElement];
       }
       if (selector.includes('ytp-ad-player-overlay') || selector.includes('ytd-ad-slot-renderer')) {
         return state.adShowing ? [{ className: 'ytp-ad-player-overlay' }] : [];
@@ -94,14 +112,33 @@ function createHarness() {
     location: { hostname: 'www.youtube.com' },
     setInterval: () => 1,
     clearInterval: () => {},
+    setTimeout: handler => {
+      state.timeoutCallbacks.push(handler);
+      return state.timeoutCallbacks.length;
+    },
+    clearTimeout: () => {},
     addEventListener: () => {},
     MutationObserver: class {
-      observe() {}
-      disconnect() {}
+      constructor(handler) {
+        this.handler = handler;
+      }
+      observe(target, options) {
+        if (options?.attributes) {
+          state.playerObserverCallback = this.handler;
+          state.playerObserverOptions = options;
+          return;
+        }
+        state.observerCallback = this.handler;
+        state.observerOptions = options;
+      }
+      disconnect() {
+        state.observerCallback = null;
+        state.playerObserverCallback = null;
+      }
     },
   };
   context.globalThis = context;
-  return { context, state, video };
+  return { context, interruptionToast, state, video };
 }
 
 test('YouTube ad skip clicks visible skip controls, accelerates ads, and restores video state', async () => {
@@ -139,6 +176,47 @@ test('YouTube ad skip does not seek the player and trigger short-video restart l
   assert.equal(video.currentTime, 0);
   assert.equal(state.skipClicks, 2);
   assert.equal(video.playbackRate, 16);
+});
+
+test('YouTube ad skip coalesces broad YouTube mutation churn before scanning the page', async () => {
+  const source = await readSource('js/scripting/youtube-ad-skip.js');
+  const { context, state } = createHarness();
+  vm.runInNewContext(source, context);
+
+  const controller = context.__talonYoutubeAdSkipCreateController(context);
+  await controller.start();
+  assert.equal(state.observerOptions.childList, true);
+  assert.equal(state.observerOptions.subtree, true);
+  assert.equal(state.observerOptions.attributes, undefined);
+  assert.equal(state.playerObserverOptions.attributes, true);
+  assert.equal(Array.from(state.playerObserverOptions.attributeFilter).join(','), 'class');
+
+  state.skipClicks = 0;
+  state.observerCallback();
+  state.observerCallback();
+
+  assert.equal(state.timeoutCallbacks.length, 1);
+  assert.equal(state.skipClicks, 0);
+
+  state.timeoutCallbacks.shift()();
+  assert.equal(state.skipClicks, 1);
+});
+
+test('YouTube ad skip hides interruption notices added by YouTube before the next full scan', async () => {
+  const source = await readSource('js/scripting/youtube-ad-skip.js');
+  const { context, interruptionToast, state } = createHarness();
+  state.adShowing = false;
+  vm.runInNewContext(source, context);
+
+  const controller = context.__talonYoutubeAdSkipCreateController(context);
+  await controller.start();
+  state.hiddenInterruptions = 0;
+
+  assert.equal(controller.suppressInterruptionNoticeNodes([{
+    addedNodes: [interruptionToast],
+  }]), true);
+  assert.equal(interruptionToast.hidden, true);
+  assert.equal(state.hiddenInterruptions > 0, true);
 });
 
 test('YouTube ad skip suppresses only the matching interruptions notice', async () => {

@@ -11,8 +11,10 @@ if ( global.TalonYoutubeAdSkipController ) {
 const SUBSYSTEM_ID = 'youtubeAdSkip';
 const STYLE_ID = 'talon-youtube-ad-skip-style';
 const FAST_PLAYBACK_RATE = 16;
-const CHECK_INTERVAL_MS = 250;
+const CHECK_INTERVAL_MS = 500;
 const HIDDEN_CHECK_INTERVAL_MS = 1500;
+const MUTATION_TICK_DELAY_MS = 750;
+const NOTICE_CHECK_INTERVAL_MS = 1500;
 
 const YOUTUBE_HOST_RE = /(^|\.)youtube(?:-nocookie)?\.com$/i;
 const INTERRUPTION_NOTICE_RE = /\bexperiencing\s+interruptions\b/i;
@@ -21,6 +23,8 @@ const AD_STATE_SELECTOR = [
     '.html5-video-player.ad-showing',
     '#movie_player.ad-showing',
 ].join(',');
+
+const PLAYER_SELECTOR = '.html5-video-player,#movie_player';
 
 const SKIP_BUTTON_SELECTOR = [
     '.ytp-ad-skip-button',
@@ -79,8 +83,13 @@ const createController = env => {
     const doc = env.document;
     const videoStates = new WeakMap();
     let observer;
+    let playerObserver;
+    let observedPlayer;
     let intervalId;
     let lastAdState = false;
+    let tickScheduled = false;
+    let lastNoticeCheckAt = 0;
+    let noticeScanPending = false;
 
     const isYouTubeHost = () =>
         YOUTUBE_HOST_RE.test(String(win.location?.hostname || ''));
@@ -141,8 +150,7 @@ const createController = env => {
     const findSkipButton = () =>
         queryAll(SKIP_BUTTON_SELECTOR).find(isElementActionable) || null;
 
-    const clickSkipButton = () => {
-        const button = findSkipButton();
+    const clickSkipButton = (button = findSkipButton()) => {
         if ( button === null ) { return false; }
         try {
             button.click();
@@ -156,21 +164,109 @@ const createController = env => {
         queryOne(AD_STATE_SELECTOR) !== null ||
         (findSkipButton() !== null && queryOne(AD_SURFACE_SELECTOR) !== null);
 
-    const suppressInterruptionNotices = () => {
-        let suppressed = false;
-        for ( const element of queryAll(INTERRUPTION_NOTICE_SELECTOR) ) {
-            const text = String(element?.textContent || '');
-            if ( INTERRUPTION_NOTICE_RE.test(text) === false ) { continue; }
+    const hideInterruptionNotice = element => {
+        const text = String(element?.textContent || '');
+        if ( INTERRUPTION_NOTICE_RE.test(text) === false ) { return false; }
+        try {
+            element.style?.setProperty?.('display', 'none', 'important');
+            element.style?.setProperty?.('visibility', 'hidden', 'important');
+            element.setAttribute?.('aria-hidden', 'true');
+            element.hidden = true;
+            return true;
+        } catch {
+        }
+        return false;
+    };
+
+    const suppressInterruptionNotices = root => {
+        let elements;
+        if ( root?.nodeType === 1 || root?.nodeType === 11 ) {
+            elements = [];
             try {
-                element.style?.setProperty?.('display', 'none', 'important');
-                element.style?.setProperty?.('visibility', 'hidden', 'important');
-                element.setAttribute?.('aria-hidden', 'true');
-                element.hidden = true;
-                suppressed = true;
+                if ( root.nodeType === 1 &&
+                    root.matches?.(INTERRUPTION_NOTICE_SELECTOR) ) {
+                    elements.push(root);
+                }
+                elements.push(...root.querySelectorAll?.(INTERRUPTION_NOTICE_SELECTOR) || []);
             } catch {
+            }
+        } else {
+            elements = queryAll(INTERRUPTION_NOTICE_SELECTOR);
+        }
+
+        let suppressed = false;
+        for ( const element of elements || [] ) {
+            if ( hideInterruptionNotice(element) ) {
+                suppressed = true;
             }
         }
         return suppressed;
+    };
+
+    const nodeMayContainInterruptionNotice = node => {
+        if ( node?.nodeType === 3 ) {
+            const text = String(node.textContent || '');
+            if ( INTERRUPTION_NOTICE_RE.test(text) ) { return true; }
+            node = node.parentElement;
+        }
+        if ( node?.nodeType !== 1 && node?.nodeType !== 11 ) { return false; }
+        try {
+            return (node.nodeType === 1 &&
+                node.matches?.(INTERRUPTION_NOTICE_SELECTOR)) ||
+                (typeof node.querySelector === 'function' &&
+                    node.querySelector(INTERRUPTION_NOTICE_SELECTOR) !== null);
+        } catch {
+        }
+        return false;
+    };
+
+    const suppressInterruptionNoticeNodes = records => {
+        let suppressed = false;
+        let noticeCandidate = false;
+        for ( const record of records || [] ) {
+            for ( let node of record.addedNodes || [] ) {
+                if ( nodeMayContainInterruptionNotice(node) ) {
+                    noticeCandidate = true;
+                }
+                if ( node?.nodeType === 3 ) {
+                    node = node.parentElement;
+                }
+                if ( suppressInterruptionNotices(node) ) {
+                    suppressed = true;
+                }
+            }
+        }
+        if ( suppressed ) {
+            lastNoticeCheckAt = Date.now();
+        }
+        if ( noticeCandidate ) {
+            noticeScanPending = true;
+        }
+        return suppressed;
+    };
+
+    const observePlayerState = () => {
+        if ( typeof win.MutationObserver !== 'function' ) { return; }
+        const player = queryOne(PLAYER_SELECTOR);
+        if ( player === null || player === observedPlayer ) { return; }
+        if ( playerObserver !== undefined ) {
+            try {
+                playerObserver.disconnect();
+            } catch {
+            }
+            playerObserver = undefined;
+        }
+        observedPlayer = player;
+        try {
+            playerObserver = new win.MutationObserver(scheduleTick);
+            playerObserver.observe(player, {
+                attributes: true,
+                attributeFilter: [ 'class' ],
+            });
+        } catch {
+            playerObserver = undefined;
+            observedPlayer = undefined;
+        }
     };
 
     const saveVideoState = video => {
@@ -221,10 +317,20 @@ const createController = env => {
     const tick = () => {
         if ( isYouTubeHost() === false ) { return false; }
         injectStyle();
-        const suppressedNotice = suppressInterruptionNotices();
-        const adShowing = hasAdSurface();
+        observePlayerState();
+        const now = Date.now();
+        let suppressedNotice = false;
+        if ( lastAdState || noticeScanPending ||
+            now - lastNoticeCheckAt >= NOTICE_CHECK_INTERVAL_MS ) {
+            lastNoticeCheckAt = now;
+            noticeScanPending = false;
+            suppressedNotice = suppressInterruptionNotices();
+        }
+        const skipButton = findSkipButton();
+        const adShowing = queryOne(AD_STATE_SELECTOR) !== null ||
+            (skipButton !== null && queryOne(AD_SURFACE_SELECTOR) !== null);
         if ( adShowing ) {
-            clickSkipButton();
+            clickSkipButton(skipButton);
             for ( const video of videos() ) {
                 accelerateVideo(video);
             }
@@ -236,6 +342,28 @@ const createController = env => {
             lastAdState = false;
         }
         return suppressedNotice;
+    };
+
+    const scheduleTick = () => {
+        if ( tickScheduled ) { return; }
+        tickScheduled = true;
+        const run = () => {
+            tickScheduled = false;
+            tick();
+        };
+        try {
+            if ( doc.visibilityState !== 'hidden' &&
+                typeof win.requestAnimationFrame === 'function' ) {
+                win.requestAnimationFrame(run);
+                return;
+            }
+            if ( typeof win.setTimeout === 'function' ) {
+                win.setTimeout(run, MUTATION_TICK_DELAY_MS);
+                return;
+            }
+        } catch {
+        }
+        run();
     };
 
     const shouldRun = async () => {
@@ -267,13 +395,14 @@ const createController = env => {
         injectStyle();
         tick();
         if ( observer === undefined && typeof win.MutationObserver === 'function' ) {
-            observer = new win.MutationObserver(() => tick());
+            observer = new win.MutationObserver(records => {
+                suppressInterruptionNoticeNodes(records);
+                scheduleTick();
+            });
             try {
                 observer.observe(doc.documentElement || doc, {
                     childList: true,
                     subtree: true,
-                    attributes: true,
-                    attributeFilter: [ 'class', 'hidden', 'aria-hidden' ],
                 });
             } catch {
             }
@@ -292,6 +421,14 @@ const createController = env => {
             }
             observer = undefined;
         }
+        if ( playerObserver !== undefined ) {
+            try {
+                playerObserver.disconnect();
+            } catch {
+            }
+            playerObserver = undefined;
+            observedPlayer = undefined;
+        }
         if ( intervalId !== undefined ) {
             win.clearInterval(intervalId);
             intervalId = undefined;
@@ -302,7 +439,7 @@ const createController = env => {
     };
 
     const onVisibilityChange = () => refreshTimer();
-    const onNavigateFinish = () => tick();
+    const onNavigateFinish = () => scheduleTick();
 
     const init = () => {
         start().catch(() => {});
@@ -322,8 +459,10 @@ const createController = env => {
         injectStyle,
         refresh: start,
         restoreVideos,
+        scheduleTick,
         start,
         stop,
+        suppressInterruptionNoticeNodes,
         suppressInterruptionNotices,
         tick,
     };

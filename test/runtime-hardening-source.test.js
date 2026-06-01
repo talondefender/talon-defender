@@ -119,6 +119,14 @@ test('packaged uBO scriptlet bundles are wired while Talon token compatibility s
   assert.match(validateSource, /\^js\\\/scripting\\\/scriptlet-token\\\//);
 });
 
+test('packaged uBO scriptlet rules keep replace-node-text payloads readable', async () => {
+  const ublockFiltersSource = await readSource('rulesets/scripting/scriptlet/isolated/ublock-filters.js');
+
+  assert.doesNotMatch(ublockFiltersSource, /html\(window\.atob\(/);
+  assert.doesNotMatch(ublockFiltersSource, /window\.atob\(\\?"[A-Za-z0-9+/=]{80,}/);
+  assert.match(ublockFiltersSource, /Captcha image failed to load/);
+});
+
 test('packaged cosmetic registrations preload the procedural API before procedural consumers', async () => {
   const managerSource = await readSource('js/scripting-manager.js');
   const proceduralSource = managerSource.slice(
