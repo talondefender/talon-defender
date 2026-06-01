@@ -6,6 +6,7 @@ export const BREAKAGE_SUBSYSTEM_IDS = Object.freeze([
     'automation',
     'remoteCosmetics',
     'postHideCleanup',
+    'youtubeAdSkip',
 ]);
 
 const SEVERE_BREAKAGE_SIGNALS = new Set([

@@ -26,6 +26,7 @@ const AUDITABLE_SUBSYSTEMS = new Set([
     'automation',
     'remoteCosmetics',
     'postHideCleanup',
+    'youtubeAdSkip',
 ]);
 
 // Keep explicit protected-host rules aligned with automation/protected-domains.json.

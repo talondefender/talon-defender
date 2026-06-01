@@ -273,12 +273,14 @@ test('picker overlay startup requires a one-time background capability claim', a
   assert.match(utilsSource, /entry\.file !== file \|\| entry\.pageUrl !== pageUrl/);
 });
 
-test('extension source omits abandoned YouTube runtime lanes', async () => {
+test('extension source keeps only the bounded Talon-owned YouTube ad-skip lane', async () => {
   const watchPrefix = 'youtube' + '-watch';
   const relayHtmlPath = `web_accessible_resources/${watchPrefix}-relay.html`;
   const relayScriptPath = `web_accessible_resources/${watchPrefix}-relay.js`;
   const bootstrapPath = `js/scripting/${watchPrefix}-bootstrap.js`;
+  const talonYouTubePath = 'js/scripting/youtube-ad-skip.js';
   const managerSource = await readSource('js/scripting-manager.js');
+  const talonYouTubeSource = await readSource(talonYouTubePath);
   const heuristicSource = await readSource('js/scripting/native-heuristics.js');
   const backgroundSource = await readSource('js/background.js');
   const rulesetSource = await readSource('js/ruleset-manager.js');
@@ -287,15 +289,26 @@ test('extension source omits abandoned YouTube runtime lanes', async () => {
   const publicResources = (manifest.web_accessible_resources ?? [])
     .flatMap(entry => entry.resources ?? []);
 
+  assert.equal(await pathExists(talonYouTubePath), true);
   assert.equal(await pathExists(bootstrapPath), false);
   assert.equal(await pathExists(relayHtmlPath), false);
   assert.equal(await pathExists(relayScriptPath), false);
   assert.equal(publicResources.some(resource => resource.includes(`${watchPrefix}-relay`)), false);
+  assert.equal(publicResources.some(resource => /youtube/i.test(resource)), false);
+  assert.equal(allowlist.includes(talonYouTubePath), true);
   assert.equal(allowlist.includes(bootstrapPath), false);
   assert.equal(allowlist.includes(relayHtmlPath), false);
   assert.equal(allowlist.includes(relayScriptPath), false);
 
-  assert.doesNotMatch(managerSource, new RegExp(`${watchPrefix}-bootstrap|registerYouTubeWatchBootstrap|HOST_SCOPED_SCRIPTLET_EXCLUSIONS|www\\.youtube\\.com`));
+  assert.match(managerSource, /TALON_YOUTUBE_AD_SKIP_ID = 'talon-youtube-ad-skip'/);
+  assert.match(managerSource, /registerYouTubeAdSkip\(context\)/);
+  assert.match(managerSource, /getScriptletExcludedHostnames/);
+  assert.match(managerSource, /YOUTUBE_AD_SKIP_HOSTNAMES/);
+  assert.match(talonYouTubeSource, /TalonBreakageGuard/);
+  assert.match(talonYouTubeSource, /youtubeAdSkip/);
+  assert.doesNotMatch(talonYouTubeSource, /chrome\.runtime|browser\.runtime|\bfetch\s*\(|\bXMLHttpRequest\b|runtime\.getURL/);
+  assert.doesNotMatch(talonYouTubeSource, /createElement\(['"]script['"]\)/);
+  assert.doesNotMatch(managerSource, new RegExp(`${watchPrefix}-bootstrap|registerYouTubeWatchBootstrap|HOST_SCOPED_SCRIPTLET_EXCLUSIONS`));
   assert.doesNotMatch(heuristicSource, new RegExp(`youtube|${'YOUTUBE_' + 'WATCH'}|td_yw`, 'i'));
   assert.doesNotMatch(backgroundSource, new RegExp(`setYouTubeWatch|YouTubeWatch|${watchPrefix}`, 'i'));
   assert.doesNotMatch(rulesetSource, /YOUTUBE_AD_RULES|YouTubeAdSession|updateYouTubeAdSessionRules|youtube\.com/);

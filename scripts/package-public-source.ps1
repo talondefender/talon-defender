@@ -153,6 +153,7 @@ $sourceItems = @(
   "test/ubol-parity-audit.test.js",
   "test/ubol-parity-status.test.js",
   "test/ubol-parity-watch.test.js",
+  "test/youtube-ad-skip.test.js",
   "unpicker-ui.html",
   "web_accessible_resources"
 )

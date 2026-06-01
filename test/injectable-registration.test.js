@@ -250,16 +250,21 @@ test('remote cosmetics registration splits broad and host-gated lanes', async ()
   assert.equal(remoteCosmeticsSource.includes("id: 'remote-cosmetics'"), false);
 });
 
-test('scripting manager no longer registers YouTube or Postmedia exact-host compatibility lanes', async () => {
+test('scripting manager registers only the Talon-owned YouTube lane, not old compatibility lanes', async () => {
   const watchPrefix = 'youtube' + '-watch';
   const source = await fs.readFile(
     new URL('../js/scripting-manager.js', import.meta.url),
     'utf8'
   );
 
+  assert.match(source, /TALON_YOUTUBE_AD_SKIP_ID = 'talon-youtube-ad-skip'/);
+  assert.match(source, /TALON_YOUTUBE_AD_SKIP_PATH = '\/js\/scripting\/youtube-ad-skip\.js'/);
+  assert.match(source, /function registerYouTubeAdSkip\(context\)/);
+  assert.match(source, /registerYouTubeAdSkip\(context\)/);
+  assert.match(source, /getScriptletExcludedHostnames/);
   assert.doesNotMatch(source, /applyCompatibilityHostExclusions/);
   assert.doesNotMatch(source, /youtubeWatchOwnerProfile/);
-  assert.doesNotMatch(source, new RegExp(`${watchPrefix}-bootstrap|registerYouTubeWatchBootstrap|www\\.youtube\\.com`));
+  assert.doesNotMatch(source, new RegExp(`${watchPrefix}-bootstrap|registerYouTubeWatchBootstrap`));
   assert.doesNotMatch(source, /TALON_NATIONALPOST_ANTI_ADBLOCK_PATH/);
   assert.doesNotMatch(source, /TALON_FINANCIALPOST_COMPATIBILITY_PATH/);
   assert.doesNotMatch(source, /TALON_FINANCIALPOST_ANTI_ADBLOCK_PATH/);

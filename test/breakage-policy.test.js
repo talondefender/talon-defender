@@ -77,17 +77,19 @@ test('remote scriptlet denylist and audit override sanitization remain bounded',
     'automation',
     'remoteCosmetics',
     'postHideCleanup',
+    'youtubeAdSkip',
   ]);
   assert.equal(resolveAuditOverride(overrides, 'shop.example.com', 'remoteCosmetics'), false);
   assert.equal(resolveAuditOverride(overrides, 'news.example.com', 'automation'), false);
   assert.equal(resolveAuditOverride(overrides, 'news.example.com', 'nativeHeuristics'), undefined);
 });
 
-test('manifest and public allowlist no longer reference YouTube or Postmedia runtime assets', async () => {
+test('manifest and public allowlist expose only the Talon-owned YouTube ad-skip runtime', async () => {
   const watchPrefix = 'youtube' + '-watch';
   const relayHtmlPath = `web_accessible_resources/${watchPrefix}-relay.html`;
   const relayScriptPath = `web_accessible_resources/${watchPrefix}-relay.js`;
   const bootstrapPath = `js/scripting/${watchPrefix}-bootstrap.js`;
+  const talonYouTubePath = 'js/scripting/youtube-ad-skip.js';
   const manifest = JSON.parse(await readSource('manifest.json'));
   const allowlist = await readSource('public-safe-allowlist.txt');
   const contentScripts = Array.isArray(manifest.content_scripts) ? manifest.content_scripts : [];
@@ -110,6 +112,7 @@ test('manifest and public allowlist no longer reference YouTube or Postmedia run
     false
   );
 
+  assert.equal(allowlist.includes(talonYouTubePath), true);
   assert.equal(allowlist.includes(bootstrapPath), false);
   assert.equal(allowlist.includes(relayHtmlPath), false);
   assert.equal(allowlist.includes(relayScriptPath), false);
@@ -122,9 +125,10 @@ test('manifest and public allowlist no longer reference YouTube or Postmedia run
   assert.equal(allowlist.includes('js/scripting/financialpost-compatibility.js'), false);
 });
 
-test('deleted YouTube and Postmedia runtime files are gone from the workspace', async () => {
+test('deleted YouTube relay and Postmedia runtime files are gone from the workspace', async () => {
   const watchPrefix = 'youtube' + '-watch';
 
+  assert.equal(await pathExists('js/scripting/youtube-ad-skip.js'), true);
   assert.equal(await pathExists(`js/scripting/${watchPrefix}-bootstrap.js`), false);
   assert.equal(await pathExists(`web_accessible_resources/${watchPrefix}-relay.html`), false);
   assert.equal(await pathExists(`web_accessible_resources/${watchPrefix}-relay.js`), false);
@@ -137,7 +141,7 @@ test('deleted YouTube and Postmedia runtime files are gone from the workspace', 
   assert.equal(await pathExists('js/scripting/financialpost-compatibility.js'), false);
 });
 
-test('background and policy sources no longer expose YouTube or Postmedia compatibility controls', async () => {
+test('background and policy sources no longer expose old YouTube or Postmedia compatibility controls', async () => {
   const backgroundSource = await readSource('js/background.js');
   const policySource = await readSource('js/breakage-policy.js');
 

@@ -24,6 +24,7 @@ uBO Lite parity gate:
 - run `npm run parity:status -- --report <audit-report.json>` after the audit to produce a ship/no-ship summary
 - the audit is read-only and must classify drift before any import work starts
 - ruleset-only PRs must not change runtime code, permissions, entitlement, backend behavior, or user-state migration logic
+- YouTube is a Talon-owned exception: parity work must not copy uBO Lite's YouTube scriptlet/runtime method or overwrite `js/scripting/youtube-ad-skip.js`; upstream scriptlets remain excluded from YouTube hosts
 - any minimum Chrome version increase, new permission, unknown drift, or Talon-owned path overwrite requires explicit human approval
 
 What each release script does:

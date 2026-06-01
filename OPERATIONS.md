@@ -39,5 +39,6 @@ Operational rules:
 - public GitHub sync happens from this workspace; `../Talon Defender Latest/` is only the handoff artifact workspace
 - public tests may only use the explicit `.test.js` files and placeholder or product-owned URLs
 - parity imports must use pinned uBO Lite Chromium release artifacts, never floating upstream branches
+- YouTube is a Talon-owned runtime exception: do not import uBO Lite's YouTube scriptlet/runtime strategy onto YouTube hosts, and do not overwrite `js/scripting/youtube-ad-skip.js` during parity work
 - run parity watching from a private scheduler or backend control plane; update the baseline only after the pinned release is reviewed
 - backend hotfix payloads are signed data only; do not add remote JavaScript, remote scriptlet code, arbitrary procedural logic, or command interpreters

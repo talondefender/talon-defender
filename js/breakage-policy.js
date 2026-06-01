@@ -21,6 +21,7 @@ export const AUDITABLE_SUBSYSTEMS = Object.freeze([
     'automation',
     'remoteCosmetics',
     'postHideCleanup',
+    'youtubeAdSkip',
 ]);
 
 // Keep explicit protected-host rules aligned with automation/protected-domains.json.
@@ -80,6 +81,15 @@ export const RISK_MANIFEST = Object.freeze([
         frameScope: 'all frames',
         mutationType: 'collapse containers after hides',
         protectedExposure: 'medium-high',
+    },
+    {
+        id: 'youtube-ad-skip',
+        tier: RISK_TIERS.medium,
+        hostScope: 'youtube.com and youtube-nocookie.com only',
+        runTiming: 'document_start',
+        frameScope: 'all frames',
+        mutationType: 'skip visible YouTube ads, hide YouTube ad surfaces, and temporarily accelerate ad video playback',
+        protectedExposure: 'low',
     },
     {
         id: 'native-heuristics',

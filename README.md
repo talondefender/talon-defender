@@ -28,7 +28,7 @@ Current product summary:
 - it now exposes a plain-language `Extra protection` toggle in Settings for the stronger non-default annoyance packs
 - it verifies paid licenses against the API
 - it falls into paywall mode when entitlement expires
-- MV3 YouTube-specific runtime workarounds are intentionally removed/deferred; normal static and community rulesets remain the only YouTube blocking path
+- YouTube uses a Talon-owned ad-skip runtime lane that clicks visible skip controls, hides YouTube ad surfaces, and temporarily accelerates ad playback on YouTube hosts only. uBO Lite scriptlet/runtime parity is intentionally excluded on YouTube hosts so Talon does not copy uBO Lite's YouTube method.
 - while entitled, it can fetch signed JSON community data from the API: a baseline bundle plus signed site-keyed overlay hotfixes derived from the same community base URL. The public store package does not fetch or execute remote JavaScript, WASM, or remote command payloads; signed community data can only select packaged DNR rules, packaged redirect resources, packaged cosmetics/heuristics/directives, and packaged scriptlet tokens. The lane uses SHA-256 integrity, Ed25519 signatures, rollback to the last-known-good compiled state, authoritative cleanup when disabled or invalid, Talon-owned first-party host rejection, packaged compatibility exclusions, quota bounds, and retry/negative-cache handling.
 
 Store review notes:

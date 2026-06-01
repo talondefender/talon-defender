@@ -38,6 +38,12 @@
       "zapper-ui.html": "Talon does not ship uBO Lite's zapper command or UI."
     }
   },
+  "runtimeCapabilityExceptions": {
+    "localExtra": {
+      "js/scripting/youtube-ad-skip.js": "Talon-owned YouTube ad-skip lane. Do not import or copy uBO Lite's YouTube scriptlet/runtime strategy into this path; upstream uBO scriptlets are intentionally excluded from YouTube hosts."
+    },
+    "upstreamExtra": {}
+  },
   "talonOwnedPaths": [
     "automation/**",
     "js/action.js",
@@ -66,6 +72,7 @@
     "js/scripting/scriptlet-token/**",
     "js/scripting/scriptlet-token-details.json",
     "js/scripting/shadow-dom-helper.js",
+    "js/scripting/youtube-ad-skip.js",
     "managed_storage.json",
     "options/**",
     "popup/**",

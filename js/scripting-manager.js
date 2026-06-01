@@ -69,6 +69,7 @@ const SUPPRESSIBLE_SUBSYSTEMS = Object.freeze([
     'automation',
     'remoteCosmetics',
     'postHideCleanup',
+    'youtubeAdSkip',
 ]);
 const SCRIPTLET_PATH_ALIASES = new Map([
     [
@@ -79,8 +80,14 @@ const SCRIPTLET_PATH_ALIASES = new Map([
 const TALON_PUBLIC_SUFFIX_DATA_PATH = '/shared/public-suffix-data.js';
 const TALON_SHADOW_DOM_HELPER_PATH = '/js/scripting/shadow-dom-helper.js';
 const TALON_BLOCK_HINTS_PATH = '/js/scripting/block-hints.js';
+const TALON_YOUTUBE_AD_SKIP_PATH = '/js/scripting/youtube-ad-skip.js';
+const TALON_YOUTUBE_AD_SKIP_ID = 'talon-youtube-ad-skip';
+const YOUTUBE_AD_SKIP_HOSTNAMES = Object.freeze([
+    'youtube.com',
+    'youtube-nocookie.com',
+]);
 
-const getScriptletExcludedHostnames = ( ) => [];
+const getScriptletExcludedHostnames = ( ) => YOUTUBE_AD_SKIP_HOSTNAMES;
 
 const readOptionalLocalValue = async (key, fallbackValue, context) => {
     if ( browser.storage?.local?.get === undefined ) { return fallbackValue; }
@@ -200,6 +207,43 @@ const pushExactExcludeMatches = (excludeMatches, hostnames) => {
         seen.add(match);
         excludeMatches.push(match);
     }
+};
+
+const modeSetCoversHostname = (modeSet, hostname) => {
+    if ( modeSet instanceof Set === false ) { return false; }
+    return modeSet.has('all-urls') ||
+        modeSet.has('*') ||
+        modeSet.has(hostname) ||
+        ut.isDescendantHostnameOfIter(hostname, modeSet);
+};
+
+const getYouTubeAdSkipMatches = filteringModeDetails => {
+    const enabledModes = [
+        filteringModeDetails?.optimal,
+        filteringModeDetails?.complete,
+    ];
+    const hasGlobalEnable = enabledModes.some(modeSet =>
+        modeSet instanceof Set &&
+        (modeSet.has('all-urls') || modeSet.has('*'))
+    );
+    if ( hasGlobalEnable ) {
+        return ut.matchesFromHostnames(YOUTUBE_AD_SKIP_HOSTNAMES);
+    }
+    const hostnames = YOUTUBE_AD_SKIP_HOSTNAMES.filter(hostname =>
+        enabledModes.some(modeSet => modeSetCoversHostname(modeSet, hostname))
+    );
+    return ut.matchesFromHostnames(hostnames);
+};
+
+const getYouTubeAdSkipExcludeMatches = filteringModeDetails => {
+    const disabledModes = [
+        filteringModeDetails?.none,
+        filteringModeDetails?.basic,
+    ];
+    const hostnames = YOUTUBE_AD_SKIP_HOSTNAMES.filter(hostname =>
+        disabledModes.some(modeSet => modeSetCoversHostname(modeSet, hostname))
+    );
+    return ut.matchesFromHostnames(hostnames);
 };
 
 const readActiveAutoGenericHighHosts = async () => {
@@ -709,6 +753,7 @@ async function registerSpecific(context) {
 
 function registerScriptlet(context, scriptletDetails) {
     const { before, filteringModeDetails, rulesetsDetails } = context;
+    const scriptletExcludedHostnames = getScriptletExcludedHostnames();
 
     const hasBroadHostPermission =
         filteringModeDetails.optimal.has('all-urls') ||
@@ -738,6 +783,7 @@ function registerScriptlet(context, scriptletDetails) {
             let targetHostnames = [];
             if ( hasBroadHostPermission ) {
                 excludeMatches.push(...permissionRevokedMatches);
+                excludeMatches.push(...ut.matchesFromHostnames(scriptletExcludedHostnames));
                 targetHostnames = hostnames;
             } else if ( permissionGrantedHostnames.length !== 0 ) {
                 if ( hostnames.includes('*') ) {
@@ -748,6 +794,10 @@ function registerScriptlet(context, scriptletDetails) {
                         permissionGrantedHostnames
                     );
                 }
+                targetHostnames = ut.subtractHostnameIters(
+                    targetHostnames,
+                    scriptletExcludedHostnames
+                );
             }
             if ( targetHostnames.length === 0 ) { continue; }
             matches.push(...ut.matchesFromHostnames(targetHostnames));
@@ -799,6 +849,7 @@ function registerRemoteScriptlets(context, scriptletDetails) {
         filteringModeDetails,
         remoteScriptlets,
     } = context;
+    const scriptletExcludedHostnames = getScriptletExcludedHostnames();
     const canonicalRemoteScriptlets = canonicalizeCommunityScriptlets(remoteScriptlets);
     if ( Array.isArray(canonicalRemoteScriptlets) === false ||
         canonicalRemoteScriptlets.length === 0 ) {
@@ -842,6 +893,7 @@ function registerRemoteScriptlets(context, scriptletDetails) {
         let targetHostnames = [];
         if ( hasBroadHostPermission ) {
             excludeMatches.push(...permissionRevokedMatches);
+            excludeMatches.push(...ut.matchesFromHostnames(scriptletExcludedHostnames));
             targetHostnames = Array.isArray(details.hosts) ? details.hosts : [];
         } else if ( permissionGrantedHostnames.length !== 0 ) {
             const hosts = Array.isArray(details.hosts) ? details.hosts : [];
@@ -853,6 +905,10 @@ function registerRemoteScriptlets(context, scriptletDetails) {
                     permissionGrantedHostnames
                 );
             }
+            targetHostnames = ut.subtractHostnameIters(
+                targetHostnames,
+                scriptletExcludedHostnames
+            );
         }
         if ( targetHostnames.length === 0 ) { continue; }
 
@@ -1026,6 +1082,53 @@ function registerAutomation(context) {
             Boolean(directive.matchOriginAsFallback)
     ) {
         context.toRemove.push('automation');
+        context.toAdd.push(directive);
+    }
+}
+
+/******************************************************************************/
+
+function registerYouTubeAdSkip(context) {
+    const { before, filteringModeDetails, subsystemSuppressionHostnames } = context;
+    const matches = getYouTubeAdSkipMatches(filteringModeDetails);
+    if ( matches.length === 0 ) { return; }
+
+    normalizeMatches(matches);
+
+    const excludeMatches = getYouTubeAdSkipExcludeMatches(filteringModeDetails);
+    pushExactExcludeMatches(
+        excludeMatches,
+        subsystemSuppressionHostnames?.youtubeAdSkip
+    );
+
+    const registered = before.get(TALON_YOUTUBE_AD_SKIP_ID);
+    before.delete(TALON_YOUTUBE_AD_SKIP_ID); // Important!
+
+    const directive = {
+        id: TALON_YOUTUBE_AD_SKIP_ID,
+        js: [
+            '/js/scripting/breakage-guard.js',
+            TALON_YOUTUBE_AD_SKIP_PATH,
+        ],
+        allFrames: true,
+        matches,
+        runAt: 'document_start',
+    };
+    if ( excludeMatches.length !== 0 ) {
+        directive.excludeMatches = excludeMatches;
+    }
+
+    if ( registered === undefined ) {
+        context.toAdd.push(directive);
+        return;
+    }
+
+    if (
+        ut.strArrayEq(registered.js, directive.js, false) === false ||
+        ut.strArrayEq(registered.matches, matches) === false ||
+        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false
+    ) {
+        context.toRemove.push(TALON_YOUTUBE_AD_SKIP_ID);
         context.toAdd.push(directive);
     }
 }
@@ -1411,6 +1514,7 @@ const buildInjectablesRegistrationPlan = async () => {
         registerSpecific(context),
         registerNativeHeuristics(context),
         registerAutomation(context),
+        registerYouTubeAdSkip(context),
         registerAdShellStyles(context),
         registerRemoteCosmetics(context),
         registerPostHideCleanup(context),

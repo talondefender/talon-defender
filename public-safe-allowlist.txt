@@ -434,6 +434,7 @@ js/scripting/remote-cosmetics-global.js
 js/scripting/remote-cosmetics-host.js
 js/scripting/remote-cosmetics.js
 js/scripting/scriptlet-token-details.json
+js/scripting/youtube-ad-skip.js
 js/scripting/scriptlet-token/annoyances-cookies.abort-current-script.js
 js/scripting/scriptlet-token/annoyances-cookies.abort-on-property-read.js
 js/scripting/scriptlet-token/annoyances-cookies.abort-on-property-write.js
@@ -1370,6 +1371,7 @@ test/site-key.test.js
 test/ubol-parity-audit.test.js
 test/ubol-parity-status.test.js
 test/ubol-parity-watch.test.js
+test/youtube-ad-skip.test.js
 THIRD_PARTY_NOTICES.md
 unpicker-ui.html
 web_accessible_resources/1x1.gif
