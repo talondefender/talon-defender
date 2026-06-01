@@ -16,6 +16,15 @@ const pathExists = async relativePath => {
 
 const countMatches = (source, pattern) => (source.match(pattern) ?? []).length;
 
+const assertOrderedIncludes = (source, needles, label) => {
+  let offset = -1;
+  for (const needle of needles) {
+    const nextOffset = source.indexOf(needle, offset + 1);
+    assert.notEqual(nextOffset, -1, `${label} missing ${needle}`);
+    offset = nextOffset;
+  }
+};
+
 test('adaptive subsystems keep the shared helper ordering and omit public remote tactics lanes', async () => {
   const source = await readSource('js/scripting-manager.js');
 
@@ -108,6 +117,39 @@ test('packaged uBO scriptlet bundles are wired while Talon token compatibility s
   assert.match(managerSource, /getScriptletTokenDetails\(\)/);
   assert.match(managerSource, /registerRemoteScriptlets\(context, scriptletTokenDetails\)/);
   assert.match(validateSource, /\^js\\\/scripting\\\/scriptlet-token\\\//);
+});
+
+test('packaged cosmetic registrations preload the procedural API before procedural consumers', async () => {
+  const managerSource = await readSource('js/scripting-manager.js');
+  const proceduralSource = managerSource.slice(
+    managerSource.indexOf('function registerProcedural(context) {'),
+    managerSource.indexOf('async function registerSpecific(context) {')
+  );
+  const specificSource = managerSource.slice(
+    managerSource.indexOf('async function registerSpecific(context) {'),
+    managerSource.indexOf('function registerScriptlet(context, scriptletDetails) {')
+  );
+
+  assertOrderedIncludes(
+    proceduralSource,
+    [
+      '/js/scripting/css-api.js',
+      '/js/scripting/isolated-api.js',
+      '/js/scripting/css-procedural-api.js',
+      '/js/scripting/css-procedural.js',
+    ],
+    'css-procedural registration'
+  );
+  assertOrderedIncludes(
+    specificSource,
+    [
+      '/js/scripting/css-api.js',
+      '/js/scripting/isolated-api.js',
+      '/js/scripting/css-procedural-api.js',
+      '/js/scripting/css-specific.js',
+    ],
+    'css-specific registration'
+  );
 });
 
 test('uBO Lite offscreen and userScripts runtime is packaged behind entitlement sync', async () => {

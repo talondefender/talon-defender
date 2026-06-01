@@ -619,7 +619,11 @@ function registerProcedural(context) {
 
     normalizeMatches(matches);
 
-    js.unshift('/js/scripting/css-api.js', '/js/scripting/isolated-api.js');
+    js.unshift(
+        '/js/scripting/css-api.js',
+        '/js/scripting/isolated-api.js',
+        '/js/scripting/css-procedural-api.js'
+    );
     js.push('/js/scripting/css-procedural.js');
 
     const excludeMatches = [];
@@ -707,7 +711,11 @@ async function registerSpecific(context) {
     normalizeMatches(matches);
 
     const js = rulesetIds.map(id => `/rulesets/scripting/specific/${id}.js`);
-    js.unshift('/js/scripting/css-api.js', '/js/scripting/isolated-api.js');
+    js.unshift(
+        '/js/scripting/css-api.js',
+        '/js/scripting/isolated-api.js',
+        '/js/scripting/css-procedural-api.js'
+    );
     js.push('/js/scripting/css-specific.js');
 
     const excludeMatches = [];
