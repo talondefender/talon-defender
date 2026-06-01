@@ -14,13 +14,19 @@ Use this model:
 
 Normal update flow:
 1. Make extension changes in this workspace.
-2. Run the relevant release command:
+2. Run the relevant local checks and candidate packaging without syncing store handoff artifacts:
+   - `npm test`
+   - `npm run audit:public-safe`
+   - `npm run package:extension`
+   - `npm run validate:mv3-package`
+3. Commit the change in this workspace.
+4. Create the matching `v<manifest.version>` tag on the release commit.
+5. Run the relevant release command:
    - `npm run release:extension`
    - `npm run release:extension:edge`
    - or `npm run release:extension:all`
-3. Verify `dist/` and `../Talon Defender Latest/` contain the expected current artifacts.
-4. Commit the change in this workspace.
-5. Push `main` to `https://github.com/talondefender/talon-defender`.
+6. Verify `dist/` and `../Talon Defender Latest/` contain the expected current artifacts.
+7. Push `main` and the version tag to `https://github.com/talondefender/talon-defender`.
 
 Public-review guard:
 - `npm run audit:public-safe` is the pre-push gate for this workspace

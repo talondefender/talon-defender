@@ -121,16 +121,34 @@ if ( procedurals.length !== 0 ) {
     }
     if ( self.ProceduralFiltererAPI instanceof Promise ) {
         self.ProceduralFiltererAPI.then(( ) => {
-            if ( typeof self.ProceduralFiltererAPI !== 'function' ) { return; }
+            if ( typeof self.ProceduralFiltererAPI !== 'function' ) {
+                self.ProceduralFiltererAPI = undefined;
+                return;
+            }
             if ( self.listsProceduralFiltererAPI instanceof Object === false ) {
-                self.listsProceduralFiltererAPI = new self.ProceduralFiltererAPI();
+                try {
+                    self.listsProceduralFiltererAPI = new self.ProceduralFiltererAPI();
+                } catch {
+                    self.listsProceduralFiltererAPI = undefined;
+                    return;
+                }
             }
             addSelectors(procedurals);
+        }).catch(( ) => {
+            self.ProceduralFiltererAPI = undefined;
         });
     } else {
         if ( self.listsProceduralFiltererAPI instanceof Object === false ) {
-            if ( typeof self.ProceduralFiltererAPI !== 'function' ) { return; }
-            self.listsProceduralFiltererAPI = new self.ProceduralFiltererAPI();
+            if ( typeof self.ProceduralFiltererAPI !== 'function' ) {
+                self.ProceduralFiltererAPI = undefined;
+                return;
+            }
+            try {
+                self.listsProceduralFiltererAPI = new self.ProceduralFiltererAPI();
+            } catch {
+                self.listsProceduralFiltererAPI = undefined;
+                return;
+            }
         }
         addSelectors(procedurals);
     }

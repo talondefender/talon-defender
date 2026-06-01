@@ -125,6 +125,23 @@ const gitOutput = args =>
     windowsHide: true,
   });
 
+const checkCleanGitStateForVersionedSourceRef = () => {
+  const raw = gitOutput(['status', '--porcelain', '--untracked-files=all']);
+  const dirtyEntries = raw
+    .split(/\r?\n/)
+    .map(line => line.trimEnd())
+    .filter(Boolean)
+    .filter(line => {
+      const relativePath = normalizeRelativePath(line.slice(3));
+      return relativePath !== '' && IGNORED_TOP_LEVEL.has(relativePath.split('/')[0]) === false;
+    });
+  for (const entry of dirtyEntries) {
+    violations.push(
+      `${entry}: working tree has uncommitted changes; commit and tag source before creating a versioned store handoff`
+    );
+  }
+};
+
 const checkUntrackedPackageableFiles = () => {
   const raw = gitOutput(['ls-files', '--others', '--exclude-standard', '-z']);
   const untracked = raw
@@ -182,8 +199,30 @@ const checkManifestReferences = async allowlist => {
   }
 };
 
+const checkVersionTagPointsAtHead = manifest => {
+  const version = typeof manifest?.version === 'string' ? manifest.version.trim() : '';
+  if (version === '') {
+    violations.push('manifest.json: manifest version is required for versioned source metadata');
+    return;
+  }
+  const expectedTag = `v${version}`;
+  const tagsAtHead = new Set(
+    gitOutput(['tag', '--points-at', 'HEAD'])
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
+  );
+  if (tagsAtHead.has(expectedTag)) { return; }
+  violations.push(
+    `manifest.json: expected source tag ${expectedTag} to point at HEAD before creating a versioned store handoff`
+  );
+};
+
 try {
   const allowlist = await readAllowlist();
+  const manifest = await readJson('manifest.json');
+  checkCleanGitStateForVersionedSourceRef();
+  checkVersionTagPointsAtHead(manifest);
   checkUntrackedPackageableFiles();
   await checkPublicSafeCoverage(allowlist);
   await checkManifestReferences(allowlist);

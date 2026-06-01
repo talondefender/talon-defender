@@ -2865,12 +2865,14 @@ function onMessage(request, sender, callback) {
         }
 
         case 'reportBreakageSignal': {
-            const reportedHostname = typeof request.hostname === 'string'
-                ? request.hostname.trim().toLowerCase()
-                : '';
-            const senderHostname = normalizeHttpHostname(sender?.url || '');
-            const hostname = reportedHostname || senderHostname;
-            if (hostname === '') { return false; }
+            const senderHostname = normalizeHttpHostname(sender?.url || sender?.tab?.url || '');
+            if (senderHostname === '') { return false; }
+            const reportedHostname = normalizeSiteKeyHostname(
+                typeof request.hostname === 'string' ? request.hostname : ''
+            );
+            if (reportedHostname !== '' && reportedHostname !== senderHostname) {
+                return false;
+            }
             const details = request.details instanceof Object
                 ? { ...request.details }
                 : {};
@@ -2878,7 +2880,7 @@ function onMessage(request, sender, callback) {
             if ( subsystem !== '' ) {
                 details.subsystem = subsystem;
             }
-            recordBreakageSignal(hostname, request.signal, details).catch(ubolErr);
+            recordBreakageSignal(senderHostname, request.signal, details).catch(ubolErr);
             return false;
         }
 
@@ -2943,6 +2945,7 @@ function onMessage(request, sender, callback) {
         }
 
         case 'getCommunitySyncDiagnostics': {
+            if (isTrustedExtensionSender(sender) === false) { return false; }
             Promise.all([
                 localRead('communityBundleMeta'),
                 localRead('communityBundleLastAttempt'),
@@ -3109,6 +3112,7 @@ function onMessage(request, sender, callback) {
         }
 
         case 'getInjectableSyncDiagnostics':
+            if (isTrustedExtensionSender(sender) === false) { return false; }
             readInjectableSyncDiagnostics().then(result => {
                 callback(result instanceof Object ? result : {});
             }).catch(reason => {
@@ -3146,6 +3150,11 @@ function onMessage(request, sender, callback) {
             if (frameId === false) { return false; }
             injectCustomFilters(tabId, frameId, request.hostname).then(selectors => {
                 callback(selectors);
+            }).catch(reason => {
+                if ( isIgnorableRuntimeError(reason) === false ) {
+                    ubolErr(`injectCustomFilters/${reason}`);
+                }
+                callback();
             });
             return true;
 

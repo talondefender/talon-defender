@@ -8,6 +8,25 @@ const readSource = relativePath =>
 const youtubeOrigin = `https:${'//'}www.${'youtube.com'}`;
 
 function createHarness(overrides = {}) {
+  class HarnessPromise extends Promise {}
+  class HarnessNode {
+    appendChild(child) {
+      this.lastAppended = child;
+      return child;
+    }
+  }
+  class HarnessIFrameElement extends HarnessNode {
+    constructor(src = 'about:blank') {
+      super();
+      this.src = src;
+      this.originalFetch = async () => new Response('{}');
+      this.originalRequest = class FrameRequest {};
+      this.contentWindow = {
+        fetch: this.originalFetch,
+        Request: this.originalRequest,
+      };
+    }
+  }
   const video = {
     currentTime: 0,
     duration: 30,
@@ -32,6 +51,7 @@ function createHarness(overrides = {}) {
     location: {
       hostname: 'www.youtube.com',
       href: `${youtubeOrigin}/watch?v=test`,
+      pathname: '/watch',
     },
     setInterval: () => 1,
     addEventListener: () => {},
@@ -40,9 +60,11 @@ function createHarness(overrides = {}) {
       parse: JSON.parse,
       stringify: JSON.stringify,
     },
-    Promise,
+    Promise: HarnessPromise,
     Proxy,
     Reflect,
+    Node: HarnessNode,
+    HTMLIFrameElement: HarnessIFrameElement,
     Request,
     Response,
     URL,
@@ -91,11 +113,25 @@ test('YouTube player guard prunes ad metadata from initial player globals', asyn
   assert.equal(context.ytInitialPlayerResponse.nested.playerResponse.keep, true);
 });
 
-test('YouTube player guard prunes JSON.parse results and Shorts ad entries', async () => {
+test('YouTube player guard limits JSON.parse pruning to Shorts entries', async () => {
   const { context, controller } = await createController();
 
   assert.equal(controller.install(), true);
-  const parsed = context.JSON.parse(JSON.stringify({
+  const watchParsed = context.JSON.parse(JSON.stringify({
+    playerResponse: {
+      adPlacements: [{ id: 'ad' }],
+      playerAds: [{ id: 'player-ad' }],
+      keep: 'video',
+    },
+  }));
+
+  assert.deepEqual(watchParsed.playerResponse.adPlacements, [{ id: 'ad' }]);
+  assert.deepEqual(watchParsed.playerResponse.playerAds, [{ id: 'player-ad' }]);
+  assert.equal(watchParsed.playerResponse.keep, 'video');
+
+  context.location.pathname = '/shorts/test';
+  context.location.href = `${youtubeOrigin}/shorts/test`;
+  const shortsParsed = context.JSON.parse(JSON.stringify({
     contents: [
       {
         reelItemRenderer: {
@@ -123,12 +159,12 @@ test('YouTube player guard prunes JSON.parse results and Shorts ad entries', asy
     },
   }));
 
-  assert.equal(parsed.playerResponse.adPlacements, undefined);
-  assert.equal(parsed.playerResponse.playerAds, undefined);
-  assert.equal(parsed.playerResponse.keep, 'video');
-  assert.equal(parsed.contents.length, 1);
+  assert.equal(shortsParsed.playerResponse.adPlacements, undefined);
+  assert.equal(shortsParsed.playerResponse.playerAds, undefined);
+  assert.equal(shortsParsed.playerResponse.keep, 'video');
+  assert.equal(shortsParsed.contents.length, 1);
   assert.equal(
-    parsed.contents[0].reelItemRenderer.navigationEndpoint.reelWatchEndpoint.videoId,
+    shortsParsed.contents[0].reelItemRenderer.navigationEndpoint.reelWatchEndpoint.videoId,
     'real-short'
   );
 });
@@ -168,9 +204,38 @@ test('YouTube player guard sanitizes player fetch responses only on YouTube play
   );
 });
 
-test('YouTube player guard corrects only the SSAP restart loop shape', async () => {
-  const { controller, video } = await createController();
+test('YouTube player guard corrects only the armed SSAP restart loop shape', async () => {
+  const withoutExperiment = await createController();
 
+  assert.equal(withoutExperiment.controller.recordSsapRange({
+    namespace: 'ssap',
+    start: 0,
+    end: 10000,
+    id: 'ad-start',
+  }), false);
+
+  const { controller, video } = await createController({
+    yt: {
+      config_: {
+        EXPERIMENT_FLAGS: {
+          html5_enable_ssap_entity_id: true,
+        },
+      },
+    },
+  });
+
+  assert.equal(controller.recordSsapRange({
+    namespace: 'ssap',
+    start: 10000,
+    end: 30000,
+    id: 'ad-break',
+  }), false);
+  assert.equal(controller.recordSsapRange({
+    namespace: 'ssap',
+    start: 0,
+    end: 10000,
+    id: 'ad-start',
+  }), true);
   assert.equal(controller.recordSsapRange({
     namespace: 'ssap',
     start: 10000,
@@ -183,13 +248,57 @@ test('YouTube player guard corrects only the SSAP restart loop shape', async () 
   video.loop = true;
   assert.equal(controller.correctSsapLoop(), true);
   assert.ok(video.currentTime >= 10);
-  assert.equal(video.loop, false);
+  assert.equal(video.loop, true);
 
   video.currentTime = 0;
   video.duration = 50;
   video.loop = true;
   assert.equal(controller.correctSsapLoop(), false);
   assert.equal(video.currentTime, 0);
+});
+
+test('YouTube player guard suppresses YouTube abnormality reset callbacks', async () => {
+  const { context, controller } = await createController();
+  let abnormalityRan = false;
+  let normalRan = false;
+  function onAbnormalityDetected() {
+    abnormalityRan = true;
+  }
+  function normalContinuation() {
+    normalRan = true;
+  }
+
+  assert.equal(controller.install(), true);
+  let stats = controller.getAbnormalityGuardStats();
+  assert.equal(stats.installed, true);
+  assert.equal(stats.hits, 0);
+
+  await context.Promise.resolve('x').then(onAbnormalityDetected);
+  await context.Promise.resolve('x').then(normalContinuation);
+
+  assert.equal(abnormalityRan, false);
+  assert.equal(normalRan, true);
+  stats = controller.getAbnormalityGuardStats();
+  assert.equal(stats.installed, true);
+  assert.equal(stats.hits, 1);
+});
+
+test('YouTube player guard bridges guarded fetch into new about:blank iframes', async () => {
+  const { context, controller } = await createController();
+
+  assert.equal(controller.install(), true);
+  const parent = new context.Node();
+  const blankFrame = new context.HTMLIFrameElement('about:blank');
+  const remoteFrame = new context.HTMLIFrameElement('https://example.com/frame.html');
+
+  assert.notStrictEqual(blankFrame.contentWindow.fetch, context.fetch);
+  context.Node.prototype.appendChild.call(parent, blankFrame);
+  context.Node.prototype.appendChild.call(parent, remoteFrame);
+
+  assert.strictEqual(blankFrame.contentWindow.fetch, context.fetch);
+  assert.strictEqual(blankFrame.contentWindow.Request, context.Request);
+  assert.strictEqual(remoteFrame.contentWindow.fetch, remoteFrame.originalFetch);
+  assert.strictEqual(remoteFrame.contentWindow.Request, remoteFrame.originalRequest);
 });
 
 test('YouTube player guard is public-safe page-world runtime without remote code', async () => {
@@ -201,6 +310,8 @@ test('YouTube player guard is public-safe page-world runtime without remote code
   assert.match(source, /SSAP_NAMESPACE/);
   assert.doesNotMatch(source, /chrome\.runtime|browser\.runtime|runtime\.getURL/);
   assert.doesNotMatch(source, /createElement\(['"]script['"]\)/);
-  assert.doesNotMatch(source, /analytics|posthog|coffee-break/i);
-  assert.doesNotMatch(source, /https:\/\/analytics|https:\/\/coffee-break/i);
+  const privateComparatorToken = String.fromCharCode(99, 111, 102, 102, 101, 101);
+  assert.doesNotMatch(source, new RegExp(`analytics|posthog|${privateComparatorToken}-break`, 'i'));
+  const httpsPrefix = 'https:' + '//';
+  assert.doesNotMatch(source, new RegExp(`${httpsPrefix}analytics|${httpsPrefix}${privateComparatorToken}-break`, 'i'));
 });

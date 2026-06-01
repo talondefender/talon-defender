@@ -281,10 +281,19 @@ self.ubolOverlay = {
         if ( node === null ) { return []; }
         if ( selector.startsWith('{') ) {
             if ( this.proceduralFiltererAPI === undefined ) {
-                if ( self.ProceduralFiltererAPI === undefined ) { return []; }
-                this.proceduralFiltererAPI = new self.ProceduralFiltererAPI();
+                if ( typeof self.ProceduralFiltererAPI !== 'function' ) { return []; }
+                try {
+                    this.proceduralFiltererAPI = new self.ProceduralFiltererAPI();
+                } catch {
+                    return [];
+                }
             }
-            return this.proceduralFiltererAPI.qsa(selector);
+            try {
+                return this.proceduralFiltererAPI.qsa(selector);
+            } catch (reason) {
+                this.qsa.error = `${reason}`;
+                return [];
+            }
         }
         selector = selector.replace(/::[^:]+$/, '');
         try {

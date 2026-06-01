@@ -46,6 +46,22 @@ import { rulesetConfig } from './config.js';
 const isProcedural = a => a.startsWith('{');
 const isScriptlet = a => a.startsWith('+js');
 const isCSS = a => isProcedural(a) === false && isScriptlet(a) === false;
+const EXTENSION_ORIGIN = new URL(runtime.getURL('/')).origin;
+const OFFSCREEN_COMPILER_PATH = '/js/offscreen/compile-filters.html';
+
+const isOffscreenCompilerSender = sender => {
+    const senderId = typeof sender?.id === 'string' ? sender.id : '';
+    if ( senderId !== '' && senderId !== runtime.id ) { return false; }
+    const senderURL = typeof sender?.url === 'string' ? sender.url : '';
+    if ( senderURL === '' ) { return false; }
+    try {
+        const parsedURL = new URL(senderURL);
+        return parsedURL.origin === EXTENSION_ORIGIN &&
+            parsedURL.pathname === OFFSCREEN_COMPILER_PATH;
+    } catch {
+    }
+    return false;
+};
 
 /******************************************************************************/
 
@@ -422,6 +438,7 @@ async function parseRawFilters(text) {
     });
     const handler = (request, sender, callback) => {
         if ( typeof request !== 'object' ) { return; }
+        if ( isOffscreenCompilerSender(sender) === false ) { return; }
         switch ( request?.what ) {
         case 'getRawFilters':
             callback(text);

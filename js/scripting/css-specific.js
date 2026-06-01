@@ -160,8 +160,24 @@ if ( self.ProceduralFiltererAPI === undefined ) {
     });
 }
 
-await self.ProceduralFiltererAPI;
-self.listsProceduralFiltererAPI = new self.ProceduralFiltererAPI();
+if ( self.ProceduralFiltererAPI instanceof Promise ) {
+    try {
+        await self.ProceduralFiltererAPI;
+    } catch {
+    }
+}
+
+if ( typeof self.ProceduralFiltererAPI !== 'function' ) {
+    self.ProceduralFiltererAPI = undefined;
+    return;
+}
+
+try {
+    self.listsProceduralFiltererAPI = new self.ProceduralFiltererAPI();
+} catch {
+    self.listsProceduralFiltererAPI = undefined;
+    return;
+}
 
 const declaratives = p.filter(a => a.cssable);
 if ( declaratives.length !== 0 ) {

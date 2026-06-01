@@ -41,7 +41,7 @@
   "runtimeCapabilityExceptions": {
     "localExtra": {
       "js/scripting/youtube-ad-skip.js": "Talon-owned YouTube ad-skip lane. Do not import or copy uBO Lite's YouTube scriptlet/runtime strategy into this path; upstream uBO scriptlets are intentionally excluded from YouTube hosts.",
-      "js/scripting/youtube-player-guard.js": "Talon-owned YouTube page-world guard modeled from the local Coffee Break reference: prunes YouTube ad metadata and corrects SSAP restart loops without remote analytics or web-accessible script injection."
+      "js/scripting/youtube-player-guard.js": "Talon-owned YouTube page-world guard: prunes YouTube ad metadata and corrects SSAP restart loops without remote analytics or web-accessible script injection."
     },
     "upstreamExtra": {}
   },

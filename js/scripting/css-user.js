@@ -31,11 +31,22 @@ const details = await chrome.runtime.sendMessage({
 });
 
 if ( details?.proceduralSelectors?.length ) {
-    if ( self.ProceduralFiltererAPI ) {
-        self.customProceduralFiltererAPI = new self.ProceduralFiltererAPI();
-        self.customProceduralFiltererAPI.addSelectors(
-            details.proceduralSelectors.map(a => JSON.parse(a))
-        );
+    if ( typeof self.ProceduralFiltererAPI === 'function' ) {
+        const proceduralSelectors = [];
+        for ( const selector of details.proceduralSelectors ) {
+            try {
+                proceduralSelectors.push(JSON.parse(selector));
+            } catch {
+            }
+        }
+        if ( proceduralSelectors.length !== 0 ) {
+            try {
+                self.customProceduralFiltererAPI = new self.ProceduralFiltererAPI();
+                self.customProceduralFiltererAPI.addSelectors(proceduralSelectors);
+            } catch {
+                self.customProceduralFiltererAPI = undefined;
+            }
+        }
     }
 }
 

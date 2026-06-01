@@ -29,6 +29,7 @@ uBO Lite parity gate:
 
 What each release script does:
 - runs the quality gate for the target store
+- fails when the git working tree is dirty or when the matching `v<manifest.version>` source tag does not point at `HEAD`
 - fails if packageable runtime files are untracked or missing from the public-safe release manifest
 - packages the extension from source
 - validates the unpacked MV3 package
@@ -49,6 +50,7 @@ Current artifact names:
 
 Store handoff rule:
 - release from this workspace
+- commit the release source and create the matching `v<manifest.version>` tag before generating store handoff artifacts
 - submit store artifacts from `../Talon Defender Latest/`
 
 Public GitHub rule:

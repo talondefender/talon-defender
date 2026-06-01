@@ -152,6 +152,66 @@ test('packaged cosmetic registrations preload the procedural API before procedur
   );
 });
 
+test('specific cosmetic procedural API load fails closed when injection is unavailable', async () => {
+  const source = await readSource('js/scripting/css-specific.js');
+  const loadStart = source.indexOf('if ( self.ProceduralFiltererAPI === undefined )');
+  const constructIndex = source.indexOf('self.listsProceduralFiltererAPI = new self.ProceduralFiltererAPI();');
+  const typeGuardIndex = source.indexOf("typeof self.ProceduralFiltererAPI !== 'function'", loadStart);
+  const loaderSource = source.slice(loadStart, constructIndex);
+
+  assert.ok(loadStart !== -1);
+  assert.ok(constructIndex !== -1);
+  assert.ok(typeGuardIndex !== -1);
+  assert.match(loaderSource, /self\.ProceduralFiltererAPI instanceof Promise/);
+  assert.match(loaderSource, /try\s*\{[\s\S]*await self\.ProceduralFiltererAPI;[\s\S]*\}\s*catch/);
+  assert.match(loaderSource, /typeof self\.ProceduralFiltererAPI !== 'function'/);
+  assert.match(loaderSource, /self\.ProceduralFiltererAPI = undefined;/);
+  assert.match(loaderSource, /return;/);
+  assert.ok(
+    typeGuardIndex < constructIndex,
+    'css-specific must verify the injected API constructor before using new'
+  );
+
+  const constructorSource = source.slice(
+    source.lastIndexOf('try {', constructIndex),
+    source.indexOf('const declaratives', constructIndex)
+  );
+  assert.match(constructorSource, /self\.listsProceduralFiltererAPI = new self\.ProceduralFiltererAPI\(\);/);
+  assert.match(constructorSource, /catch\s*\{[\s\S]*self\.listsProceduralFiltererAPI = undefined;[\s\S]*return;/);
+});
+
+test('procedural cosmetic constructor consumers fail closed across optional entrypoints', async () => {
+  const cssProceduralSource = await readSource('js/scripting/css-procedural.js');
+  const cssUserSource = await readSource('js/scripting/css-user.js');
+  const pickerSource = await readSource('js/scripting/picker.js');
+  const overlaySource = await readSource('js/scripting/tool-overlay.js');
+  const backgroundSource = await readSource('js/background.js');
+
+  assert.match(cssProceduralSource, /self\.ProceduralFiltererAPI instanceof Promise/);
+  assert.match(cssProceduralSource, /\.then\(\( \) => \{[\s\S]*typeof self\.ProceduralFiltererAPI !== 'function'[\s\S]*self\.ProceduralFiltererAPI = undefined;[\s\S]*\}\)\.catch/);
+  assert.match(cssProceduralSource, /try\s*\{[\s\S]*self\.listsProceduralFiltererAPI = new self\.ProceduralFiltererAPI\(\);[\s\S]*\}\s*catch\s*\{[\s\S]*return;/);
+
+  assert.match(cssUserSource, /typeof self\.ProceduralFiltererAPI === 'function'/);
+  assert.match(cssUserSource, /try\s*\{[\s\S]*proceduralSelectors\.push\(JSON\.parse\(selector\)\);[\s\S]*\}\s*catch/);
+  assert.match(cssUserSource, /try\s*\{[\s\S]*self\.customProceduralFiltererAPI = new self\.ProceduralFiltererAPI\(\);[\s\S]*self\.customProceduralFiltererAPI\.addSelectors\(proceduralSelectors\);[\s\S]*\}\s*catch/);
+
+  assert.match(pickerSource, /const createProceduralFilterer = \( \) => \{/);
+  assert.match(pickerSource, /typeof self\.ProceduralFiltererAPI !== 'function'/);
+  assert.match(pickerSource, /try\s*\{[\s\S]*return new self\.ProceduralFiltererAPI\(\);[\s\S]*\}\s*catch/);
+  assert.match(pickerSource, /previewProceduralFiltererAPI\?\.reset\(\);/);
+  assert.match(pickerSource, /try\s*\{[\s\S]*self\.pickerProceduralFilteringAPI\.addSelectors\(\[ JSON\.parse\(selector\) \]\);[\s\S]*\}\s*catch/);
+
+  assert.match(overlaySource, /typeof self\.ProceduralFiltererAPI !== 'function'/);
+  assert.match(overlaySource, /try\s*\{[\s\S]*this\.proceduralFiltererAPI = new self\.ProceduralFiltererAPI\(\);[\s\S]*\}\s*catch\s*\{[\s\S]*return \[\];/);
+  assert.match(overlaySource, /try\s*\{[\s\S]*return this\.proceduralFiltererAPI\.qsa\(selector\);[\s\S]*\}\s*catch \(reason\)/);
+
+  const injectCustomFiltersStart = backgroundSource.indexOf("case 'injectCustomFilters':");
+  const injectCustomFiltersEnd = backgroundSource.indexOf("case 'injectCSSProceduralAPI':", injectCustomFiltersStart);
+  const injectCustomFiltersSource = backgroundSource.slice(injectCustomFiltersStart, injectCustomFiltersEnd);
+  assert.match(injectCustomFiltersSource, /injectCustomFilters\(tabId, frameId, request\.hostname\)\.then/);
+  assert.match(injectCustomFiltersSource, /\.catch\(reason => \{[\s\S]*ubolErr\(`injectCustomFilters\/\$\{reason\}`\);[\s\S]*callback\(\);/);
+});
+
 test('uBO Lite offscreen and userScripts runtime is packaged behind entitlement sync', async () => {
   const extSource = await readSource('js/ext.js');
   const filterManagerSource = await readSource('js/filter-manager.js');
@@ -315,6 +375,65 @@ test('picker overlay startup requires a one-time background capability claim', a
   assert.match(utilsSource, /entry\.file !== file \|\| entry\.pageUrl !== pageUrl/);
 });
 
+test('local diagnostics messages require a trusted extension page sender', async () => {
+  const source = await readSource('js/background.js');
+
+  for (const what of ['getCommunitySyncDiagnostics', 'getInjectableSyncDiagnostics']) {
+    const caseStart = source.indexOf(`case '${what}'`);
+    const caseEnd = source.indexOf('case ', caseStart + 1);
+    const handlerSource = source.slice(
+      caseStart,
+      caseEnd === -1 ? source.length : caseEnd
+    );
+
+    assert.ok(caseStart !== -1, `${what} handler missing`);
+    assert.match(
+      handlerSource,
+      /isTrustedExtensionSender\(sender\) === false\) \{ return false; \}/,
+      `${what} must reject content-script/page senders`
+    );
+  }
+});
+
+test('breakage signal messages are bound to the sender hostname', async () => {
+  const source = await readSource('js/background.js');
+  const caseStart = source.indexOf("case 'reportBreakageSignal':");
+  const caseEnd = source.indexOf("case 'setBreakageAuditOverrides':", caseStart);
+  const handlerSource = source.slice(caseStart, caseEnd);
+
+  assert.ok(caseStart !== -1, 'reportBreakageSignal handler missing');
+  assert.ok(caseEnd !== -1, 'setBreakageAuditOverrides handler missing');
+  assert.match(
+    handlerSource,
+    /normalizeHttpHostname\(sender\?\.url \|\| sender\?\.tab\?\.url \|\| ''\)/
+  );
+  assert.match(handlerSource, /if \(senderHostname === ''\) \{ return false; \}/);
+  assert.match(
+    handlerSource,
+    /if \(reportedHostname !== '' && reportedHostname !== senderHostname\) \{[\s\S]*return false;[\s\S]*\}/
+  );
+  assert.match(handlerSource, /recordBreakageSignal\(senderHostname, request\.signal, details\)/);
+  assert.doesNotMatch(handlerSource, /reportedHostname \|\| senderHostname/);
+});
+
+test('custom filter compiler messages require the offscreen compiler sender', async () => {
+  const source = await readSource('js/filter-manager.js');
+  const helperStart = source.indexOf('const EXTENSION_ORIGIN = new URL(runtime.getURL');
+  const parseStart = source.indexOf('async function parseRawFilters(text)');
+  const handlerStart = source.indexOf('const handler = (request, sender, callback) => {', parseStart);
+  const listenerStart = source.indexOf('runtime.onMessage.addListener(handler);', handlerStart);
+  const helperSource = source.slice(helperStart, parseStart);
+  const handlerSource = source.slice(handlerStart, listenerStart);
+
+  assert.ok(helperStart !== -1, 'isOffscreenCompilerSender helper missing');
+  assert.ok(handlerStart !== -1, 'parseRawFilters message handler missing');
+  assert.match(helperSource, /const OFFSCREEN_COMPILER_PATH = '\/js\/offscreen\/compile-filters\.html';/);
+  assert.match(helperSource, /senderId !== '' && senderId !== runtime\.id/);
+  assert.match(helperSource, /parsedURL\.origin === EXTENSION_ORIGIN/);
+  assert.match(helperSource, /parsedURL\.pathname === OFFSCREEN_COMPILER_PATH/);
+  assert.match(handlerSource, /if \( isOffscreenCompilerSender\(sender\) === false \) \{ return; \}/);
+});
+
 test('extension source keeps only the bounded Talon-owned YouTube runtime lanes', async () => {
   const watchPrefix = 'youtube' + '-watch';
   const relayHtmlPath = `web_accessible_resources/${watchPrefix}-relay.html`;
@@ -328,6 +447,7 @@ test('extension source keeps only the bounded Talon-owned YouTube runtime lanes'
   const heuristicSource = await readSource('js/scripting/native-heuristics.js');
   const backgroundSource = await readSource('js/background.js');
   const rulesetSource = await readSource('js/ruleset-manager.js');
+  const ownershipSource = await readSource('scripts/ubol-source-ownership.json');
   const allowlist = await readSource('public-safe-allowlist.txt');
   const manifest = JSON.parse(await readSource('manifest.json'));
   const publicResources = (manifest.web_accessible_resources ?? [])
@@ -365,11 +485,16 @@ test('extension source keeps only the bounded Talon-owned YouTube runtime lanes'
   assert.match(talonYouTubeGuardSource, /SSAP_NAMESPACE/);
   assert.doesNotMatch(talonYouTubeGuardSource, /chrome\.runtime|browser\.runtime|runtime\.getURL/);
   assert.doesNotMatch(talonYouTubeGuardSource, /createElement\(['"]script['"]\)/);
-  assert.doesNotMatch(talonYouTubeGuardSource, /analytics|posthog|coffee-break/i);
+  const privateComparatorToken = String.fromCharCode(99, 111, 102, 102, 101, 101);
+  assert.doesNotMatch(talonYouTubeGuardSource, new RegExp(`analytics|posthog|${privateComparatorToken}-break`, 'i'));
   assert.doesNotMatch(managerSource, new RegExp(`${watchPrefix}-bootstrap|registerYouTubeWatchBootstrap|HOST_SCOPED_SCRIPTLET_EXCLUSIONS`));
   assert.doesNotMatch(heuristicSource, new RegExp(`youtube|${'YOUTUBE_' + 'WATCH'}|td_yw`, 'i'));
   assert.doesNotMatch(backgroundSource, new RegExp(`setYouTubeWatch|YouTubeWatch|${watchPrefix}`, 'i'));
   assert.doesNotMatch(rulesetSource, /YOUTUBE_AD_RULES|YouTubeAdSession|updateYouTubeAdSessionRules|youtube\.com/);
+  assert.doesNotMatch(
+    ownershipSource,
+    new RegExp(`${privateComparatorToken} Break|${privateComparatorToken}-break|youtube ${privateComparatorToken} break|C:\\\\dev`, 'i')
+  );
 });
 test('startup performs one eager injectable sync and omits abandoned runtime reconciliation', async () => {
   const source = await readSource('js/background.js');

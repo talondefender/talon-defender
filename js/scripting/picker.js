@@ -242,7 +242,10 @@ async function previewSelector(selector) {
     if ( previewedSelector !== '' ) {
         if ( previewedSelector.startsWith('{') ) {
             if ( self.pickerProceduralFilteringAPI ) {
-                await self.pickerProceduralFilteringAPI.reset();
+                try {
+                    await self.pickerProceduralFilteringAPI.reset();
+                } catch {
+                }
             }
         }
         if ( previewedCSS !== '' ) {
@@ -253,11 +256,14 @@ async function previewSelector(selector) {
     previewedSelector = selector || '';
     if ( selector === '' ) { return; }
     if ( selector.startsWith('{') ) {
-        if ( self.ProceduralFiltererAPI === undefined ) { return; }
         if ( self.pickerProceduralFilteringAPI === undefined ) {
-            self.pickerProceduralFilteringAPI = new self.ProceduralFiltererAPI();
+            self.pickerProceduralFilteringAPI = createProceduralFilterer();
         }
-        self.pickerProceduralFilteringAPI.addSelectors([ JSON.parse(selector) ]);
+        if ( self.pickerProceduralFilteringAPI === undefined ) { return; }
+        try {
+            self.pickerProceduralFilteringAPI.addSelectors([ JSON.parse(selector) ]);
+        } catch {
+        }
         return;
     }
     previewedCSS = `${selector}{display:none!important;}`;
@@ -269,14 +275,25 @@ let previewedCSS = '';
 
 /******************************************************************************/
 
-const previewProceduralFiltererAPI = new self.ProceduralFiltererAPI(); 
+const createProceduralFilterer = ( ) => {
+    if ( typeof self.ProceduralFiltererAPI !== 'function' ) { return; }
+    try {
+        return new self.ProceduralFiltererAPI();
+    } catch {
+    }
+};
+
+const previewProceduralFiltererAPI = createProceduralFilterer();
 
 /******************************************************************************/
 
 function onMessage(msg) {
     switch ( msg.what ) {
     case 'quitTool':
-        previewProceduralFiltererAPI.reset();
+        try {
+            previewProceduralFiltererAPI?.reset();
+        } catch {
+        }
         break;
     case 'startCustomFilters':
         return ubolOverlay.sendMessage({ what: 'startCustomFilters' });

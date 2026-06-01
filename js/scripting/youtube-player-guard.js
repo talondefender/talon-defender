@@ -25,11 +25,20 @@ const createController = env => {
     const doc = env.document;
     const nativeJSONParse = win.JSON?.parse;
     const nativeJSONStringify = win.JSON?.stringify;
+    const nativePromiseThen = win.Promise?.prototype?.then;
+    const nativeAppendChild = win.Node?.prototype?.appendChild;
     let installed = false;
     let lastHref = String(win.location?.href || '');
     let ssapRanges = [];
+    let ssapRangeIds = [];
+    let ssapCaptureArmed = false;
+    let lastCorrectedRangeKey = '';
     let ssapIntervalId;
     let ssapIntervalStartedAt = 0;
+    let ssapObserver;
+    let abnormalityGuardInstalled = false;
+    let abnormalityGuardHits = 0;
+    let iframeFetchBridgeInstalled = false;
 
     const isYouTubeHost = () =>
         YOUTUBE_HOST_RE.test(String(win.location?.hostname || ''));
@@ -41,6 +50,9 @@ const createController = env => {
         if ( href === lastHref ) { return; }
         lastHref = href;
         ssapRanges = [];
+        ssapRangeIds = [];
+        ssapCaptureArmed = false;
+        lastCorrectedRangeKey = '';
     };
 
     const getRequestUrl = input => {
@@ -160,7 +172,10 @@ const createController = env => {
             win.JSON.parse = new win.Proxy(nativeJSONParse, {
                 apply(target, thisArg, args) {
                     const parsed = win.Reflect.apply(target, thisArg, args);
-                    return pruneAds(parsed);
+                    if ( String(win.location?.pathname || '').startsWith('/shorts/') ) {
+                        pruneAds(parsed);
+                    }
+                    return parsed;
                 },
             });
             return true;
@@ -291,27 +306,50 @@ const createController = env => {
         return false;
     };
 
+    const isSsapExperimentEnabled = () => {
+        try {
+            return win.yt?.config_?.EXPERIMENT_FLAGS?.html5_enable_ssap_entity_id === true;
+        } catch {
+        }
+        return false;
+    };
+
     const recordSsapRange = value => {
         refreshNavigationState();
-        if ( isObject(value) === false || value.namespace !== SSAP_NAMESPACE ) {
+        if ( isSsapExperimentEnabled() === false ||
+            isObject(value) === false ||
+            value === win ||
+            value.namespace !== SSAP_NAMESPACE ) {
             return false;
         }
         const start = Number(value.start);
         const end = Number(value.end);
+        const id = typeof value.id === 'string' ? value.id : '';
         if ( Number.isFinite(start) === false ||
             Number.isFinite(end) === false ||
-            start <= 0 ||
+            id === '' ||
+            start < 0 ||
             end <= start ) {
+            return false;
+        }
+        if ( ssapCaptureArmed === false ) {
+            if ( start !== 0 || ssapRangeIds.includes(id) ) { return false; }
+            ssapRanges = [];
+            ssapRangeIds = [];
+            ssapCaptureArmed = true;
+        } else if ( start === 0 || ssapRangeIds.includes(id) ) {
             return false;
         }
         ssapRanges.push({
             start,
             end,
-            id: typeof value.id === 'string' ? value.id : '',
+            id,
             href: currentHref(),
         });
+        ssapRangeIds.push(id);
         if ( ssapRanges.length > SSAP_MAX_RANGES ) {
             ssapRanges = ssapRanges.slice(-SSAP_MAX_RANGES);
+            ssapRangeIds = ssapRangeIds.slice(-SSAP_MAX_RANGES);
         }
         startSsapLoopCheck();
         return true;
@@ -335,10 +373,11 @@ const createController = env => {
     };
 
     const correctSsapLoop = () => {
+        if ( isSsapExperimentEnabled() === false ) { return false; }
         const range = getLatestSsapRange();
         if ( range === null ) { return false; }
         const video = queryVideo();
-        if ( video === null || video.loop !== true ) { return false; }
+        if ( video === null ) { return false; }
 
         const duration = Number(video.duration);
         const currentTime = Number(video.currentTime);
@@ -352,10 +391,15 @@ const createController = env => {
         }
         if ( Math.abs(duration - endSeconds) > 0.75 ) { return false; }
         if ( currentTime + 0.5 >= startSeconds ) { return false; }
+        const rangeKey = ssapRangeIds.join(',');
+        if ( video.loop !== true && lastCorrectedRangeKey === rangeKey ) {
+            return false;
+        }
 
         try {
             video.currentTime = Math.min(duration, startSeconds + 0.01);
-            video.loop = false;
+            lastCorrectedRangeKey = rangeKey;
+            ssapCaptureArmed = false;
             return true;
         } catch {
         }
@@ -405,10 +449,103 @@ const createController = env => {
         return false;
     };
 
+    const isAbnormalityCallback = value => {
+        if ( typeof value !== 'function' ) { return false; }
+        try {
+            return String(value).includes('onAbnormalityDetected');
+        } catch {
+        }
+        return false;
+    };
+
+    const installAbnormalityGuard = () => {
+        if ( abnormalityGuardInstalled ||
+            typeof nativePromiseThen !== 'function' ||
+            typeof win.Proxy !== 'function' ) {
+            return false;
+        }
+        try {
+            win.Promise.prototype.then = new win.Proxy(nativePromiseThen, {
+                apply(target, thisArg, args) {
+                    if ( isAbnormalityCallback(args?.[0]) ) {
+                        abnormalityGuardHits += 1;
+                        args[0] = function talonIgnoredYouTubeAbnormality() {};
+                    }
+                    return win.Reflect.apply(target, thisArg, args);
+                },
+            });
+            abnormalityGuardInstalled = true;
+            return true;
+        } catch {
+        }
+        return false;
+    };
+
+    const bridgeFetchIntoIframe = iframe => {
+        if ( iframe instanceof win.HTMLIFrameElement === false ) { return false; }
+        const src = typeof iframe.src === 'string' ? iframe.src : '';
+        if ( src !== '' && src !== 'about:blank' ) { return false; }
+        try {
+            const frameWindow = iframe.contentWindow;
+            if ( isObject(frameWindow) === false ) { return false; }
+            frameWindow.fetch = win.fetch;
+            frameWindow.Request = win.Request;
+            return true;
+        } catch {
+        }
+        return false;
+    };
+
+    const installIframeFetchBridge = () => {
+        if ( iframeFetchBridgeInstalled ||
+            typeof nativeAppendChild !== 'function' ||
+            typeof win.Proxy !== 'function' ||
+            typeof win.fetch !== 'function' ||
+            typeof win.Request !== 'function' ||
+            typeof win.HTMLIFrameElement !== 'function' ) {
+            return false;
+        }
+        try {
+            win.Node.prototype.appendChild = new win.Proxy(nativeAppendChild, {
+                apply(target, thisArg, args) {
+                    const result = win.Reflect.apply(target, thisArg, args);
+                    bridgeFetchIntoIframe(result);
+                    return result;
+                },
+            });
+            iframeFetchBridgeInstalled = true;
+            return true;
+        } catch {
+        }
+        return false;
+    };
+
+    const startSsapObserver = () => {
+        if ( ssapObserver !== undefined ||
+            typeof win.MutationObserver !== 'function' ||
+            isSsapExperimentEnabled() === false ) {
+            return;
+        }
+        try {
+            ssapObserver = new win.MutationObserver(() => {
+                refreshNavigationState();
+                correctSsapLoop();
+            });
+            ssapObserver.observe(doc?.documentElement || doc, {
+                childList: true,
+                subtree: true,
+            });
+            correctSsapLoop();
+        } catch {
+            ssapObserver = undefined;
+        }
+    };
+
     const installNavigationListeners = () => {
         const onNavigate = () => {
             refreshNavigationState();
             correctSsapLoop();
+            startSsapObserver();
         };
         try {
             doc?.addEventListener?.('yt-navigate-start', onNavigate);
@@ -429,6 +566,9 @@ const createController = env => {
         installFetchGuard();
         installXhrGuard();
         installSsapGuard();
+        installAbnormalityGuard();
+        installIframeFetchBridge();
+        startSsapObserver();
         installNavigationListeners();
         return true;
     };
@@ -436,12 +576,19 @@ const createController = env => {
     return {
         correctSsapLoop,
         getLatestSsapRange,
+        getAbnormalityGuardStats: () => ({
+            installed: abnormalityGuardInstalled,
+            hits: abnormalityGuardHits,
+        }),
         install,
+        installAbnormalityGuard,
+        installIframeFetchBridge,
         installFetchGuard,
         installJsonParseGuard,
         installResponsePropertyGuard,
         installSsapGuard,
         installXhrGuard,
+        isSsapExperimentEnabled,
         isPlayerResponseUrl,
         pruneAds,
         recordSsapRange,

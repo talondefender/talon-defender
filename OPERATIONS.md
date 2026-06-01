@@ -35,6 +35,7 @@ Working directories and outputs:
 Operational rules:
 - do not add private operational files here
 - keep `source-code.json` and the public source archive tied to the public repository tag
+- store handoff artifacts require a clean working tree and a matching `v<manifest.version>` tag at `HEAD`
 - if you add a top-level file or folder, update the public-safe audit and source-package allowlists in the same change
 - public GitHub sync happens from this workspace; `../Talon Defender Latest/` is only the handoff artifact workspace
 - public tests may only use the explicit `.test.js` files and placeholder or product-owned URLs
