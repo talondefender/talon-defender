@@ -15,6 +15,7 @@ const CHECK_INTERVAL_MS = 250;
 const HIDDEN_CHECK_INTERVAL_MS = 1500;
 
 const YOUTUBE_HOST_RE = /(^|\.)youtube(?:-nocookie)?\.com$/i;
+const INTERRUPTION_NOTICE_RE = /\bexperiencing\s+interruptions\b/i;
 
 const AD_STATE_SELECTOR = [
     '.html5-video-player.ad-showing',
@@ -45,6 +46,16 @@ const AD_SURFACE_SELECTOR = [
     'ytd-player-legacy-desktop-watch-ads-renderer',
     '#player-ads',
     '#masthead-ad',
+].join(',');
+
+const INTERRUPTION_NOTICE_SELECTOR = [
+    'tp-yt-paper-toast',
+    'yt-notification-action-renderer',
+    'ytd-popup-container',
+    '.ytp-popup',
+    '.ytp-toast',
+    '[role="alert"]',
+    '[aria-live]',
 ].join(',');
 
 const STYLE_TEXT = [
@@ -145,6 +156,23 @@ const createController = env => {
         queryOne(AD_STATE_SELECTOR) !== null ||
         (findSkipButton() !== null && queryOne(AD_SURFACE_SELECTOR) !== null);
 
+    const suppressInterruptionNotices = () => {
+        let suppressed = false;
+        for ( const element of queryAll(INTERRUPTION_NOTICE_SELECTOR) ) {
+            const text = String(element?.textContent || '');
+            if ( INTERRUPTION_NOTICE_RE.test(text) === false ) { continue; }
+            try {
+                element.style?.setProperty?.('display', 'none', 'important');
+                element.style?.setProperty?.('visibility', 'hidden', 'important');
+                element.setAttribute?.('aria-hidden', 'true');
+                element.hidden = true;
+                suppressed = true;
+            } catch {
+            }
+        }
+        return suppressed;
+    };
+
     const saveVideoState = video => {
         if ( !video || videoStates.has(video) ) { return; }
         videoStates.set(video, {
@@ -193,6 +221,7 @@ const createController = env => {
     const tick = () => {
         if ( isYouTubeHost() === false ) { return false; }
         injectStyle();
+        const suppressedNotice = suppressInterruptionNotices();
         const adShowing = hasAdSurface();
         if ( adShowing ) {
             clickSkipButton();
@@ -206,7 +235,7 @@ const createController = env => {
             restoreVideos();
             lastAdState = false;
         }
-        return false;
+        return suppressedNotice;
     };
 
     const shouldRun = async () => {
@@ -295,6 +324,7 @@ const createController = env => {
         restoreVideos,
         start,
         stop,
+        suppressInterruptionNotices,
         tick,
     };
 };

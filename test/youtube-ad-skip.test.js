@@ -9,6 +9,8 @@ const readSource = relativePath =>
 function createHarness() {
   const state = {
     adShowing: true,
+    hiddenInterruptions: 0,
+    interruptionShowing: false,
     skipClicks: 0,
     styles: [],
     listeners: [],
@@ -31,6 +33,20 @@ function createHarness() {
   const styleParent = {
     append: element => {
       state.styles.push(element);
+    },
+  };
+  const interruptionToast = {
+    hidden: false,
+    textContent: 'Experiencing interruptions? Find out why',
+    style: {
+      setProperty: () => {
+        state.hiddenInterruptions += 1;
+      },
+    },
+    setAttribute(name, value) {
+      if (name === 'aria-hidden' && value === 'true') {
+        state.hiddenInterruptions += 1;
+      }
     },
   };
   const document = {
@@ -64,6 +80,9 @@ function createHarness() {
       }
       if (selector.includes('ytp-ad-player-overlay') || selector.includes('ytd-ad-slot-renderer')) {
         return state.adShowing ? [{ className: 'ytp-ad-player-overlay' }] : [];
+      }
+      if (selector.includes('tp-yt-paper-toast') || selector.includes('[role="alert"]')) {
+        return state.interruptionShowing ? [interruptionToast] : [];
       }
       return [];
     },
@@ -120,6 +139,20 @@ test('YouTube ad skip does not seek the player and trigger short-video restart l
   assert.equal(video.currentTime, 0);
   assert.equal(state.skipClicks, 2);
   assert.equal(video.playbackRate, 16);
+});
+
+test('YouTube ad skip suppresses only the matching interruptions notice', async () => {
+  const source = await readSource('js/scripting/youtube-ad-skip.js');
+  const { context, state, video } = createHarness();
+  state.adShowing = false;
+  state.interruptionShowing = true;
+  vm.runInNewContext(source, context);
+
+  const controller = context.__talonYoutubeAdSkipCreateController(context);
+  assert.equal(controller.tick(), true);
+  assert.equal(state.hiddenInterruptions > 0, true);
+  assert.equal(video.muted, false);
+  assert.equal(video.playbackRate, 1);
 });
 
 test('YouTube ad skip is Talon-owned runtime without remote code or page-script injection', async () => {
