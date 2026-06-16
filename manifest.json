@@ -27,6 +27,11 @@
         "path": "/rulesets/main/ublock-filters.json"
       },
       {
+        "id": "talon-youtube-allow",
+        "enabled": true,
+        "path": "/rulesets/main/talon-youtube-allow.json"
+      },
+      {
         "id": "easylist",
         "enabled": true,
         "path": "/rulesets/main/easylist.json"
@@ -297,6 +302,31 @@
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self';"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.youtube.com/*",
+        "*://*.youtube-nocookie.com/*"
+      ],
+      "js": [
+        "js/scripting/youtube-player-guard.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "*://*.youtube.com/*",
+        "*://*.youtube-nocookie.com/*"
+      ],
+      "js": [
+        "js/scripting/youtube-player-guard-loader.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
   "name": "__MSG_extensionName__",
   "options_page": "options/options.html",
   "permissions": [
@@ -313,8 +343,17 @@
   "storage": {
     "managed_schema": "managed_storage.json"
   },
-  "version": "0.1.7",
+  "version": "0.1.8",
   "web_accessible_resources": [
+    {
+      "resources": [
+        "js/scripting/youtube-player-guard.js"
+      ],
+      "matches": [
+        "*://*.youtube.com/*",
+        "*://*.youtube-nocookie.com/*"
+      ]
+    },
     {
       "resources": [
         "/strictblock.html"

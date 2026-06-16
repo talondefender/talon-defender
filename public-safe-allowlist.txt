@@ -436,6 +436,7 @@ js/scripting/remote-cosmetics.js
 js/scripting/scriptlet-token-details.json
 js/scripting/youtube-ad-skip.js
 js/scripting/youtube-player-guard.js
+js/scripting/youtube-player-guard-loader.js
 js/scripting/scriptlet-token/annoyances-cookies.abort-current-script.js
 js/scripting/scriptlet-token/annoyances-cookies.abort-on-property-read.js
 js/scripting/scriptlet-token/annoyances-cookies.abort-on-property-write.js
@@ -1002,6 +1003,7 @@ rulesets/main/spa-0.json
 rulesets/main/spa-1.json
 rulesets/main/svn-0.json
 rulesets/main/swe-1.json
+rulesets/main/talon-youtube-allow.json
 rulesets/main/tha-0.json
 rulesets/main/tur-0.json
 rulesets/main/ublock-badware.json

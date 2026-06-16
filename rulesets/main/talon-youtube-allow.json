@@ -1,0 +1,30 @@
+[
+  {
+    "id": 990001,
+    "priority": 3000000,
+    "action": {
+      "type": "allowAllRequests"
+    },
+    "condition": {
+      "urlFilter": "||youtube.com^",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 990002,
+    "priority": 3000000,
+    "action": {
+      "type": "allowAllRequests"
+    },
+    "condition": {
+      "urlFilter": "||youtube-nocookie.com^",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  }
+]

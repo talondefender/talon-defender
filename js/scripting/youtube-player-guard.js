@@ -1,6 +1,6 @@
 /******************************************************************************/
 // Important!
-// Runs in the page world so YouTube sees sanitized player data before playback.
+// Runs in the page world so YouTube playback guards install before player setup.
 (function talonYoutubePlayerGuard(global) {
 
 if ( global.TalonYoutubePlayerGuardController ) {
@@ -18,7 +18,38 @@ const SSAP_NAMESPACE = 'ssap';
 const SSAP_MAX_RANGES = 16;
 const SSAP_LOOP_CHECK_MS = 250;
 const SSAP_LOOP_WINDOW_MS = 15000;
+const DETECTOR_TIMER_DELAY_MS = 17000;
+const DETECTOR_TIMER_MULTIPLIER = 0.001;
 const YOUTUBE_URL_FALLBACK = 'https:' + '//www.youtube.com/';
+const PLAYBACK_WALL_TEXT_RE = /Ad blockers violate YouTube['’]s Terms of Service/i;
+const RESET_LITE_RELOAD_FLAG = 'talon.youtube.resetLite.reloaded.v3';
+const RESET_LITE_WINDOW_NAME_TOKEN = 'talon-youtube-reset-lite-reloaded-v3';
+const RESET_LITE_COOKIE_NAMES = Object.freeze([
+    'GPS',
+    'PREF',
+    'VISITOR_INFO1_LIVE',
+    'VISITOR_PRIVACY_METADATA',
+    'YSC',
+]);
+const RESET_LITE_STORAGE_KEY_PATTERNS = Object.freeze([
+    /ad[-_]?block/i,
+    /ad[-_]?blocker/i,
+    /anti[-_]?ad/i,
+    /blocker[-_]?detected/i,
+    /enforcement/i,
+    /playback[-_]?(?:block|blocked|wall)/i,
+    /abnormality/i,
+    /interruption/i,
+]);
+
+const markGuard = value => {
+    try {
+        global.document?.documentElement?.setAttribute('data-talon-youtube-guard-main', value);
+    } catch {
+    }
+};
+
+markGuard('entered');
 
 const createController = env => {
     const win = env.window || env;
@@ -27,6 +58,7 @@ const createController = env => {
     const nativeJSONStringify = win.JSON?.stringify;
     const nativePromiseThen = win.Promise?.prototype?.then;
     const nativeAppendChild = win.Node?.prototype?.appendChild;
+    const nativeSetTimeout = win.setTimeout;
     let installed = false;
     let lastHref = String(win.location?.href || '');
     let ssapRanges = [];
@@ -41,6 +73,18 @@ const createController = env => {
     let abnormalityGuardHits = 0;
     const abnormalityCallbackCache = new WeakMap();
     let iframeFetchBridgeInstalled = false;
+    let detectorTimerGuardInstalled = false;
+    let detectorTimerGuardHits = 0;
+    let storageResetLiteInstalled = false;
+    let storageResetLiteReads = 0;
+    let storageResetLiteWrites = 0;
+    let storageResetLiteDeletes = 0;
+    let persistentResetLiteRuns = 0;
+    let persistentResetLiteDeletes = 0;
+    let persistentResetLiteCookieClears = 0;
+    let wallRecoveryObserverInstalled = false;
+    let wallRecoveryTriggered = false;
+    let wallRecoveryReloads = 0;
 
     const isYouTubeHost = () =>
         YOUTUBE_HOST_RE.test(String(win.location?.hostname || ''));
@@ -505,6 +549,406 @@ const createController = env => {
         return false;
     };
 
+    const shouldShieldStorageKey = key => {
+        if ( typeof key !== 'string' && typeof key !== 'number' ) { return false; }
+        const normalized = String(key);
+        if ( normalized === '' ) { return false; }
+        return RESET_LITE_STORAGE_KEY_PATTERNS.some(pattern =>
+            pattern.test(normalized)
+        );
+    };
+
+    const installStorageResetLiteGuard = () => {
+        if ( storageResetLiteInstalled ) { return true; }
+        const proto = win.Storage?.prototype;
+        if ( isObject(proto) === false ||
+            typeof win.Proxy !== 'function' ||
+            typeof win.Reflect?.apply !== 'function' ) {
+            return false;
+        }
+        const nativeGetItem = proto.getItem;
+        const nativeSetItem = proto.setItem;
+        const nativeKey = proto.key;
+        try {
+            if ( typeof nativeGetItem === 'function' ) {
+                proto.getItem = new win.Proxy(nativeGetItem, {
+                    apply(target, thisArg, args) {
+                        if ( shouldShieldStorageKey(args?.[0]) ) {
+                            storageResetLiteReads += 1;
+                            return null;
+                        }
+                        return win.Reflect.apply(target, thisArg, args);
+                    },
+                });
+            }
+            if ( typeof nativeSetItem === 'function' ) {
+                proto.setItem = new win.Proxy(nativeSetItem, {
+                    apply(target, thisArg, args) {
+                        if ( shouldShieldStorageKey(args?.[0]) ) {
+                            storageResetLiteWrites += 1;
+                            return undefined;
+                        }
+                        return win.Reflect.apply(target, thisArg, args);
+                    },
+                });
+            }
+            if ( typeof nativeKey === 'function' ) {
+                proto.key = new win.Proxy(nativeKey, {
+                    apply(target, thisArg, args) {
+                        const requested = Number(args?.[0]);
+                        if ( Number.isInteger(requested) === false ||
+                            requested < 0 ) {
+                            return win.Reflect.apply(target, thisArg, args);
+                        }
+                        let visibleIndex = 0;
+                        const length = Number(thisArg?.length) || 0;
+                        for ( let i = 0; i < length; i++ ) {
+                            const key = win.Reflect.apply(target, thisArg, [ i ]);
+                            if ( shouldShieldStorageKey(key) ) { continue; }
+                            if ( visibleIndex === requested ) { return key; }
+                            visibleIndex += 1;
+                        }
+                        return null;
+                    },
+                });
+            }
+            storageResetLiteInstalled = true;
+            return true;
+        } catch {
+        }
+        return false;
+    };
+
+    const removeStorageKeys = (store, options = {}) => {
+        if ( isObject(store) === false || typeof store.removeItem !== 'function' ) {
+            return 0;
+        }
+        const removeAll = options.all === true;
+        const keepKeys = options.keepKeys || new Set();
+        let removed = 0;
+        let length = 0;
+        try {
+            length = Number(store.length) || 0;
+        } catch {
+            return 0;
+        }
+        for ( let i = length - 1; i >= 0; i-- ) {
+            let key;
+            try {
+                key = typeof store.key === 'function' ? store.key(i) : null;
+            } catch {
+                continue;
+            }
+            if ( typeof key !== 'string' || keepKeys.has(key) ) { continue; }
+            if ( removeAll === false && shouldShieldStorageKey(key) === false ) { continue; }
+            try {
+                store.removeItem(key);
+                removed += 1;
+            } catch {
+            }
+        }
+        storageResetLiteDeletes += removed;
+        return removed;
+    };
+
+    const cleanupSuspiciousWebStorage = () => {
+        let removed = 0;
+        try {
+            removed += removeStorageKeys(win.localStorage);
+        } catch {
+        }
+        try {
+            removed += removeStorageKeys(win.sessionStorage);
+        } catch {
+        }
+        return removed;
+    };
+
+    const markResetLite = value => {
+        try {
+            doc?.documentElement?.setAttribute('data-talon-youtube-reset-lite', value);
+        } catch {
+        }
+    };
+
+    const clearWebStorageForWall = () => {
+        const keepKeys = new Set([ RESET_LITE_RELOAD_FLAG ]);
+        let removed = 0;
+        try {
+            removed += removeStorageKeys(win.localStorage, { all: true });
+        } catch {
+        }
+        try {
+            removed += removeStorageKeys(win.sessionStorage, { all: true, keepKeys });
+        } catch {
+        }
+        persistentResetLiteDeletes += removed;
+        return removed;
+    };
+
+    const clearVisitorCookiesForWall = () => {
+        const hostname = String(win.location?.hostname || '');
+        const domainCandidates = new Set([ '', hostname ]);
+        if ( /(^|\.)youtube\.com$/i.test(hostname) ) {
+            domainCandidates.add('youtube.com');
+            domainCandidates.add('.youtube.com');
+        }
+        const paths = [ '/', '/watch', '/shorts' ];
+        let attempts = 0;
+        for ( const name of RESET_LITE_COOKIE_NAMES ) {
+            for ( const domain of domainCandidates ) {
+                for ( const path of paths ) {
+                    try {
+                        const domainPart = domain ? `; domain=${domain}` : '';
+                        doc.cookie = `${name}=; Max-Age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=${path}${domainPart}; SameSite=Lax`;
+                        doc.cookie = `${name}=; Max-Age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=${path}${domainPart}; Secure; SameSite=None`;
+                        attempts += 2;
+                    } catch {
+                    }
+                }
+            }
+        }
+        persistentResetLiteCookieClears += attempts;
+        return attempts;
+    };
+
+    const deleteIndexedDatabase = name => new win.Promise(resolve => {
+        if ( typeof name !== 'string' || name === '' || !win.indexedDB?.deleteDatabase ) {
+            resolve(false);
+            return;
+        }
+        let request;
+        try {
+            request = win.indexedDB.deleteDatabase(name);
+        } catch {
+            resolve(false);
+            return;
+        }
+        const done = value => { resolve(value); };
+        request.onsuccess = () => done(true);
+        request.onerror = () => done(false);
+        request.onblocked = () => done(false);
+    });
+
+    const clearIndexedDatabasesForWall = async () => {
+        if ( typeof win.indexedDB?.databases !== 'function' ) { return 0; }
+        let databases;
+        try {
+            databases = await win.indexedDB.databases();
+        } catch {
+            return 0;
+        }
+        if ( Array.isArray(databases) === false ) { return 0; }
+        const results = await win.Promise.all(databases.map(db =>
+            deleteIndexedDatabase(String(db?.name || ''))
+        ));
+        const removed = results.filter(Boolean).length;
+        persistentResetLiteDeletes += removed;
+        return removed;
+    };
+
+    const clearCachesForWall = async () => {
+        if ( typeof win.caches?.keys !== 'function' ||
+            typeof win.caches?.delete !== 'function' ) {
+            return 0;
+        }
+        let keys;
+        try {
+            keys = await win.caches.keys();
+        } catch {
+            return 0;
+        }
+        if ( Array.isArray(keys) === false ) { return 0; }
+        const results = await win.Promise.all(keys.map(key =>
+            win.caches.delete(key).catch(() => false)
+        ));
+        const removed = results.filter(Boolean).length;
+        persistentResetLiteDeletes += removed;
+        return removed;
+    };
+
+    const unregisterServiceWorkersForWall = async () => {
+        if ( typeof win.navigator?.serviceWorker?.getRegistrations !== 'function' ) {
+            return 0;
+        }
+        let registrations;
+        try {
+            registrations = await win.navigator.serviceWorker.getRegistrations();
+        } catch {
+            return 0;
+        }
+        if ( Array.isArray(registrations) === false ) { return 0; }
+        const origin = String(win.location?.origin || '');
+        const sameOriginRegistrations = registrations.filter(registration =>
+            typeof registration?.scope === 'string' &&
+            (origin === '' || registration.scope.startsWith(origin))
+        );
+        const results = await win.Promise.all(sameOriginRegistrations.map(registration =>
+            registration.unregister().catch(() => false)
+        ));
+        const removed = results.filter(Boolean).length;
+        persistentResetLiteDeletes += removed;
+        return removed;
+    };
+
+    const runPersistentWallResetLite = async () => {
+        if ( isYouTubeHost() === false ) { return false; }
+        persistentResetLiteRuns += 1;
+        clearWebStorageForWall();
+        clearVisitorCookiesForWall();
+        await win.Promise.allSettled([
+            clearIndexedDatabasesForWall(),
+            clearCachesForWall(),
+            unregisterServiceWorkersForWall(),
+        ]);
+        return true;
+    };
+
+    const wasWallRecoveryReloaded = () => {
+        try {
+            return win.sessionStorage?.getItem(RESET_LITE_RELOAD_FLAG) === '1';
+        } catch {
+        }
+        try {
+            return String(win.name || '').includes(RESET_LITE_WINDOW_NAME_TOKEN);
+        } catch {
+        }
+        return false;
+    };
+
+    const markWallRecoveryReloaded = () => {
+        let marked = false;
+        try {
+            win.sessionStorage?.setItem(RESET_LITE_RELOAD_FLAG, '1');
+            marked = true;
+        } catch {
+        }
+        try {
+            const name = String(win.name || '');
+            if ( name.includes(RESET_LITE_WINDOW_NAME_TOKEN) === false ) {
+                win.name = `${name}${name ? ';' : ''}${RESET_LITE_WINDOW_NAME_TOKEN}`;
+            }
+            marked = true;
+        } catch {
+        }
+        return marked;
+    };
+
+    const isPlaybackWallPresent = () => {
+        try {
+            return PLAYBACK_WALL_TEXT_RE.test(String(doc?.body?.innerText || ''));
+        } catch {
+        }
+        return false;
+    };
+
+    const triggerWallRecovery = () => {
+        if ( wallRecoveryTriggered ) {
+            markResetLite('already-triggered');
+            return;
+        }
+        if ( wasWallRecoveryReloaded() ) {
+            markResetLite('already-reloaded');
+            return;
+        }
+        if ( markWallRecoveryReloaded() === false ) { return; }
+        wallRecoveryTriggered = true;
+        markResetLite('triggered');
+        runPersistentWallResetLite()
+            .finally(() => {
+                wallRecoveryReloads += 1;
+                markResetLite('reloading');
+                try {
+                    win.location.reload();
+                } catch {
+                }
+            });
+    };
+
+    const installWallRecoveryObserver = () => {
+        if ( wallRecoveryObserverInstalled ) { return true; }
+        wallRecoveryObserverInstalled = true;
+        markResetLite('observer-installed');
+        const check = () => {
+            if ( isPlaybackWallPresent() ) {
+                markResetLite('wall-present');
+                triggerWallRecovery();
+            }
+        };
+        if ( !doc?.documentElement && !doc?.body ) {
+            markResetLite('observer-no-document');
+            return true;
+        }
+        try {
+            doc?.addEventListener?.('DOMContentLoaded', check, { once: true });
+            win.setTimeout?.(check, 500);
+            win.setTimeout?.(check, 2000);
+            win.setTimeout?.(check, 5000);
+        } catch {
+        }
+        if ( typeof win.MutationObserver === 'function' && doc?.documentElement ) {
+            try {
+                const observer = new win.MutationObserver(() => {
+                    check();
+                    if ( wallRecoveryTriggered ) {
+                        observer.disconnect();
+                    }
+                });
+                observer.observe(doc.documentElement, {
+                    childList: true,
+                    subtree: true,
+                    characterData: true,
+                });
+                win.setTimeout?.(() => observer.disconnect(), 10000);
+            } catch {
+            }
+        }
+        check();
+        return true;
+    };
+
+    const isNativeCallback = value => {
+        if ( typeof value !== 'function' ) { return false; }
+        try {
+            return String(value).includes('[native code]');
+        } catch {
+        }
+        return false;
+    };
+
+    const adjustDetectorTimerDelay = (callback, delay) => {
+        const numericDelay = Number(delay);
+        if ( Number.isFinite(numericDelay) === false ||
+            numericDelay !== DETECTOR_TIMER_DELAY_MS ||
+            isNativeCallback(callback) === false ) {
+            return delay;
+        }
+        detectorTimerGuardHits += 1;
+        return Math.max(1, numericDelay * DETECTOR_TIMER_MULTIPLIER);
+    };
+
+    const installDetectorTimerGuard = () => {
+        if ( detectorTimerGuardInstalled ||
+            typeof nativeSetTimeout !== 'function' ||
+            typeof win.Proxy !== 'function' ) {
+            return false;
+        }
+        try {
+            win.setTimeout = new win.Proxy(nativeSetTimeout, {
+                apply(target, thisArg, args) {
+                    if ( args.length >= 2 ) {
+                        args[1] = adjustDetectorTimerDelay(args[0], args[1]);
+                    }
+                    return win.Reflect.apply(target, thisArg, args);
+                },
+            });
+            detectorTimerGuardInstalled = true;
+            return true;
+        } catch {
+        }
+        return false;
+    };
+
     const bridgeFetchIntoIframe = iframe => {
         if ( iframe instanceof win.HTMLIFrameElement === false ) { return false; }
         const src = typeof iframe.src === 'string' ? iframe.src : '';
@@ -590,15 +1034,17 @@ const createController = env => {
     const install = () => {
         if ( installed || isYouTubeHost() === false ) { return false; }
         installed = true;
-        installResponsePropertyGuard('ytInitialPlayerResponse');
-        installResponsePropertyGuard('playerResponse');
-        installJsonParseGuard();
-        installFetchGuard();
-        installXhrGuard();
+        installStorageResetLiteGuard();
+        cleanupSuspiciousWebStorage();
+        // YouTube now treats player-response ad metadata pruning as an
+        // ad-blocker signal. Keep the reset/timing guards, but leave player
+        // response payloads intact so playback can proceed.
         ensureSsapGuards();
         installAbnormalityGuard();
         installIframeFetchBridge();
+        installDetectorTimerGuard();
         installNavigationListeners();
+        installWallRecoveryObserver();
         return true;
     };
 
@@ -609,20 +1055,44 @@ const createController = env => {
             installed: abnormalityGuardInstalled,
             hits: abnormalityGuardHits,
         }),
+        getDetectorTimerGuardStats: () => ({
+            installed: detectorTimerGuardInstalled,
+            hits: detectorTimerGuardHits,
+        }),
+        getStorageResetLiteStats: () => ({
+            installed: storageResetLiteInstalled,
+            reads: storageResetLiteReads,
+            writes: storageResetLiteWrites,
+            deletes: storageResetLiteDeletes,
+            persistentRuns: persistentResetLiteRuns,
+            persistentDeletes: persistentResetLiteDeletes,
+            persistentCookieClears: persistentResetLiteCookieClears,
+            wallRecoveryReloads,
+        }),
+        adjustDetectorTimerDelay,
+        cleanupSuspiciousWebStorage,
+        clearVisitorCookiesForWall,
+        clearWebStorageForWall,
         install,
         installAbnormalityGuard,
+        installDetectorTimerGuard,
         installIframeFetchBridge,
         installFetchGuard,
         installJsonParseGuard,
         installResponsePropertyGuard,
         installSsapGuard,
+        installStorageResetLiteGuard,
+        installWallRecoveryObserver,
         installXhrGuard,
+        runPersistentWallResetLite,
         isSsapExperimentEnabled,
+        isPlaybackWallPresent,
         isPlayerResponseUrl,
         pruneAds,
         recordSsapRange,
         refresh: install,
         sanitizeJsonText,
+        shouldShieldStorageKey,
         textMayContainAdMetadata,
     };
 };
@@ -634,7 +1104,7 @@ if ( global.__talonYoutubePlayerGuardTest === true ) {
 
 const controller = createController(global);
 global.TalonYoutubePlayerGuardController = controller;
-controller.install();
+markGuard(controller.install() ? 'installed' : 'not-installed');
 
 })(globalThis);
 

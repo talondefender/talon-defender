@@ -141,18 +141,18 @@ function createHarness() {
   return { context, interruptionToast, state, video };
 }
 
-test('YouTube ad skip clicks visible skip controls, accelerates ads, and restores video state', async () => {
+test('YouTube ad skip accelerates ad playback without synthetic skip clicks', async () => {
   const source = await readSource('js/scripting/youtube-ad-skip.js');
   const { context, state, video } = createHarness();
   vm.runInNewContext(source, context);
 
   const controller = context.__talonYoutubeAdSkipCreateController(context);
   assert.equal(controller.tick(), true);
-  assert.equal(state.skipClicks, 1);
+  assert.equal(state.skipClicks, 0);
   assert.equal(video.muted, true);
   assert.equal(video.playbackRate, 16);
   assert.equal(video.currentTime, 2);
-  assert.equal(state.styles.length, 1);
+  assert.equal(state.styles.length, 0);
 
   state.adShowing = false;
   assert.equal(controller.tick(), false);
@@ -174,7 +174,7 @@ test('YouTube ad skip does not seek the player and trigger short-video restart l
   video.currentTime = 0;
   assert.equal(controller.tick(), true);
   assert.equal(video.currentTime, 0);
-  assert.equal(state.skipClicks, 2);
+  assert.equal(state.skipClicks, 0);
   assert.equal(video.playbackRate, 16);
 });
 
@@ -199,7 +199,7 @@ test('YouTube ad skip coalesces broad YouTube mutation churn before scanning the
   assert.equal(state.skipClicks, 0);
 
   state.timeoutCallbacks.shift()();
-  assert.equal(state.skipClicks, 1);
+  assert.equal(state.skipClicks, 0);
 });
 
 test('YouTube ad skip hides interruption notices added by YouTube before the next full scan', async () => {
@@ -246,6 +246,8 @@ test('YouTube ad skip is Talon-owned runtime without remote code or page-script 
   assert.doesNotMatch(source, /createElement\(['"]script['"]\)/);
   assert.doesNotMatch(source, /runtime\.getURL/);
   assert.doesNotMatch(source, /currentTime\s*=/);
+  assert.doesNotMatch(source, /click\(\)/);
+  assert.doesNotMatch(source, /ytd-ad-slot-renderer/);
   assert.doesNotMatch(source, /analytics|posthog/i);
 });
 

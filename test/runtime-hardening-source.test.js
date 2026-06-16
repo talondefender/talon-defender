@@ -449,27 +449,81 @@ test('extension source keeps only the bounded Talon-owned YouTube runtime lanes'
   const bootstrapPath = `js/scripting/${watchPrefix}-bootstrap.js`;
   const talonYouTubePath = 'js/scripting/youtube-ad-skip.js';
   const talonYouTubeGuardPath = 'js/scripting/youtube-player-guard.js';
+  const talonYouTubeGuardLoaderPath = 'js/scripting/youtube-player-guard-loader.js';
   const managerSource = await readSource('js/scripting-manager.js');
   const talonYouTubeSource = await readSource(talonYouTubePath);
   const talonYouTubeGuardSource = await readSource(talonYouTubeGuardPath);
+  const talonYouTubeGuardLoaderSource = await readSource(talonYouTubeGuardLoaderPath);
   const heuristicSource = await readSource('js/scripting/native-heuristics.js');
   const backgroundSource = await readSource('js/background.js');
   const rulesetSource = await readSource('js/ruleset-manager.js');
   const ownershipSource = await readSource('scripts/ubol-source-ownership.json');
   const allowlist = await readSource('public-safe-allowlist.txt');
   const manifest = JSON.parse(await readSource('manifest.json'));
+  const contentScripts = Array.isArray(manifest.content_scripts)
+    ? manifest.content_scripts
+    : [];
   const publicResources = (manifest.web_accessible_resources ?? [])
     .flatMap(entry => entry.resources ?? []);
+  const youtubeGuardMainScripts = contentScripts.filter(entry =>
+    Array.isArray(entry.js) &&
+    entry.js.includes(talonYouTubeGuardPath)
+  );
+  const youtubeGuardLoaders = contentScripts.filter(entry =>
+    Array.isArray(entry.js) &&
+    entry.js.includes(talonYouTubeGuardLoaderPath)
+  );
+  const youtubeGuardResources = (manifest.web_accessible_resources ?? []).filter(entry =>
+    Array.isArray(entry.resources) &&
+    entry.resources.includes(talonYouTubeGuardPath)
+  );
 
   assert.equal(await pathExists(talonYouTubePath), true);
   assert.equal(await pathExists(talonYouTubeGuardPath), true);
+  assert.equal(await pathExists(talonYouTubeGuardLoaderPath), true);
   assert.equal(await pathExists(bootstrapPath), false);
   assert.equal(await pathExists(relayHtmlPath), false);
   assert.equal(await pathExists(relayScriptPath), false);
+  assert.equal(youtubeGuardMainScripts.length, 1);
+  assert.deepEqual(youtubeGuardMainScripts[0].matches, [
+    '*://*.youtube.com/*',
+    '*://*.youtube-nocookie.com/*',
+  ]);
+  assert.deepEqual(youtubeGuardMainScripts[0].js, [talonYouTubeGuardPath]);
+  assert.equal(youtubeGuardMainScripts[0].run_at, 'document_start');
+  assert.equal(youtubeGuardMainScripts[0].all_frames, true);
+  assert.equal(youtubeGuardMainScripts[0].world, 'MAIN');
+  assert.equal(youtubeGuardLoaders.length, 1);
+  assert.deepEqual(youtubeGuardLoaders[0].matches, [
+    '*://*.youtube.com/*',
+    '*://*.youtube-nocookie.com/*',
+  ]);
+  assert.deepEqual(youtubeGuardLoaders[0].js, [talonYouTubeGuardLoaderPath]);
+  assert.equal(youtubeGuardLoaders[0].run_at, 'document_start');
+  assert.equal(youtubeGuardLoaders[0].all_frames, true);
+  assert.equal(youtubeGuardLoaders[0].world, undefined);
+  assert.equal(youtubeGuardResources.length, 1);
+  assert.deepEqual(youtubeGuardResources[0].matches, [
+    '*://*.youtube.com/*',
+    '*://*.youtube-nocookie.com/*',
+  ]);
+  assert.equal(
+    contentScripts.some(entry =>
+      Array.isArray(entry.js) &&
+      entry.js.includes(talonYouTubePath)
+    ),
+    false
+  );
   assert.equal(publicResources.some(resource => resource.includes(`${watchPrefix}-relay`)), false);
-  assert.equal(publicResources.some(resource => /youtube/i.test(resource)), false);
+  assert.equal(
+    publicResources.some(resource =>
+      /youtube/i.test(resource) && resource !== talonYouTubeGuardPath
+    ),
+    false
+  );
   assert.equal(allowlist.includes(talonYouTubePath), true);
   assert.equal(allowlist.includes(talonYouTubeGuardPath), true);
+  assert.equal(allowlist.includes(talonYouTubeGuardLoaderPath), true);
   assert.equal(allowlist.includes(bootstrapPath), false);
   assert.equal(allowlist.includes(relayHtmlPath), false);
   assert.equal(allowlist.includes(relayScriptPath), false);
@@ -488,13 +542,18 @@ test('extension source keeps only the bounded Talon-owned YouTube runtime lanes'
   assert.doesNotMatch(talonYouTubeSource, /chrome\.runtime|browser\.runtime|\bfetch\s*\(|\bXMLHttpRequest\b|runtime\.getURL/);
   assert.doesNotMatch(talonYouTubeSource, /createElement\(['"]script['"]\)/);
   assert.match(talonYouTubeGuardSource, /talonYoutubePlayerGuard/);
-  assert.match(talonYouTubeGuardSource, /ytInitialPlayerResponse/);
-  assert.match(talonYouTubeGuardSource, /adPlacements/);
+  assert.match(talonYouTubeGuardSource, /response payloads intact/);
+  assert.match(talonYouTubeGuardSource, /installStorageResetLiteGuard/);
   assert.match(talonYouTubeGuardSource, /SSAP_NAMESPACE/);
   assert.doesNotMatch(talonYouTubeGuardSource, /chrome\.runtime|browser\.runtime|runtime\.getURL/);
   assert.doesNotMatch(talonYouTubeGuardSource, /createElement\(['"]script['"]\)/);
+  assert.match(talonYouTubeGuardLoaderSource, /talonYoutubePlayerGuardLoader/);
+  assert.match(talonYouTubeGuardLoaderSource, /chrome\.runtime\.getURL\(GUARD_SCRIPT_PATH\)/);
+  assert.match(talonYouTubeGuardLoaderSource, /createElement\('script'\)/);
+  assert.doesNotMatch(talonYouTubeGuardLoaderSource, /\bfetch\s*\(|\bXMLHttpRequest\b/);
   const privateComparatorToken = String.fromCharCode(99, 111, 102, 102, 101, 101);
   assert.doesNotMatch(talonYouTubeGuardSource, new RegExp(`analytics|posthog|${privateComparatorToken}-break`, 'i'));
+  assert.doesNotMatch(talonYouTubeGuardLoaderSource, new RegExp(`analytics|posthog|${privateComparatorToken}-break`, 'i'));
   assert.doesNotMatch(managerSource, new RegExp(`${watchPrefix}-bootstrap|registerYouTubeWatchBootstrap|HOST_SCOPED_SCRIPTLET_EXCLUSIONS`));
   assert.doesNotMatch(heuristicSource, new RegExp(`youtube|${'YOUTUBE_' + 'WATCH'}|td_yw`, 'i'));
   assert.doesNotMatch(backgroundSource, new RegExp(`setYouTubeWatch|YouTubeWatch|${watchPrefix}`, 'i'));

@@ -9,7 +9,6 @@ if ( global.TalonYoutubeAdSkipController ) {
 }
 
 const SUBSYSTEM_ID = 'youtubeAdSkip';
-const STYLE_ID = 'talon-youtube-ad-skip-style';
 const FAST_PLAYBACK_RATE = 16;
 const CHECK_INTERVAL_MS = 500;
 const HIDDEN_CHECK_INTERVAL_MS = 1500;
@@ -26,32 +25,6 @@ const AD_STATE_SELECTOR = [
 
 const PLAYER_SELECTOR = '.html5-video-player,#movie_player';
 
-const SKIP_BUTTON_SELECTOR = [
-    '.ytp-ad-skip-button',
-    '.ytp-ad-skip-button-modern',
-    '.ytp-skip-ad-button',
-    '.ytp-ad-overlay-close-button',
-    'button[class*="ytp-ad-skip" i]',
-    'button[class*="skip-ad" i]',
-].join(',');
-
-const AD_SURFACE_SELECTOR = [
-    '.ytp-ad-player-overlay',
-    '.ytp-ad-preview-container',
-    '.ytp-ad-module',
-    '.ytp-ad-text',
-    '.ytp-ad-badge',
-    '.ytp-ad-badge--clean-player',
-    'ytd-ad-slot-renderer',
-    'ytd-companion-slot-renderer',
-    'ytd-display-ad-renderer',
-    'ytd-in-feed-ad-layout-renderer',
-    'ytd-promoted-sparkles-web-renderer',
-    'ytd-player-legacy-desktop-watch-ads-renderer',
-    '#player-ads',
-    '#masthead-ad',
-].join(',');
-
 const INTERRUPTION_NOTICE_SELECTOR = [
     'tp-yt-paper-toast',
     'yt-notification-action-renderer',
@@ -61,22 +34,6 @@ const INTERRUPTION_NOTICE_SELECTOR = [
     '[role="alert"]',
     '[aria-live]',
 ].join(',');
-
-const STYLE_TEXT = [
-    'ytd-ad-slot-renderer',
-    'ytd-companion-slot-renderer',
-    'ytd-display-ad-renderer',
-    'ytd-in-feed-ad-layout-renderer',
-    'ytd-promoted-sparkles-web-renderer',
-    'ytd-player-legacy-desktop-watch-ads-renderer',
-    '#player-ads',
-    '#masthead-ad',
-    '.html5-video-player.ad-showing .ytp-ad-image-overlay',
-    '.html5-video-player.ad-showing .ytp-ad-player-overlay',
-].join(',') +
-    '{display:none!important;visibility:hidden!important;}' +
-    '.html5-video-player.ad-showing video{visibility:hidden!important;}' +
-    '.html5-video-player.ad-showing{background:#000!important;}';
 
 const createController = env => {
     const win = env.window || env;
@@ -109,60 +66,6 @@ const createController = env => {
         }
         return null;
     };
-
-    const injectStyle = () => {
-        if ( doc.getElementById?.(STYLE_ID) ) { return; }
-        try {
-            const style = doc.createElement('style');
-            style.id = STYLE_ID;
-            style.textContent = STYLE_TEXT;
-            const parent = doc.head || doc.documentElement || doc;
-            if ( typeof parent.append === 'function' ) {
-                parent.append(style);
-            } else if ( typeof parent.appendChild === 'function' ) {
-                parent.appendChild(style);
-            }
-        } catch {
-        }
-    };
-
-    const removeStyle = () => {
-        try {
-            doc.getElementById?.(STYLE_ID)?.remove?.();
-        } catch {
-        }
-    };
-
-    const isElementActionable = element => {
-        if ( !element || element.disabled === true ) { return false; }
-        try {
-            if ( element.getAttribute?.('aria-disabled') === 'true' ) {
-                return false;
-            }
-            if ( element.hidden === true ) { return false; }
-            const rects = element.getClientRects?.();
-            if ( rects && rects.length === 0 ) { return false; }
-        } catch {
-        }
-        return true;
-    };
-
-    const findSkipButton = () =>
-        queryAll(SKIP_BUTTON_SELECTOR).find(isElementActionable) || null;
-
-    const clickSkipButton = (button = findSkipButton()) => {
-        if ( button === null ) { return false; }
-        try {
-            button.click();
-            return true;
-        } catch {
-        }
-        return false;
-    };
-
-    const hasAdSurface = () =>
-        queryOne(AD_STATE_SELECTOR) !== null ||
-        (findSkipButton() !== null && queryOne(AD_SURFACE_SELECTOR) !== null);
 
     const hideInterruptionNotice = element => {
         const text = String(element?.textContent || '');
@@ -316,7 +219,6 @@ const createController = env => {
 
     const tick = () => {
         if ( isYouTubeHost() === false ) { return false; }
-        injectStyle();
         observePlayerState();
         const now = Date.now();
         let suppressedNotice = false;
@@ -326,11 +228,8 @@ const createController = env => {
             noticeScanPending = false;
             suppressedNotice = suppressInterruptionNotices();
         }
-        const skipButton = findSkipButton();
-        const adShowing = queryOne(AD_STATE_SELECTOR) !== null ||
-            (skipButton !== null && queryOne(AD_SURFACE_SELECTOR) !== null);
+        const adShowing = queryOne(AD_STATE_SELECTOR) !== null;
         if ( adShowing ) {
-            clickSkipButton(skipButton);
             for ( const video of videos() ) {
                 accelerateVideo(video);
             }
@@ -392,7 +291,6 @@ const createController = env => {
             stop();
             return { started: false };
         }
-        injectStyle();
         tick();
         if ( observer === undefined && typeof win.MutationObserver === 'function' ) {
             observer = new win.MutationObserver(records => {
@@ -434,7 +332,6 @@ const createController = env => {
             intervalId = undefined;
         }
         restoreVideos();
-        removeStyle();
         lastAdState = false;
     };
 
@@ -452,11 +349,7 @@ const createController = env => {
     };
 
     return {
-        clickSkipButton,
-        findSkipButton,
-        hasAdSurface,
         init,
-        injectStyle,
         refresh: start,
         restoreVideos,
         scheduleTick,

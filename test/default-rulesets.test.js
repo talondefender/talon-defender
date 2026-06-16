@@ -19,6 +19,7 @@ const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 let packagedOutDir;
 const EXPECTED_DEFAULT_IDS = [
   'ublock-filters',
+  'talon-youtube-allow',
   'easylist',
   'easyprivacy',
   'pgl',
@@ -355,6 +356,17 @@ test('source manifest bundles the full annoyance family and public-safe regional
     EXPECTED_BLOCKED_REGIONAL_IDS.every(id => bundledIds.includes(id) === false),
     true
   );
+});
+
+test('YouTube compatibility allow rules outrank dynamic blocking rules', async () => {
+  const rules = await readJson('../rulesets/main/talon-youtube-allow.json');
+  assert.equal(Array.isArray(rules), true);
+  assert.equal(rules.length, 2);
+  for (const rule of rules) {
+    assert.equal(rule?.action?.type, 'allowAllRequests');
+    assert.equal(rule?.priority, 3000000);
+    assert.deepEqual(rule?.condition?.resourceTypes, ['main_frame', 'sub_frame']);
+  }
 });
 
 test('packaged build preserves bundled annoyance coverage, regional coverage, defaults, and metadata parity', async () => {

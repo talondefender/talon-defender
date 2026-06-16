@@ -25,6 +25,29 @@
     "popups": 135
   },
   {
+    "id": "talon-youtube-allow",
+    "name": "Talon YouTube compatibility allow rules",
+    "group": "default",
+    "enabled": true,
+    "homeURL": "https://roasppc.com/",
+    "filters": {
+      "total": 2,
+      "accepted": 2,
+      "rejected": 0
+    },
+    "rules": {
+      "total": 2,
+      "plain": 2,
+      "regex": 0,
+      "strictblock": 0,
+      "rejected": 0
+    },
+    "css": {
+      "generic": 0,
+      "specific": 0
+    }
+  },
+  {
     "id": "easylist",
     "name": "EasyList",
     "group": "default",

@@ -91,6 +91,7 @@ test('manifest and public allowlist expose only the Talon-owned YouTube runtime 
   const bootstrapPath = `js/scripting/${watchPrefix}-bootstrap.js`;
   const talonYouTubePath = 'js/scripting/youtube-ad-skip.js';
   const talonYouTubeGuardPath = 'js/scripting/youtube-player-guard.js';
+  const talonYouTubeGuardLoaderPath = 'js/scripting/youtube-player-guard-loader.js';
   const manifest = JSON.parse(await readSource('manifest.json'));
   const allowlist = await readSource('public-safe-allowlist.txt');
   const contentScripts = Array.isArray(manifest.content_scripts) ? manifest.content_scripts : [];
@@ -105,16 +106,61 @@ test('manifest and public allowlist expose only the Talon-owned YouTube runtime 
     ),
     false
   );
+  const youtubeGuardMainScripts = contentScripts.filter(entry =>
+    Array.isArray(entry.js) &&
+    entry.js.includes(talonYouTubeGuardPath)
+  );
+  assert.equal(youtubeGuardMainScripts.length, 1);
+  assert.deepEqual(youtubeGuardMainScripts[0].matches, [
+    '*://*.youtube.com/*',
+    '*://*.youtube-nocookie.com/*',
+  ]);
+  assert.deepEqual(youtubeGuardMainScripts[0].js, [talonYouTubeGuardPath]);
+  assert.equal(youtubeGuardMainScripts[0].run_at, 'document_start');
+  assert.equal(youtubeGuardMainScripts[0].all_frames, true);
+  assert.equal(youtubeGuardMainScripts[0].world, 'MAIN');
+  const youtubeGuardLoaders = contentScripts.filter(entry =>
+    Array.isArray(entry.js) &&
+    entry.js.includes(talonYouTubeGuardLoaderPath)
+  );
+  assert.equal(youtubeGuardLoaders.length, 1);
+  assert.deepEqual(youtubeGuardLoaders[0].matches, [
+    '*://*.youtube.com/*',
+    '*://*.youtube-nocookie.com/*',
+  ]);
+  assert.deepEqual(youtubeGuardLoaders[0].js, [talonYouTubeGuardLoaderPath]);
+  assert.equal(youtubeGuardLoaders[0].run_at, 'document_start');
+  assert.equal(youtubeGuardLoaders[0].all_frames, true);
+  assert.equal(youtubeGuardLoaders[0].world, undefined);
+  assert.equal(
+    contentScripts.some(entry =>
+      Array.isArray(entry.js) &&
+      entry.js.includes(talonYouTubePath)
+    ),
+    false
+  );
+  const youtubeGuardResources = webAccessibleResources.filter(entry =>
+    Array.isArray(entry.resources) &&
+    entry.resources.includes(talonYouTubeGuardPath)
+  );
+  assert.equal(youtubeGuardResources.length, 1);
+  assert.deepEqual(youtubeGuardResources[0].matches, [
+    '*://*.youtube.com/*',
+    '*://*.youtube-nocookie.com/*',
+  ]);
   assert.equal(
     webAccessibleResources.some(entry =>
       Array.isArray(entry.resources) &&
-      entry.resources.some(resource => /youtube/i.test(resource))
+      entry.resources.some(resource =>
+        /youtube/i.test(resource) && resource !== talonYouTubeGuardPath
+      )
     ),
     false
   );
 
   assert.equal(allowlist.includes(talonYouTubePath), true);
   assert.equal(allowlist.includes(talonYouTubeGuardPath), true);
+  assert.equal(allowlist.includes(talonYouTubeGuardLoaderPath), true);
   assert.equal(allowlist.includes(bootstrapPath), false);
   assert.equal(allowlist.includes(relayHtmlPath), false);
   assert.equal(allowlist.includes(relayScriptPath), false);

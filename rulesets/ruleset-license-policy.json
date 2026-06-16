@@ -7,6 +7,13 @@
       "proof": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/LICENSE",
       "attributionRequired": true
     },
+    "talon-youtube-allow": {
+      "license": "GPL-3.0-or-later",
+      "commercialUse": "allowed",
+      "sourceUrl": "Talon Defender",
+      "proof": "Talon-owned YouTube compatibility rules authored in this repository.",
+      "attributionRequired": false
+    },
     "easylist": {
       "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
       "commercialUse": "allowed",
