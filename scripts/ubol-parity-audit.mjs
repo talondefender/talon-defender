@@ -32,6 +32,39 @@ const LOCAL_ONLY_RULESET_PATHS = new Set([
   'rulesets/ruleset-license-policy.json',
 ]);
 
+const READABILITY_NORMALIZED_SCRIPTLET_PAYLOADS = [
+  {
+    upstream: 'html(window.atob(\\"PGRpdiBjbGFzcz0idGV4dC1kYW5nZXIgZm9udC13ZWlnaHQtYm9sZCBoNSBtdC0xIj5DYXB0Y2hhIGltYWdlIGZhaWxlZCB0byBsb2FkLjxicj48YSBvbmNsaWNrPSJsb2NhdGlvbi5yZWxvYWQoKSIgc3R5bGU9ImNvbG9yOiM2MjcwZGE7Y3Vyc29yOnBvaW50ZXIiIGNsYXNzPSJ0ZXh0LWRlY29yYXRpb25lLW5vbmUiPlBsZWFzZSByZWZyZXNoIHRoZSBwYWdlLiA8aSBjbGFzcz0iZmEgZmEtcmVmcmVzaCI+PC9pPjwvYT48L2Rpdj4=\\"))',
+    readable: 'html(\'<div class=\\"text-danger font-weight-bold h5 mt-1\\">Captcha image failed to load.<br><a onclick=\\"location.reload()\\" style=\\"color:#6270da;cursor:pointer\\" class=\\"text-decoratione-none\\">Please refresh the page. <i class=\\"fa fa-refresh\\"></i></a></div>\')',
+  },
+];
+
+const UPSTREAM_CSS_SPECIFIC_PROCEDURAL_LOADER = [
+  'await self.ProceduralFiltererAPI;',
+  'self.listsProceduralFiltererAPI = new self.ProceduralFiltererAPI();',
+].join('\n');
+
+const TALON_CSS_SPECIFIC_PROCEDURAL_LOADER = [
+  'if ( self.ProceduralFiltererAPI instanceof Promise ) {',
+  '    try {',
+  '        await self.ProceduralFiltererAPI;',
+  '    } catch {',
+  '    }',
+  '}',
+  '',
+  "if ( typeof self.ProceduralFiltererAPI !== 'function' ) {",
+  '    self.ProceduralFiltererAPI = undefined;',
+  '    return;',
+  '}',
+  '',
+  'try {',
+  '    self.listsProceduralFiltererAPI = new self.ProceduralFiltererAPI();',
+  '} catch {',
+  '    self.listsProceduralFiltererAPI = undefined;',
+  '    return;',
+  '}',
+].join('\n');
+
 const DETAILS_COUNT_PATHS = [
   'filters.accepted',
   'rules.total',
@@ -73,12 +106,6 @@ const readJsonOr = async (absPath, fallback) => {
   } catch {
     return fallback;
   }
-};
-
-const fileHash = async absPath => {
-  const hash = crypto.createHash('sha256');
-  hash.update(await fs.readFile(absPath));
-  return hash.digest('hex');
 };
 
 const contentHash = value => {
@@ -256,6 +283,27 @@ const normalizedDetailsForHash = (relativePath, details, excludedRuleIds = new S
   return details;
 };
 
+const normalizeReadabilityOnlyScriptletPayloads = source => {
+  let normalized = source;
+  for (const { upstream, readable } of READABILITY_NORMALIZED_SCRIPTLET_PAYLOADS) {
+    normalized = normalized.replaceAll(readable, upstream);
+  }
+  return normalized;
+};
+
+const normalizeSourceForHash = (relativePath, source) => {
+  if (relativePath === 'rulesets/scripting/scriptlet/isolated/ublock-filters.js') {
+    return normalizeReadabilityOnlyScriptletPayloads(source);
+  }
+  if (relativePath === 'js/scripting/css-specific.js') {
+    return source.replaceAll(
+      TALON_CSS_SPECIFIC_PROCEDURAL_LOADER,
+      UPSTREAM_CSS_SPECIFIC_PROCEDURAL_LOADER
+    );
+  }
+  return source;
+};
+
 const hashPath = async (rootDir, relativePath, { excludedRuleIds = new Set() } = {}) => {
   const absPath = path.join(rootDir, relativePath);
   if (RULESET_DETAILS_HASH_PATHS.has(relativePath)) {
@@ -266,7 +314,8 @@ const hashPath = async (rootDir, relativePath, { excludedRuleIds = new Set() } =
     );
     return contentHash(JSON.stringify(normalized));
   }
-  return fileHash(absPath);
+  const source = await fs.readFile(absPath, 'utf8');
+  return contentHash(normalizeSourceForHash(relativePath, source));
 };
 
 const collectHashMap = async (rootDir, relativePaths, options = {}) => {
@@ -324,11 +373,11 @@ const compareHashMaps = (localHashes, upstreamHashes) => {
   };
 };
 
-const filterExcludedRulesetHashPaths = (relativePaths, excludedRuleIds = new Set()) =>
+const filterIgnoredRulesetHashPaths = (relativePaths, ignoredRuleIds = new Set()) =>
   sortStrings(
     relativePaths
       .map(normalizeRelativePath)
-      .filter(relativePath => isExcludedRulesetAssetPath(relativePath, excludedRuleIds) === false)
+      .filter(relativePath => isExcludedRulesetAssetPath(relativePath, ignoredRuleIds) === false)
   );
 
 const hashDeltaPaths = hashDeltas =>
@@ -477,6 +526,9 @@ const getExcludedUpstreamRuleIds = licensePolicy =>
     ...Object.keys(licensePolicy?.excludedUpstreamRulesets || {}),
   ]);
 
+const getLocalOnlyRuleIds = ownershipMap =>
+  new Set(Object.keys(ownershipMap?.rulesetIdExceptions?.localExtra || {}));
+
 const rulesetIdsFromResources = (
   resources,
   {
@@ -596,31 +648,35 @@ export async function buildParityReport({
   ]);
 
   const excludedRuleIds = getExcludedUpstreamRuleIds(localInventory.licensePolicy);
-  const upstreamOwnedPaths = filterExcludedRulesetHashPaths(
+  const localOnlyRuleIds = getLocalOnlyRuleIds(ownershipMap);
+  const ignoredRuleIds = new Set([...excludedRuleIds, ...localOnlyRuleIds]);
+  const upstreamOwnedPaths = filterIgnoredRulesetHashPaths(
     sortStrings([
       ...await collectOwnedHashPaths(resolvedExtensionDir, ownershipMap),
       ...await collectOwnedHashPaths(resolvedUpstreamDir, ownershipMap),
     ]),
-    excludedRuleIds
+    ignoredRuleIds
   );
   const [localOwnedHashes, upstreamOwnedHashes] = await Promise.all([
-    collectHashMap(resolvedExtensionDir, upstreamOwnedPaths, { excludedRuleIds }),
-    collectHashMap(resolvedUpstreamDir, upstreamOwnedPaths, { excludedRuleIds }),
+    collectHashMap(resolvedExtensionDir, upstreamOwnedPaths, { excludedRuleIds: ignoredRuleIds }),
+    collectHashMap(resolvedUpstreamDir, upstreamOwnedPaths, { excludedRuleIds: ignoredRuleIds }),
   ]);
   const hashDeltas = compareHashMaps(localOwnedHashes, upstreamOwnedHashes);
-  const localRulesetHashPaths = filterExcludedRulesetHashPaths(
+  const localRulesetHashPaths = filterIgnoredRulesetHashPaths(
     localInventory.rulesetHashPaths,
-    excludedRuleIds
+    ignoredRuleIds
   );
-  const upstreamRulesetHashPaths = filterExcludedRulesetHashPaths(
+  const upstreamRulesetHashPaths = filterIgnoredRulesetHashPaths(
     upstreamInventory.rulesetHashPaths,
-    excludedRuleIds
+    ignoredRuleIds
   );
   const [localRulesetBytes, upstreamRulesetBytes] = await Promise.all([
     totalFileBytes(resolvedExtensionDir, localRulesetHashPaths),
     totalFileBytes(resolvedUpstreamDir, upstreamRulesetHashPaths),
   ]);
-  const localRuleIds = rulesetIdsFromResources(localInventory.ruleResources);
+  const localRuleIds = rulesetIdsFromResources(localInventory.ruleResources, {
+    excludedRuleIds: localOnlyRuleIds,
+  });
   const upstreamRuleIds = rulesetIdsFromResources(upstreamInventory.ruleResources, {
     excludedRuleIds,
   });
@@ -720,6 +776,7 @@ export async function buildParityReport({
     extensionDir: resolvedExtensionDir,
     upstreamDir: resolvedUpstreamDir,
     excludedUpstreamRuleIds: upstreamSkippedRuleIds,
+    localOnlyRuleIds: sortStrings([...localOnlyRuleIds]),
     driftClasses,
     mixedDrift,
     automationBlocked,

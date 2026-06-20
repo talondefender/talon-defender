@@ -18,6 +18,37 @@ const writeText = async (root, relativePath, value) => {
   await fs.writeFile(absPath, value, 'utf8');
 };
 
+const encodedCaptchaPayload =
+  'html(window.atob(\\"PGRpdiBjbGFzcz0idGV4dC1kYW5nZXIgZm9udC13ZWlnaHQtYm9sZCBoNSBtdC0xIj5DYXB0Y2hhIGltYWdlIGZhaWxlZCB0byBsb2FkLjxicj48YSBvbmNsaWNrPSJsb2NhdGlvbi5yZWxvYWQoKSIgc3R5bGU9ImNvbG9yOiM2MjcwZGE7Y3Vyc29yOnBvaW50ZXIiIGNsYXNzPSJ0ZXh0LWRlY29yYXRpb25lLW5vbmUiPlBsZWFzZSByZWZyZXNoIHRoZSBwYWdlLiA8aSBjbGFzcz0iZmEgZmEtcmVmcmVzaCI+PC9pPjwvYT48L2Rpdj4=\\"))';
+const readableCaptchaPayload =
+  'html(\'<div class=\\"text-danger font-weight-bold h5 mt-1\\">Captcha image failed to load.<br><a onclick=\\"location.reload()\\" style=\\"color:#6270da;cursor:pointer\\" class=\\"text-decoratione-none\\">Please refresh the page. <i class=\\"fa fa-refresh\\"></i></a></div>\')';
+
+const upstreamCssSpecificProceduralLoader = [
+  'await self.ProceduralFiltererAPI;',
+  'self.listsProceduralFiltererAPI = new self.ProceduralFiltererAPI();',
+].join('\n');
+
+const talonCssSpecificProceduralLoader = [
+  'if ( self.ProceduralFiltererAPI instanceof Promise ) {',
+  '    try {',
+  '        await self.ProceduralFiltererAPI;',
+  '    } catch {',
+  '    }',
+  '}',
+  '',
+  "if ( typeof self.ProceduralFiltererAPI !== 'function' ) {",
+  '    self.ProceduralFiltererAPI = undefined;',
+  '    return;',
+  '}',
+  '',
+  'try {',
+  '    self.listsProceduralFiltererAPI = new self.ProceduralFiltererAPI();',
+  '} catch {',
+  '    self.listsProceduralFiltererAPI = undefined;',
+  '    return;',
+  '}',
+].join('\n');
+
 const makeFixture = async ({
   permissions = ['declarativeNetRequest', 'scripting', 'storage'],
   minimumChromeVersion = '122.0',
@@ -215,6 +246,80 @@ test('parity auditor excludes upstream test and experimental rulesets by default
   assert.deepEqual(report.excludedUpstreamRuleIds, ['ublock-experimental', 'ubol-tests']);
   assert.equal(report.rulesetIdDiff.added.includes('ubol-tests'), false);
   assert.equal(report.rulesetIdDiff.added.includes('ublock-experimental'), false);
+});
+
+test('parity auditor honors documented local-only ruleset exceptions', async () => {
+  const extensionDir = await makeFixture({
+    rulesets: ['easylist', 'talon-youtube-allow'],
+    licensePolicyRulesets: {
+      easylist: { commercialUse: 'allowed' },
+      'talon-youtube-allow': { commercialUse: 'allowed' },
+    },
+  });
+  const upstreamDir = await makeFixture();
+  const ownershipMapPath = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'talon-ownership-')), 'map.json');
+  await fs.writeFile(
+    ownershipMapPath,
+    `${JSON.stringify({
+      version: 1,
+      upstreamOwnedPaths: ['rulesets/**'],
+      talonOwnedPaths: [],
+      rulesetOnlyAllowedPaths: ['rulesets/**'],
+      rulesetIdExceptions: {
+        localExtra: {
+          'talon-youtube-allow': 'fixture Talon-owned YouTube ruleset',
+        },
+        upstreamExtra: {},
+      },
+    }, null, 2)}\n`,
+    'utf8'
+  );
+
+  const report = await buildParityReport({ extensionDir, upstreamDir, ownershipMapPath });
+
+  assert.deepEqual(report.localOnlyRuleIds, ['talon-youtube-allow']);
+  assert.deepEqual(report.rulesetIdDiff.added, []);
+  assert.deepEqual(report.rulesetIdDiff.removed, []);
+  assert.equal(report.hashDeltas.removed.includes('rulesets/main/talon-youtube-allow.json'), false);
+  assert.equal(report.driftClasses.includes('rules-data-only'), false);
+});
+
+test('parity auditor treats readable scriptlet payloads as equivalent to upstream encoding', async () => {
+  const scriptletPath = 'rulesets/scripting/scriptlet/isolated/ublock-filters.js';
+  const extensionDir = await makeFixture({
+    extraFiles: {
+      [scriptletPath]: `const args = ["${readableCaptchaPayload}"];\n`,
+    },
+  });
+  const upstreamDir = await makeFixture({
+    extraFiles: {
+      [scriptletPath]: `const args = ["${encodedCaptchaPayload}"];\n`,
+    },
+  });
+
+  const report = await buildParityReport({ extensionDir, upstreamDir });
+
+  assert.deepEqual(report.hashDeltas.changed, []);
+  assert.deepEqual(report.driftClasses, []);
+});
+
+test('parity auditor treats Talon css-specific fail-closed guard as upstream-equivalent', async () => {
+  const cssSpecificPath = 'js/scripting/css-specific.js';
+  const extensionDir = await makeFixture({
+    extraFiles: {
+      [cssSpecificPath]: `${talonCssSpecificProceduralLoader}\n`,
+    },
+  });
+  const upstreamDir = await makeFixture({
+    extraFiles: {
+      [cssSpecificPath]: `${upstreamCssSpecificProceduralLoader}\n`,
+    },
+  });
+
+  const report = await buildParityReport({ extensionDir, upstreamDir });
+
+  assert.deepEqual(report.hashDeltas.changed, []);
+  assert.deepEqual(report.driftClasses, []);
 });
 
 test('parity auditor blocks unapproved upstream rulesets', async () => {

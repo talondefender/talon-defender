@@ -1012,6 +1012,7 @@ rulesets/main/ukr-0.json
 rulesets/main/urlhaus-full.json
 rulesets/main/vie-1.json
 rulesets/regex/adguard-mobile.json
+rulesets/regex/annoyances-overlays.json
 rulesets/regex/annoyances-cookies.json
 rulesets/regex/block-lan.json
 rulesets/regex/chn-0.json
