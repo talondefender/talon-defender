@@ -9,7 +9,6 @@ if ( global.TalonYoutubeAdSkipController ) {
 }
 
 const SUBSYSTEM_ID = 'youtubeAdSkip';
-const FAST_PLAYBACK_RATE = 16;
 const CHECK_INTERVAL_MS = 500;
 const HIDDEN_CHECK_INTERVAL_MS = 1500;
 const MUTATION_TICK_DELAY_MS = 750;
@@ -179,17 +178,11 @@ const createController = env => {
         });
     };
 
-    const accelerateVideo = video => {
+    const muteAdVideo = video => {
         if ( !video ) { return; }
         saveVideoState(video);
         try {
             video.muted = true;
-        } catch {
-        }
-        try {
-            if ( Number(video.playbackRate) < FAST_PLAYBACK_RATE ) {
-                video.playbackRate = FAST_PLAYBACK_RATE;
-            }
         } catch {
         }
     };
@@ -230,7 +223,7 @@ const createController = env => {
         const adShowing = queryOne(AD_STATE_SELECTOR) !== null;
         if ( adShowing ) {
             for ( const video of videos() ) {
-                accelerateVideo(video);
+                muteAdVideo(video);
             }
             lastAdState = true;
             return true;
