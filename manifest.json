@@ -343,7 +343,7 @@
   "storage": {
     "managed_schema": "managed_storage.json"
   },
-  "version": "0.1.9",
+  "version": "0.1.8",
   "web_accessible_resources": [
     {
       "resources": [
