@@ -39,7 +39,6 @@ const createController = env => {
     const win = env.window || env;
     const doc = env.document;
     const videoStates = new WeakMap();
-    let observer;
     let playerObserver;
     let observedPlayer;
     let intervalId;
@@ -292,19 +291,6 @@ const createController = env => {
             return { started: false };
         }
         tick();
-        if ( observer === undefined && typeof win.MutationObserver === 'function' ) {
-            observer = new win.MutationObserver(records => {
-                suppressInterruptionNoticeNodes(records);
-                scheduleTick();
-            });
-            try {
-                observer.observe(doc.documentElement || doc, {
-                    childList: true,
-                    subtree: true,
-                });
-            } catch {
-            }
-        }
         if ( intervalId === undefined ) {
             refreshTimer();
         }
@@ -312,13 +298,6 @@ const createController = env => {
     };
 
     const stop = () => {
-        if ( observer !== undefined ) {
-            try {
-                observer.disconnect();
-            } catch {
-            }
-            observer = undefined;
-        }
         if ( playerObserver !== undefined ) {
             try {
                 playerObserver.disconnect();
@@ -336,7 +315,10 @@ const createController = env => {
     };
 
     const onVisibilityChange = () => refreshTimer();
-    const onNavigateFinish = () => scheduleTick();
+    const onNavigateFinish = () => {
+        noticeScanPending = true;
+        scheduleTick();
+    };
 
     const init = () => {
         start().catch(() => {});

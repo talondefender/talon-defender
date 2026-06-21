@@ -21,6 +21,12 @@ const SSAP_LOOP_WINDOW_MS = 15000;
 const DETECTOR_TIMER_DELAY_MS = 17000;
 const DETECTOR_TIMER_MULTIPLIER = 0.001;
 const YOUTUBE_URL_FALLBACK = 'https:' + '//www.youtube.com/';
+const PLAYBACK_WALL_SELECTORS = Object.freeze([
+    'ytd-player-error-message-renderer',
+    'yt-playability-error-supported-renderers',
+    '#player-error-message-container',
+    '#error-screen',
+]);
 const PLAYBACK_WALL_TEXT_RE = /Ad blockers violate YouTube['’]s Terms of Service/i;
 const RESET_LITE_RELOAD_FLAG = 'talon.youtube.resetLite.reloaded.v3';
 const RESET_LITE_WINDOW_NAME_TOKEN = 'talon-youtube-reset-lite-reloaded-v3';
@@ -515,8 +521,7 @@ const createController = env => {
         let matched = false;
         try {
             const name = typeof value.name === 'string' ? value.name : '';
-            matched = name.includes('onAbnormalityDetected') ||
-                String(value).includes('onAbnormalityDetected');
+            matched = name.includes('onAbnormalityDetected');
         } catch {
         }
         try {
@@ -836,7 +841,18 @@ const createController = env => {
 
     const isPlaybackWallPresent = () => {
         try {
-            return PLAYBACK_WALL_TEXT_RE.test(String(doc?.body?.innerText || ''));
+            for ( const selector of PLAYBACK_WALL_SELECTORS ) {
+                const element = doc?.querySelector?.(selector);
+                if ( PLAYBACK_WALL_TEXT_RE.test(String(element?.textContent || '')) ) {
+                    return true;
+                }
+            }
+        } catch {
+        }
+        try {
+            const bodyText = String(doc?.body?.textContent || '');
+            if ( bodyText.length > 200000 ) { return false; }
+            return PLAYBACK_WALL_TEXT_RE.test(bodyText);
         } catch {
         }
         return false;
@@ -881,27 +897,13 @@ const createController = env => {
         }
         try {
             doc?.addEventListener?.('DOMContentLoaded', check, { once: true });
+            doc?.addEventListener?.('yt-navigate-finish', () => {
+                win.setTimeout?.(check, 250);
+            });
             win.setTimeout?.(check, 500);
             win.setTimeout?.(check, 2000);
             win.setTimeout?.(check, 5000);
         } catch {
-        }
-        if ( typeof win.MutationObserver === 'function' && doc?.documentElement ) {
-            try {
-                const observer = new win.MutationObserver(() => {
-                    check();
-                    if ( wallRecoveryTriggered ) {
-                        observer.disconnect();
-                    }
-                });
-                observer.observe(doc.documentElement, {
-                    childList: true,
-                    subtree: true,
-                    characterData: true,
-                });
-                win.setTimeout?.(() => observer.disconnect(), 10000);
-            } catch {
-            }
         }
         check();
         return true;
@@ -1018,7 +1020,6 @@ const createController = env => {
     const installNavigationListeners = () => {
         const onNavigate = () => {
             refreshNavigationState();
-            ensureSsapGuards();
             correctSsapLoop();
         };
         try {
@@ -1039,9 +1040,9 @@ const createController = env => {
         // YouTube now treats player-response ad metadata pruning as an
         // ad-blocker signal. Keep the reset/timing guards, but leave player
         // response payloads intact so playback can proceed.
-        ensureSsapGuards();
-        installAbnormalityGuard();
-        installIframeFetchBridge();
+        // Keep high-volume page hooks opt-in: global Promise, DOM append, and
+        // Array push proxies are too costly during YouTube SPA rendering and
+        // typing.
         installDetectorTimerGuard();
         installNavigationListeners();
         installWallRecoveryObserver();

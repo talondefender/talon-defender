@@ -178,22 +178,21 @@ test('YouTube ad skip does not seek the player and trigger short-video restart l
   assert.equal(video.playbackRate, 16);
 });
 
-test('YouTube ad skip coalesces broad YouTube mutation churn before scanning the page', async () => {
+test('YouTube ad skip avoids broad document mutation work and coalesces player churn', async () => {
   const source = await readSource('js/scripting/youtube-ad-skip.js');
   const { context, state } = createHarness();
   vm.runInNewContext(source, context);
 
   const controller = context.__talonYoutubeAdSkipCreateController(context);
   await controller.start();
-  assert.equal(state.observerOptions.childList, true);
-  assert.equal(state.observerOptions.subtree, true);
-  assert.equal(state.observerOptions.attributes, undefined);
+  assert.equal(state.observerOptions, null);
+  assert.equal(state.observerCallback, null);
   assert.equal(state.playerObserverOptions.attributes, true);
   assert.equal(Array.from(state.playerObserverOptions.attributeFilter).join(','), 'class');
 
   state.skipClicks = 0;
-  state.observerCallback();
-  state.observerCallback();
+  state.playerObserverCallback();
+  state.playerObserverCallback();
 
   assert.equal(state.timeoutCallbacks.length, 1);
   assert.equal(state.skipClicks, 0);

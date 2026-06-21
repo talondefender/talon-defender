@@ -386,7 +386,21 @@ test('YouTube player guard installs the global SSAP array hook only when the SSA
   assert.strictEqual(context.Array.prototype.push, installedPush);
 });
 
-test('YouTube player guard suppresses YouTube abnormality reset callbacks', async () => {
+test('YouTube player guard keeps high-volume page hooks opt-in by default', async () => {
+  const { context, controller } = await createController();
+  const nativeArrayPush = context.Array.prototype.push;
+  const nativePromiseThen = context.Promise.prototype.then;
+  const nativeAppendChild = context.Node.prototype.appendChild;
+
+  assert.equal(controller.install(), true);
+
+  assert.strictEqual(context.Array.prototype.push, nativeArrayPush);
+  assert.strictEqual(context.Promise.prototype.then, nativePromiseThen);
+  assert.strictEqual(context.Node.prototype.appendChild, nativeAppendChild);
+  assert.equal(controller.getAbnormalityGuardStats().installed, false);
+});
+
+test('YouTube player guard can explicitly suppress YouTube abnormality reset callbacks', async () => {
   const { context, controller } = await createController();
   let abnormalityRan = false;
   let normalRan = false;
@@ -397,7 +411,7 @@ test('YouTube player guard suppresses YouTube abnormality reset callbacks', asyn
     normalRan = true;
   }
 
-  assert.equal(controller.install(), true);
+  assert.equal(controller.installAbnormalityGuard(), true);
   let stats = controller.getAbnormalityGuardStats();
   assert.equal(stats.installed, true);
   assert.equal(stats.hits, 0);
@@ -480,10 +494,13 @@ test('YouTube player guard accelerates only the native 17-second detector timer'
   assert.equal(stats.hits, 1);
 });
 
-test('YouTube player guard bridges guarded fetch into new about:blank iframes', async () => {
+test('YouTube player guard can explicitly bridge guarded fetch into new about:blank iframes', async () => {
   const { context, controller } = await createController();
+  const nativeAppendChild = context.Node.prototype.appendChild;
 
   assert.equal(controller.install(), true);
+  assert.strictEqual(context.Node.prototype.appendChild, nativeAppendChild);
+  assert.equal(controller.installIframeFetchBridge(), true);
   const parent = new context.Node();
   const blankFrame = new context.HTMLIFrameElement('about:blank');
   const remoteFrame = new context.HTMLIFrameElement('https://example.com/frame.html');
