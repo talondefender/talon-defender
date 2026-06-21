@@ -1040,9 +1040,9 @@ const createController = env => {
         // YouTube now treats player-response ad metadata pruning as an
         // ad-blocker signal. Keep the reset/timing guards, but leave player
         // response payloads intact so playback can proceed.
-        // Keep high-volume page hooks opt-in: global Promise, DOM append, and
-        // Array push proxies are too costly during YouTube SPA rendering and
-        // typing.
+        // Keep the targeted abnormality shield, but leave DOM append and
+        // Array push proxies opt-in so YouTube SPA rendering stays responsive.
+        installAbnormalityGuard();
         installDetectorTimerGuard();
         installNavigationListeners();
         installWallRecoveryObserver();

@@ -386,21 +386,19 @@ test('YouTube player guard installs the global SSAP array hook only when the SSA
   assert.strictEqual(context.Array.prototype.push, installedPush);
 });
 
-test('YouTube player guard keeps high-volume page hooks opt-in by default', async () => {
+test('YouTube player guard keeps broad DOM and Array hooks opt-in by default', async () => {
   const { context, controller } = await createController();
   const nativeArrayPush = context.Array.prototype.push;
-  const nativePromiseThen = context.Promise.prototype.then;
   const nativeAppendChild = context.Node.prototype.appendChild;
 
   assert.equal(controller.install(), true);
 
   assert.strictEqual(context.Array.prototype.push, nativeArrayPush);
-  assert.strictEqual(context.Promise.prototype.then, nativePromiseThen);
   assert.strictEqual(context.Node.prototype.appendChild, nativeAppendChild);
-  assert.equal(controller.getAbnormalityGuardStats().installed, false);
+  assert.equal(controller.getAbnormalityGuardStats().installed, true);
 });
 
-test('YouTube player guard can explicitly suppress YouTube abnormality reset callbacks', async () => {
+test('YouTube player guard suppresses YouTube abnormality reset callbacks by name only', async () => {
   const { context, controller } = await createController();
   let abnormalityRan = false;
   let normalRan = false;
@@ -411,7 +409,11 @@ test('YouTube player guard can explicitly suppress YouTube abnormality reset cal
     normalRan = true;
   }
 
-  assert.equal(controller.installAbnormalityGuard(), true);
+  normalContinuation.toString = () => {
+    throw new Error('normal callback body should not be inspected');
+  };
+
+  assert.equal(controller.install(), true);
   let stats = controller.getAbnormalityGuardStats();
   assert.equal(stats.installed, true);
   assert.equal(stats.hits, 0);
