@@ -454,7 +454,7 @@ test('YouTube player guard reset-lite shields enforcement storage without deleti
   context.localStorage.setItem('yt-adblock-enforcement', 'new-wall');
   context.localStorage.setItem('yt-player-volume', '80');
 
-  assert.equal(context.localStorage.map.get('yt-adblock-enforcement'), 'wall');
+  assert.equal(context.localStorage.map.has('yt-adblock-enforcement'), false);
   assert.equal(context.localStorage.getItem('yt-player-volume'), '80');
   assert.deepEqual(
     [0, 1, 2, 3].map(index => context.localStorage.key(index)).filter(Boolean),
@@ -464,6 +464,83 @@ test('YouTube player guard reset-lite shields enforcement storage without deleti
   assert.equal(stats.installed, true);
   assert.equal(stats.reads, 3);
   assert.equal(stats.writes, 1);
+});
+
+test('YouTube player guard wall recovery retries persisted v3 enforcement state', async () => {
+  const marks = [];
+  let cookieWrites = 0;
+  let reloads = 0;
+  const document = {
+    documentElement: {
+      setAttribute(name, value) {
+        marks.push({ name, value });
+      },
+    },
+    body: {
+      textContent: '',
+    },
+    addEventListener: () => {},
+    querySelector(selector) {
+      return String(selector).includes('ytd-enforcement-message-view-model')
+        ? { textContent: "Ad blockers violate YouTube's Terms of Service" }
+        : null;
+    },
+    get cookie() {
+      return '';
+    },
+    set cookie(value) {
+      cookieWrites += value ? 1 : 0;
+    },
+  };
+  const { context, controller } = await createController({
+    document,
+    indexedDB: {
+      databases: async () => [],
+    },
+    caches: {
+      keys: async () => [],
+      delete: async () => true,
+    },
+    navigator: {
+      serviceWorker: {
+        getRegistrations: async () => [],
+      },
+    },
+    location: {
+      hostname: 'www.youtube.com',
+      href: `${youtubeOrigin}/watch?v=test`,
+      origin: youtubeOrigin,
+      pathname: '/watch',
+      reload() {
+        reloads += 1;
+      },
+    },
+  });
+
+  context.localStorage.setItem('yt-player-volume', '75');
+  context.localStorage.setItem('yt-adblock-enforcement', 'wall');
+  context.sessionStorage.setItem('talon.youtube.resetLite.reloaded.v3', '1');
+
+  assert.equal(controller.install(), true);
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const stats = controller.getStorageResetLiteStats();
+  assert.equal(context.sessionStorage.getItem('talon.youtube.resetLite.reloaded.v4'), '1');
+  assert.equal(context.localStorage.map.has('yt-player-volume'), false);
+  assert.equal(context.localStorage.map.has('yt-adblock-enforcement'), false);
+  assert.equal(reloads, 1);
+  assert.equal(stats.persistentRuns, 1);
+  assert.equal(stats.wallRecoveryReloads, 1);
+  assert.equal(cookieWrites > 0, true);
+  assert.equal(
+    marks.some(entry =>
+      entry.name === 'data-talon-youtube-reset-lite' &&
+      entry.value === 'reloading'
+    ),
+    true
+  );
 });
 
 test('YouTube player guard accelerates only the native 17-second detector timer', async () => {

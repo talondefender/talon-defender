@@ -22,14 +22,17 @@ const DETECTOR_TIMER_DELAY_MS = 17000;
 const DETECTOR_TIMER_MULTIPLIER = 0.001;
 const YOUTUBE_URL_FALLBACK = 'https:' + '//www.youtube.com/';
 const PLAYBACK_WALL_SELECTORS = Object.freeze([
+    'ytd-enforcement-message-view-model',
     'ytd-player-error-message-renderer',
     'yt-playability-error-supported-renderers',
     '#player-error-message-container',
     '#error-screen',
 ]);
-const PLAYBACK_WALL_TEXT_RE = /Ad blockers violate YouTube['’]s Terms of Service/i;
-const RESET_LITE_RELOAD_FLAG = 'talon.youtube.resetLite.reloaded.v3';
-const RESET_LITE_WINDOW_NAME_TOKEN = 'talon-youtube-reset-lite-reloaded-v3';
+const RESET_LITE_RELOAD_FLAG = 'talon.youtube.resetLite.reloaded.v4';
+const RESET_LITE_WINDOW_NAME_TOKEN = 'talon-youtube-reset-lite-reloaded-v4';
+const PLAYBACK_WALL_TEXT_PATTERN_RE =
+    /Ad\s+blockers\s+violate\s+YouTube(?:['\u2019]|&#(?:39|x27);)s\s+Terms\s+of\s+Service/i;
+const MAX_PLAYBACK_WALL_BODY_TEXT_LENGTH = 1000000;
 const RESET_LITE_COOKIE_NAMES = Object.freeze([
     'GPS',
     'PREF',
@@ -85,6 +88,8 @@ const createController = env => {
     let storageResetLiteReads = 0;
     let storageResetLiteWrites = 0;
     let storageResetLiteDeletes = 0;
+    let nativeStorageKey;
+    let nativeStorageRemoveItem;
     let persistentResetLiteRuns = 0;
     let persistentResetLiteDeletes = 0;
     let persistentResetLiteCookieClears = 0;
@@ -574,7 +579,10 @@ const createController = env => {
         const nativeGetItem = proto.getItem;
         const nativeSetItem = proto.setItem;
         const nativeKey = proto.key;
+        const nativeRemoveItem = proto.removeItem;
         try {
+            nativeStorageKey = nativeStorageKey || nativeKey;
+            nativeStorageRemoveItem = nativeStorageRemoveItem || nativeRemoveItem;
             if ( typeof nativeGetItem === 'function' ) {
                 proto.getItem = new win.Proxy(nativeGetItem, {
                     apply(target, thisArg, args) {
@@ -625,7 +633,13 @@ const createController = env => {
     };
 
     const removeStorageKeys = (store, options = {}) => {
-        if ( isObject(store) === false || typeof store.removeItem !== 'function' ) {
+        const keyFn = typeof nativeStorageKey === 'function'
+            ? nativeStorageKey
+            : store?.key;
+        const removeFn = typeof nativeStorageRemoveItem === 'function'
+            ? nativeStorageRemoveItem
+            : store?.removeItem;
+        if ( isObject(store) === false || typeof removeFn !== 'function' ) {
             return 0;
         }
         const removeAll = options.all === true;
@@ -640,14 +654,14 @@ const createController = env => {
         for ( let i = length - 1; i >= 0; i-- ) {
             let key;
             try {
-                key = typeof store.key === 'function' ? store.key(i) : null;
+                key = typeof keyFn === 'function' ? keyFn.call(store, i) : null;
             } catch {
                 continue;
             }
             if ( typeof key !== 'string' || keepKeys.has(key) ) { continue; }
             if ( removeAll === false && shouldShieldStorageKey(key) === false ) { continue; }
             try {
-                store.removeItem(key);
+                removeFn.call(store, key);
                 removed += 1;
             } catch {
             }
@@ -843,7 +857,7 @@ const createController = env => {
         try {
             for ( const selector of PLAYBACK_WALL_SELECTORS ) {
                 const element = doc?.querySelector?.(selector);
-                if ( PLAYBACK_WALL_TEXT_RE.test(String(element?.textContent || '')) ) {
+                if ( PLAYBACK_WALL_TEXT_PATTERN_RE.test(String(element?.textContent || '')) ) {
                     return true;
                 }
             }
@@ -851,8 +865,10 @@ const createController = env => {
         }
         try {
             const bodyText = String(doc?.body?.textContent || '');
-            if ( bodyText.length > 200000 ) { return false; }
-            return PLAYBACK_WALL_TEXT_RE.test(bodyText);
+            if ( bodyText.length > MAX_PLAYBACK_WALL_BODY_TEXT_LENGTH ) {
+                return false;
+            }
+            return PLAYBACK_WALL_TEXT_PATTERN_RE.test(bodyText);
         } catch {
         }
         return false;

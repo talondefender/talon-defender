@@ -141,7 +141,7 @@ function createHarness() {
   return { context, interruptionToast, state, video };
 }
 
-test('YouTube ad skip mutes native ad playback without synthetic skip clicks or acceleration', async () => {
+test('YouTube ad skip accelerates native ad playback without synthetic skip clicks', async () => {
   const source = await readSource('js/scripting/youtube-ad-skip.js');
   const { context, state, video } = createHarness();
   vm.runInNewContext(source, context);
@@ -150,7 +150,7 @@ test('YouTube ad skip mutes native ad playback without synthetic skip clicks or 
   assert.equal(controller.tick(), true);
   assert.equal(state.skipClicks, 0);
   assert.equal(video.muted, true);
-  assert.equal(video.playbackRate, 1);
+  assert.equal(video.playbackRate, 16);
   assert.equal(video.currentTime, 2);
   assert.equal(state.styles.length, 0);
 
@@ -175,7 +175,7 @@ test('YouTube ad skip does not seek the player and trigger short-video restart l
   assert.equal(controller.tick(), true);
   assert.equal(video.currentTime, 0);
   assert.equal(state.skipClicks, 0);
-  assert.equal(video.playbackRate, 1);
+  assert.equal(video.playbackRate, 16);
 });
 
 test('YouTube ad skip avoids broad document mutation work and coalesces player churn', async () => {
