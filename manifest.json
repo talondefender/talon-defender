@@ -32,6 +32,11 @@
         "path": "/rulesets/main/talon-youtube-allow.json"
       },
       {
+        "id": "talon-site-fixes",
+        "enabled": true,
+        "path": "/rulesets/main/talon-site-fixes.json"
+      },
+      {
         "id": "easylist",
         "enabled": true,
         "path": "/rulesets/main/easylist.json"
@@ -325,6 +330,20 @@
       ],
       "run_at": "document_start",
       "all_frames": true
+    },
+    {
+      "matches": [
+        "*://*.french-stream.one/*",
+        "*://*.fsvid.lol/*",
+        "*://*.kakaflix.lol/*",
+        "*://*.uqload.is/*",
+        "*://*.vidzy.cc/*"
+      ],
+      "js": [
+        "js/scripting/french-stream-site-fix-loader.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
     }
   ],
   "name": "__MSG_extensionName__",
@@ -343,7 +362,7 @@
   "storage": {
     "managed_schema": "managed_storage.json"
   },
-  "version": "0.1.8",
+  "version": "0.1.9",
   "web_accessible_resources": [
     {
       "resources": [

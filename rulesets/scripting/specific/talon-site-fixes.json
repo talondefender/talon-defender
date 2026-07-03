@@ -1,0 +1,16 @@
+{
+  "selectors": [
+    "#dontfoid"
+  ],
+  "selectorLists": [
+    "0"
+  ],
+  "selectorListRefs": [
+    0
+  ],
+  "hostnames": [
+    "french-stream.one"
+  ],
+  "hasEntities": false,
+  "regexes": []
+}

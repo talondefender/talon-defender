@@ -1,0 +1,538 @@
+[
+  {
+    "id": 980001,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "||french-stream.one/js/9c9e0968.js",
+      "resourceTypes": [
+        "script"
+      ]
+    }
+  },
+  {
+    "id": 980002,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||kw.femalepostin.shop/",
+      "resourceTypes": [
+        "script"
+      ]
+    }
+  },
+  {
+    "id": 980003,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||refer-path.com/phase-action.html",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980004,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "vidzy.cc"
+      ],
+      "urlFilter": "||vidzy.cc/js/pop.js",
+      "resourceTypes": [
+        "script"
+      ]
+    }
+  },
+  {
+    "id": 980005,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "vidzy.cc"
+      ],
+      "urlFilter": "||vidzy.cc/2b0070e0.js",
+      "resourceTypes": [
+        "script"
+      ]
+    }
+  },
+  {
+    "id": 980006,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||llvpn.com/tag.min.js",
+      "resourceTypes": [
+        "script"
+      ]
+    }
+  },
+  {
+    "id": 980007,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||dp.humpingunfoggy.cfd/",
+      "resourceTypes": [
+        "script",
+        "xmlhttprequest"
+      ]
+    }
+  },
+  {
+    "id": 980008,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||vascon.kalesrussiaschuln.cyou/",
+      "resourceTypes": [
+        "xmlhttprequest"
+      ]
+    }
+  },
+  {
+    "id": 980009,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||wvdme.com/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame",
+        "script",
+        "xmlhttprequest"
+      ]
+    }
+  },
+  {
+    "id": 980010,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc",
+        "wvdme.com"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||s.click.aliexpress.com/e/_c3iY7qHn",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980011,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc",
+        "wvdme.com",
+        "s.click.aliexpress.com"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||www.aliexpress.com/p/popular-landing/aliexpress.html",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980012,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||kalesrussiaschuln.cyou/",
+      "resourceTypes": [
+        "script",
+        "xmlhttprequest",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980013,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||thawier.beholdsresinsimprevu.cfd/",
+      "resourceTypes": [
+        "script",
+        "xmlhttprequest"
+      ]
+    }
+  },
+  {
+    "id": 980014,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "||wk.sanpoiljejuna.cfd/cx/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980015,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "||hy.shibahsjessing.qpon/cx/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980016,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "||v2006.com/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980017,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "||2osb.com/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980018,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "||webls.net/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980019,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "||phiglerdail.net/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980020,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "||s.click.aliexpress.com/e/_c3iY7qHn",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980021,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "||www.aliexpress.com/p/popular-landing/aliexpress.html",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980022,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||hoinsealch.qpon/",
+      "resourceTypes": [
+        "script",
+        "xmlhttprequest"
+      ]
+    }
+  },
+  {
+    "id": 980023,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "||fartingpangane.shop/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980024,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "||073m.com/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980025,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||fsurl.lol/sso.php",
+      "resourceTypes": [
+        "sub_frame",
+        "xmlhttprequest",
+        "script"
+      ]
+    }
+  },
+  {
+    "id": 980026,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||bulbedcrus.shop/cx/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980027,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||teindpumpage.cfd/",
+      "resourceTypes": [
+        "script",
+        "xmlhttprequest"
+      ]
+    }
+  },
+  {
+    "id": 980028,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||scrougespongesgutsy.cyou/",
+      "resourceTypes": [
+        "script",
+        "xmlhttprequest"
+      ]
+    }
+  },
+  {
+    "id": 980029,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||keylesshowk.shop/",
+      "resourceTypes": [
+        "script",
+        "xmlhttprequest"
+      ]
+    }
+  }
+]

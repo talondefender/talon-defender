@@ -424,6 +424,7 @@ js/scripting/css-procedural.js
 js/scripting/css-specific.js
 js/scripting/css-user-terminate.js
 js/scripting/css-user.js
+js/scripting/french-stream-site-fix-loader.js
 js/scripting/isolated-api.js
 js/scripting/native-heuristics.js
 js/scripting/picker.js
@@ -1003,6 +1004,7 @@ rulesets/main/spa-0.json
 rulesets/main/spa-1.json
 rulesets/main/svn-0.json
 rulesets/main/swe-1.json
+rulesets/main/talon-site-fixes.json
 rulesets/main/talon-youtube-allow.json
 rulesets/main/tha-0.json
 rulesets/main/tur-0.json
@@ -1176,6 +1178,7 @@ rulesets/scripting/scriptlet/main/rus-0.js
 rulesets/scripting/scriptlet/main/rus-1.js
 rulesets/scripting/scriptlet/main/spa-1.js
 rulesets/scripting/scriptlet/main/swe-1.js
+rulesets/scripting/scriptlet/main/talon-site-fixes.js
 rulesets/scripting/scriptlet/main/tha-0.js
 rulesets/scripting/scriptlet/main/tur-0.js
 rulesets/scripting/scriptlet/main/ublock-badware.js
@@ -1266,6 +1269,8 @@ rulesets/scripting/specific/svn-0.js
 rulesets/scripting/specific/svn-0.json
 rulesets/scripting/specific/swe-1.js
 rulesets/scripting/specific/swe-1.json
+rulesets/scripting/specific/talon-site-fixes.js
+rulesets/scripting/specific/talon-site-fixes.json
 rulesets/scripting/specific/tha-0.js
 rulesets/scripting/specific/tha-0.json
 rulesets/scripting/specific/tur-0.js

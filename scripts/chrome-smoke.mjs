@@ -17,8 +17,11 @@ const PAYWALL_DYNAMIC_RULE_ID = 8500000;
 const CONTROL_PAGE_PATH = 'web_accessible_resources/noop.html';
 const DEFAULT_RULESET_IDS = [
   'ublock-filters',
+  'talon-youtube-allow',
+  'talon-site-fixes',
   'easylist',
   'easyprivacy',
+  'pgl',
   'ublock-badware',
   'urlhaus-full',
 ];

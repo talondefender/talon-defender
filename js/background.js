@@ -1411,6 +1411,15 @@ const MAX_RULESETS_PER_REQUEST = 256;
 const MAX_MODE_HOSTS_PER_LEVEL = 4096;
 const POPUP_WARMUP_RECOVERY_TIMEOUT_MS = 4000;
 const RULESET_ID_RE = /^[a-z0-9][a-z0-9._-]{0,127}$/;
+const FRENCH_STREAM_SITE_FIX_HOSTNAMES = new Set([
+    'french-stream.one',
+    'fsvid.lol',
+    'kakaflix.lol',
+    'uqload.is',
+    'vidzy.cc',
+]);
+const FRENCH_STREAM_SITE_FIX_MAIN_PATH =
+    '/rulesets/scripting/scriptlet/main/talon-site-fixes.js';
 
 const sanitizeModeHostname = value => {
     if (typeof value !== 'string') { return ''; }
@@ -2102,6 +2111,64 @@ function registerInjectablesIfEntitled() {
     return registerInjectables();
 }
 
+const hostnameFromUrl = value => {
+    if ( typeof value !== 'string' || value === '' ) { return ''; }
+    try {
+        return new URL(value).hostname.toLowerCase();
+    } catch {
+    }
+    return '';
+};
+
+const isFrenchStreamSiteFixHostname = hostname => {
+    if ( typeof hostname !== 'string' || hostname === '' ) { return false; }
+    return FRENCH_STREAM_SITE_FIX_HOSTNAMES.has(hostname) ||
+        Array.from(FRENCH_STREAM_SITE_FIX_HOSTNAMES).some(
+            root => hostname.endsWith(`.${root}`)
+        );
+};
+
+async function ensureFrenchStreamSiteFixForSender(request, sender, tabId, frameId) {
+    if ( browser.scripting?.executeScript === undefined ) {
+        return { ok: false, error: 'scripting_unavailable' };
+    }
+    if ( sender?.id !== runtime.id ) {
+        return { ok: false, error: 'invalid_sender' };
+    }
+    if ( Number.isInteger(tabId) === false || Number.isInteger(frameId) === false ) {
+        return { ok: false, error: 'invalid_sender' };
+    }
+    const hostname = hostnameFromUrl(sender?.url) || hostnameFromUrl(request?.url);
+    if ( isFrenchStreamSiteFixHostname(hostname) === false ) {
+        return { ok: false, error: 'unsupported_host' };
+    }
+    if ( isEntitled() === false ) {
+        return { ok: false, error: 'subscription_required' };
+    }
+
+    const registerResult = await registerInjectablesIfEntitled().catch(reason => ({
+        ok: false,
+        lastError: String(reason || 'register injectables failed'),
+    }));
+    await browser.scripting.executeScript({
+        files: [ FRENCH_STREAM_SITE_FIX_MAIN_PATH ],
+        target: { tabId, frameIds: [ frameId ] },
+        world: 'MAIN',
+        injectImmediately: true,
+    });
+    return {
+        ok: true,
+        injected: true,
+        registered:
+            registerResult === true ||
+            (registerResult instanceof Object && registerResult.ok === true),
+        registrationError:
+            registerResult instanceof Object && typeof registerResult.lastError === 'string'
+                ? registerResult.lastError
+                : '',
+    };
+}
+
 async function scrubPrivateProofState() {
     const [ communityState ] = await Promise.all([
         scrubPrivateCommunityState('developer-mode-off'),
@@ -2777,6 +2844,18 @@ function onMessage(request, sender, callback) {
     // Does not require trusted origin.
 
     switch (what) {
+
+        case 'ensureFrenchStreamSiteFix': {
+            ensureFrenchStreamSiteFixForSender(request, sender, tabId, frameId).then(response => {
+                callback(response);
+            }).catch(reason => {
+                if ( isIgnorableRuntimeError(reason) === false ) {
+                    ubolErr(`ensureFrenchStreamSiteFix/${reason}`);
+                }
+                callback({ ok: false, error: `${reason}` });
+            });
+            return true;
+        }
 
         case 'registerOverlaySession': {
             if (isEntitled() === false) {

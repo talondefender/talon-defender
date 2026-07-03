@@ -48,6 +48,29 @@
     }
   },
   {
+    "id": "talon-site-fixes",
+    "name": "Talon site compatibility fixes",
+    "group": "default",
+    "enabled": true,
+    "homeURL": "https://talondefender.com/",
+      "filters": {
+        "total": 26,
+        "accepted": 26,
+        "rejected": 0
+      },
+    "rules": {
+      "total": 2,
+      "plain": 2,
+      "regex": 0,
+      "strictblock": 0,
+      "rejected": 0
+    },
+    "css": {
+      "generic": 0,
+      "specific": 1
+    }
+  },
+  {
     "id": "easylist",
     "name": "EasyList",
     "group": "default",

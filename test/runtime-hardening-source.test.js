@@ -442,7 +442,7 @@ test('custom filter compiler messages require the offscreen compiler sender', as
   assert.match(handlerSource, /if \( isOffscreenCompilerSender\(sender\) === false \) \{ return; \}/);
 });
 
-test('extension source keeps only the bounded Talon-owned YouTube runtime lanes', async () => {
+test('extension source keeps only bounded static runtime lanes', async () => {
   const watchPrefix = 'youtube' + '-watch';
   const relayHtmlPath = `web_accessible_resources/${watchPrefix}-relay.html`;
   const relayScriptPath = `web_accessible_resources/${watchPrefix}-relay.js`;
@@ -450,10 +450,13 @@ test('extension source keeps only the bounded Talon-owned YouTube runtime lanes'
   const talonYouTubePath = 'js/scripting/youtube-ad-skip.js';
   const talonYouTubeGuardPath = 'js/scripting/youtube-player-guard.js';
   const talonYouTubeGuardLoaderPath = 'js/scripting/youtube-player-guard-loader.js';
+  const frenchStreamLoaderPath = 'js/scripting/french-stream-site-fix-loader.js';
+  const frenchStreamMainSiteFixPath = 'rulesets/scripting/scriptlet/main/talon-site-fixes.js';
   const managerSource = await readSource('js/scripting-manager.js');
   const talonYouTubeSource = await readSource(talonYouTubePath);
   const talonYouTubeGuardSource = await readSource(talonYouTubeGuardPath);
   const talonYouTubeGuardLoaderSource = await readSource(talonYouTubeGuardLoaderPath);
+  const frenchStreamLoaderSource = await readSource(frenchStreamLoaderPath);
   const heuristicSource = await readSource('js/scripting/native-heuristics.js');
   const backgroundSource = await readSource('js/background.js');
   const rulesetSource = await readSource('js/ruleset-manager.js');
@@ -473,6 +476,10 @@ test('extension source keeps only the bounded Talon-owned YouTube runtime lanes'
     Array.isArray(entry.js) &&
     entry.js.includes(talonYouTubeGuardLoaderPath)
   );
+  const frenchStreamLoaders = contentScripts.filter(entry =>
+    Array.isArray(entry.js) &&
+    entry.js.includes(frenchStreamLoaderPath)
+  );
   const youtubeGuardResources = (manifest.web_accessible_resources ?? []).filter(entry =>
     Array.isArray(entry.resources) &&
     entry.resources.includes(talonYouTubeGuardPath)
@@ -481,6 +488,7 @@ test('extension source keeps only the bounded Talon-owned YouTube runtime lanes'
   assert.equal(await pathExists(talonYouTubePath), true);
   assert.equal(await pathExists(talonYouTubeGuardPath), true);
   assert.equal(await pathExists(talonYouTubeGuardLoaderPath), true);
+  assert.equal(await pathExists(frenchStreamLoaderPath), true);
   assert.equal(await pathExists(bootstrapPath), false);
   assert.equal(await pathExists(relayHtmlPath), false);
   assert.equal(await pathExists(relayScriptPath), false);
@@ -502,6 +510,18 @@ test('extension source keeps only the bounded Talon-owned YouTube runtime lanes'
   assert.equal(youtubeGuardLoaders[0].run_at, 'document_start');
   assert.equal(youtubeGuardLoaders[0].all_frames, true);
   assert.equal(youtubeGuardLoaders[0].world, undefined);
+  assert.equal(frenchStreamLoaders.length, 1);
+  assert.deepEqual(frenchStreamLoaders[0].matches, [
+    '*://*.french-stream.one/*',
+    '*://*.fsvid.lol/*',
+    '*://*.kakaflix.lol/*',
+    '*://*.uqload.is/*',
+    '*://*.vidzy.cc/*',
+  ]);
+  assert.deepEqual(frenchStreamLoaders[0].js, [frenchStreamLoaderPath]);
+  assert.equal(frenchStreamLoaders[0].run_at, 'document_start');
+  assert.equal(frenchStreamLoaders[0].all_frames, true);
+  assert.equal(frenchStreamLoaders[0].world, undefined);
   assert.equal(youtubeGuardResources.length, 1);
   assert.deepEqual(youtubeGuardResources[0].matches, [
     '*://*.youtube.com/*',
@@ -514,6 +534,15 @@ test('extension source keeps only the bounded Talon-owned YouTube runtime lanes'
     ),
     false
   );
+  assert.equal(
+    contentScripts.some(entry =>
+      Array.isArray(entry.js) &&
+      entry.js.includes(frenchStreamMainSiteFixPath)
+    ),
+    false
+  );
+  assert.equal(publicResources.includes(frenchStreamLoaderPath), false);
+  assert.equal(publicResources.includes(frenchStreamMainSiteFixPath), false);
   assert.equal(publicResources.some(resource => resource.includes(`${watchPrefix}-relay`)), false);
   assert.equal(
     publicResources.some(resource =>
@@ -524,6 +553,7 @@ test('extension source keeps only the bounded Talon-owned YouTube runtime lanes'
   assert.equal(allowlist.includes(talonYouTubePath), true);
   assert.equal(allowlist.includes(talonYouTubeGuardPath), true);
   assert.equal(allowlist.includes(talonYouTubeGuardLoaderPath), true);
+  assert.equal(allowlist.includes(frenchStreamLoaderPath), true);
   assert.equal(allowlist.includes(bootstrapPath), false);
   assert.equal(allowlist.includes(relayHtmlPath), false);
   assert.equal(allowlist.includes(relayScriptPath), false);
@@ -551,6 +581,14 @@ test('extension source keeps only the bounded Talon-owned YouTube runtime lanes'
   assert.match(talonYouTubeGuardLoaderSource, /chrome\.runtime\.getURL\(GUARD_SCRIPT_PATH\)/);
   assert.match(talonYouTubeGuardLoaderSource, /createElement\('script'\)/);
   assert.doesNotMatch(talonYouTubeGuardLoaderSource, /\bfetch\s*\(|\bXMLHttpRequest\b/);
+  assert.match(frenchStreamLoaderSource, /ensureFrenchStreamSiteFix/);
+  assert.doesNotMatch(frenchStreamLoaderSource, /\bfetch\s*\(|\bXMLHttpRequest\b|runtime\.getURL/);
+  assert.match(backgroundSource, /case 'ensureFrenchStreamSiteFix'/);
+  assert.match(backgroundSource, /sender\?\.id !== runtime\.id/);
+  assert.match(backgroundSource, /isFrenchStreamSiteFixHostname\(hostname\) === false/);
+  assert.match(backgroundSource, /isEntitled\(\) === false/);
+  assert.match(backgroundSource, /files: \[ FRENCH_STREAM_SITE_FIX_MAIN_PATH \]/);
+  assert.match(backgroundSource, /world: 'MAIN'/);
   const privateComparatorToken = String.fromCharCode(99, 111, 102, 102, 101, 101);
   assert.doesNotMatch(talonYouTubeGuardSource, new RegExp(`analytics|posthog|${privateComparatorToken}-break`, 'i'));
   assert.doesNotMatch(talonYouTubeGuardLoaderSource, new RegExp(`analytics|posthog|${privateComparatorToken}-break`, 'i'));

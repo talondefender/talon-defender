@@ -84,7 +84,7 @@ test('remote scriptlet denylist and audit override sanitization remain bounded',
   assert.equal(resolveAuditOverride(overrides, 'news.example.com', 'nativeHeuristics'), undefined);
 });
 
-test('manifest and public allowlist expose only the Talon-owned YouTube runtime lanes', async () => {
+test('manifest and public allowlist expose bounded static runtime bootstrap lanes', async () => {
   const watchPrefix = 'youtube' + '-watch';
   const relayHtmlPath = `web_accessible_resources/${watchPrefix}-relay.html`;
   const relayScriptPath = `web_accessible_resources/${watchPrefix}-relay.js`;
@@ -92,6 +92,8 @@ test('manifest and public allowlist expose only the Talon-owned YouTube runtime 
   const talonYouTubePath = 'js/scripting/youtube-ad-skip.js';
   const talonYouTubeGuardPath = 'js/scripting/youtube-player-guard.js';
   const talonYouTubeGuardLoaderPath = 'js/scripting/youtube-player-guard-loader.js';
+  const frenchStreamLoaderPath = 'js/scripting/french-stream-site-fix-loader.js';
+  const frenchStreamMainSiteFixPath = 'rulesets/scripting/scriptlet/main/talon-site-fixes.js';
   const manifest = JSON.parse(await readSource('manifest.json'));
   const allowlist = await readSource('public-safe-allowlist.txt');
   const contentScripts = Array.isArray(manifest.content_scripts) ? manifest.content_scripts : [];
@@ -139,6 +141,29 @@ test('manifest and public allowlist expose only the Talon-owned YouTube runtime 
     ),
     false
   );
+  const frenchStreamLoaders = contentScripts.filter(entry =>
+    Array.isArray(entry.js) &&
+    entry.js.includes(frenchStreamLoaderPath)
+  );
+  assert.equal(frenchStreamLoaders.length, 1);
+  assert.deepEqual(frenchStreamLoaders[0].matches, [
+    '*://*.french-stream.one/*',
+    '*://*.fsvid.lol/*',
+    '*://*.kakaflix.lol/*',
+    '*://*.uqload.is/*',
+    '*://*.vidzy.cc/*',
+  ]);
+  assert.deepEqual(frenchStreamLoaders[0].js, [frenchStreamLoaderPath]);
+  assert.equal(frenchStreamLoaders[0].run_at, 'document_start');
+  assert.equal(frenchStreamLoaders[0].all_frames, true);
+  assert.equal(frenchStreamLoaders[0].world, undefined);
+  assert.equal(
+    contentScripts.some(entry =>
+      Array.isArray(entry.js) &&
+      entry.js.includes(frenchStreamMainSiteFixPath)
+    ),
+    false
+  );
   const youtubeGuardResources = webAccessibleResources.filter(entry =>
     Array.isArray(entry.resources) &&
     entry.resources.includes(talonYouTubeGuardPath)
@@ -157,10 +182,21 @@ test('manifest and public allowlist expose only the Talon-owned YouTube runtime 
     ),
     false
   );
+  assert.equal(
+    webAccessibleResources.some(entry =>
+      Array.isArray(entry.resources) &&
+      (
+        entry.resources.includes(frenchStreamLoaderPath) ||
+        entry.resources.includes(frenchStreamMainSiteFixPath)
+      )
+    ),
+    false
+  );
 
   assert.equal(allowlist.includes(talonYouTubePath), true);
   assert.equal(allowlist.includes(talonYouTubeGuardPath), true);
   assert.equal(allowlist.includes(talonYouTubeGuardLoaderPath), true);
+  assert.equal(allowlist.includes(frenchStreamLoaderPath), true);
   assert.equal(allowlist.includes(bootstrapPath), false);
   assert.equal(allowlist.includes(relayHtmlPath), false);
   assert.equal(allowlist.includes(relayScriptPath), false);

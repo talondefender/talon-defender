@@ -20,6 +20,7 @@ let packagedOutDir;
 const EXPECTED_DEFAULT_IDS = [
   'ublock-filters',
   'talon-youtube-allow',
+  'talon-site-fixes',
   'easylist',
   'easyprivacy',
   'pgl',
@@ -367,6 +368,198 @@ test('YouTube compatibility allow rules outrank dynamic blocking rules', async (
     assert.equal(rule?.priority, 3000000);
     assert.deepEqual(rule?.condition?.resourceTypes, ['main_frame', 'sub_frame']);
   }
+});
+
+test('Talon site fixes target French Stream popup abuse narrowly', async () => {
+  const rules = await readJson('../rulesets/main/talon-site-fixes.json');
+  assert.equal(Array.isArray(rules), true);
+  assert.equal(rules.length, 29);
+  assert.equal(rules.every(rule => rule?.action?.type === 'block'), true);
+  assert.equal(
+    rules.some(rule => rule?.condition?.urlFilter === '||french-stream.one/js/9c9e0968.js'),
+    true
+  );
+  assert.equal(
+    rules.some(rule =>
+      rule?.condition?.urlFilter === '||kw.femalepostin.shop/' &&
+      rule?.condition?.initiatorDomains?.includes('french-stream.one') &&
+      rule?.condition?.initiatorDomains?.includes('vidzy.cc')
+    ),
+    true
+  );
+  assert.equal(
+    rules.some(rule =>
+      rule?.condition?.urlFilter === '||refer-path.com/phase-action.html' &&
+      rule?.condition?.resourceTypes?.includes('main_frame') &&
+      rule?.condition?.initiatorDomains?.includes('vidzy.cc') &&
+      rule?.condition?.initiatorDomains?.includes('french-stream.one')
+    ),
+    true
+  );
+  assert.equal(
+    rules.some(rule =>
+      rule?.condition?.urlFilter === '||vidzy.cc/js/pop.js' &&
+      rule?.condition?.initiatorDomains?.includes('vidzy.cc')
+    ),
+    true
+  );
+  assert.equal(
+    rules.some(rule =>
+      rule?.condition?.urlFilter === '||vidzy.cc/2b0070e0.js' &&
+      rule?.condition?.initiatorDomains?.includes('vidzy.cc')
+    ),
+    true
+  );
+  assert.equal(
+    rules.some(rule =>
+      rule?.condition?.urlFilter === '||llvpn.com/tag.min.js' &&
+      rule?.condition?.initiatorDomains?.includes('vidzy.cc')
+    ),
+    true
+  );
+  assert.equal(
+    rules.some(rule =>
+      rule?.condition?.urlFilter === '||dp.humpingunfoggy.cfd/' &&
+      rule?.condition?.resourceTypes?.includes('script') &&
+      rule?.condition?.initiatorDomains?.includes('french-stream.one')
+    ),
+    true
+  );
+  assert.equal(
+    rules.some(rule =>
+      rule?.condition?.urlFilter === '||vascon.kalesrussiaschuln.cyou/' &&
+      rule?.condition?.resourceTypes?.includes('xmlhttprequest') &&
+      rule?.condition?.initiatorDomains?.includes('french-stream.one')
+    ),
+    true
+  );
+  assert.equal(
+    rules.some(rule =>
+      rule?.condition?.urlFilter === '||wvdme.com/' &&
+      rule?.condition?.resourceTypes?.includes('main_frame') &&
+      rule?.condition?.initiatorDomains?.includes('vidzy.cc')
+    ),
+    true
+  );
+  assert.equal(
+    rules.some(rule =>
+      rule?.condition?.urlFilter === '||s.click.aliexpress.com/e/_c3iY7qHn' &&
+      rule?.condition?.resourceTypes?.includes('main_frame') &&
+      rule?.condition?.initiatorDomains?.includes('wvdme.com')
+    ),
+    true
+  );
+  assert.equal(
+    rules.some(rule =>
+      rule?.condition?.urlFilter === '||www.aliexpress.com/p/popular-landing/aliexpress.html' &&
+      rule?.condition?.resourceTypes?.includes('main_frame') &&
+      rule?.condition?.initiatorDomains?.includes('s.click.aliexpress.com')
+    ),
+    true
+  );
+  assert.equal(
+    rules.some(rule =>
+      rule?.condition?.urlFilter === '||kalesrussiaschuln.cyou/' &&
+      rule?.condition?.resourceTypes?.includes('sub_frame') &&
+      rule?.condition?.initiatorDomains?.includes('french-stream.one')
+    ),
+    true
+  );
+  assert.equal(
+    rules.some(rule =>
+      rule?.condition?.urlFilter === '||thawier.beholdsresinsimprevu.cfd/' &&
+      rule?.condition?.resourceTypes?.includes('xmlhttprequest') &&
+      rule?.condition?.initiatorDomains?.includes('vidzy.cc')
+    ),
+    true
+  );
+  assert.equal(
+    rules.some(rule =>
+      rule?.condition?.urlFilter === '||hoinsealch.qpon/' &&
+      rule?.condition?.resourceTypes?.includes('script') &&
+      rule?.condition?.initiatorDomains?.includes('vidzy.cc')
+    ),
+    true
+  );
+  assert.equal(
+    rules.some(rule =>
+      rule?.condition?.urlFilter === '||fsurl.lol/sso.php' &&
+      rule?.condition?.resourceTypes?.includes('sub_frame') &&
+      rule?.condition?.initiatorDomains?.includes('french-stream.one')
+    ),
+    true
+  );
+  for (const urlFilter of [
+    '||bulbedcrus.shop/cx/',
+    '||teindpumpage.cfd/',
+    '||scrougespongesgutsy.cyou/',
+    '||keylesshowk.shop/',
+  ]) {
+    assert.equal(
+      rules.some(rule =>
+        rule?.condition?.urlFilter === urlFilter &&
+        rule?.condition?.initiatorDomains?.includes('french-stream.one')
+      ),
+      true,
+      `${urlFilter} must be covered for French Stream creative popup chains`
+    );
+  }
+  for (const urlFilter of [
+    '||wk.sanpoiljejuna.cfd/cx/',
+    '||hy.shibahsjessing.qpon/cx/',
+    '||v2006.com/',
+    '||2osb.com/',
+    '||webls.net/',
+    '||phiglerdail.net/',
+    '||s.click.aliexpress.com/e/_c3iY7qHn',
+    '||www.aliexpress.com/p/popular-landing/aliexpress.html',
+    '||fartingpangane.shop/',
+    '||073m.com/',
+  ]) {
+    assert.equal(
+      rules.some(rule =>
+        rule?.condition?.urlFilter === urlFilter &&
+        rule?.condition?.resourceTypes?.includes('main_frame') &&
+        Array.isArray(rule?.condition?.initiatorDomains) === false
+      ),
+      true,
+      `${urlFilter} must have an unscoped main-frame fallback`
+    );
+  }
+
+  const cosmetics = await readJson('../rulesets/scripting/specific/talon-site-fixes.json');
+  assert.deepEqual(cosmetics.selectors, ['#dontfoid']);
+  assert.deepEqual(cosmetics.hostnames, ['french-stream.one']);
+  assert.equal(cosmetics.hasEntities, false);
+
+  const scriptletDetails = await readJson('../rulesets/scriptlet-details.json');
+  const scriptletEntry = scriptletDetails.find(entry => entry?.[0] === 'talon-site-fixes');
+  assert.deepEqual(scriptletEntry?.[1]?.MAIN, [
+    'french-stream.one',
+    'fsvid.lol',
+    'kakaflix.lol',
+    'uqload.is',
+    'vidzy.cc',
+  ]);
+
+  const scriptletSource = await readText('../rulesets/scripting/scriptlet/main/talon-site-fixes.js');
+  assert.match(scriptletSource, /__talonFrenchStreamPopupGuard/);
+  assert.match(scriptletSource, /hidePopupOverlays/);
+  assert.match(scriptletSource, /document\.referrer/);
+  assert.match(scriptletSource, /Window\.prototype, 'open'/);
+  assert.match(scriptletSource, /Object\.defineProperty\(self, 'open'/);
+  assert.match(scriptletSource, /shouldBlockPlayerGesturePopupUrl/);
+  assert.match(scriptletSource, /HTMLAnchorElement\.prototype\.click/);
+  assert.match(scriptletSource, /HTMLFormElement\.prototype\.submit/);
+  assert.match(scriptletSource, /document\.querySelector\('base\[target\]'\)/);
+  assert.match(scriptletSource, /itIsMessageForCreative/);
+  assert.doesNotMatch(scriptletSource, /isFrenchStreamPlayerFrame === false \) \{ return false; \}\s*const parsed = parseMessageData\(data\)/);
+  assert.match(scriptletSource, /Window\.prototype\.postMessage/);
+  assert.match(scriptletSource, /__talonFrenchStreamFullscreenIntent/);
+  assert.match(scriptletSource, /preventUnsolicitedFullscreenMessage/);
+  assert.match(scriptletSource, /removeStartupFlickerFrames/);
+  assert.match(scriptletSource, /fsurl\.lol\/sso\.php/);
+  assert.match(scriptletSource, /wrapFullscreenRequest\(nativeElementRequestFullscreen, 'requestFullscreen'\)/);
 });
 
 test('packaged build preserves bundled annoyance coverage, regional coverage, defaults, and metadata parity', async () => {

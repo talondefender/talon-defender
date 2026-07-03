@@ -250,10 +250,11 @@ test('parity auditor excludes upstream test and experimental rulesets by default
 
 test('parity auditor honors documented local-only ruleset exceptions', async () => {
   const extensionDir = await makeFixture({
-    rulesets: ['easylist', 'talon-youtube-allow'],
+    rulesets: ['easylist', 'talon-youtube-allow', 'talon-site-fixes'],
     licensePolicyRulesets: {
       easylist: { commercialUse: 'allowed' },
       'talon-youtube-allow': { commercialUse: 'allowed' },
+      'talon-site-fixes': { commercialUse: 'allowed' },
     },
   });
   const upstreamDir = await makeFixture();
@@ -268,6 +269,7 @@ test('parity auditor honors documented local-only ruleset exceptions', async () 
       rulesetIdExceptions: {
         localExtra: {
           'talon-youtube-allow': 'fixture Talon-owned YouTube ruleset',
+          'talon-site-fixes': 'fixture Talon-owned site compatibility ruleset',
         },
         upstreamExtra: {},
       },
@@ -277,10 +279,11 @@ test('parity auditor honors documented local-only ruleset exceptions', async () 
 
   const report = await buildParityReport({ extensionDir, upstreamDir, ownershipMapPath });
 
-  assert.deepEqual(report.localOnlyRuleIds, ['talon-youtube-allow']);
+  assert.deepEqual(report.localOnlyRuleIds, ['talon-site-fixes', 'talon-youtube-allow']);
   assert.deepEqual(report.rulesetIdDiff.added, []);
   assert.deepEqual(report.rulesetIdDiff.removed, []);
   assert.equal(report.hashDeltas.removed.includes('rulesets/main/talon-youtube-allow.json'), false);
+  assert.equal(report.hashDeltas.removed.includes('rulesets/main/talon-site-fixes.json'), false);
   assert.equal(report.driftClasses.includes('rules-data-only'), false);
 });
 

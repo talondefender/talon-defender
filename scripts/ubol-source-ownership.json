@@ -24,7 +24,8 @@
   ],
   "rulesetIdExceptions": {
     "localExtra": {
-      "talon-youtube-allow": "Talon-owned YouTube compatibility allow rules. This ruleset is intentionally local and must not be removed during uBO Lite parity work."
+      "talon-youtube-allow": "Talon-owned YouTube compatibility allow rules. This ruleset is intentionally local and must not be removed during uBO Lite parity work.",
+      "talon-site-fixes": "Talon-owned site compatibility rules for customer breakage fixes. This ruleset is intentionally local and must not be removed during uBO Lite parity work."
     },
     "upstreamExtra": {}
   },
