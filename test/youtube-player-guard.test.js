@@ -398,12 +398,18 @@ test('YouTube player guard keeps broad DOM and Array hooks opt-in by default', a
   assert.equal(controller.getAbnormalityGuardStats().installed, true);
 });
 
-test('YouTube player guard suppresses YouTube abnormality reset callbacks by name only', async () => {
+test('YouTube player guard suppresses targeted abnormality reset callbacks', async () => {
   const { context, controller } = await createController();
   let abnormalityRan = false;
+  let sourceMatchedRan = false;
   let normalRan = false;
   function onAbnormalityDetected() {
     abnormalityRan = true;
+  }
+  function detectorContinuation() {
+    const marker = 'adblock enforcement detected';
+    sourceMatchedRan = true;
+    return marker;
   }
   function normalContinuation() {
     normalRan = true;
@@ -419,13 +425,15 @@ test('YouTube player guard suppresses YouTube abnormality reset callbacks by nam
   assert.equal(stats.hits, 0);
 
   await context.Promise.resolve('x').then(onAbnormalityDetected);
+  await context.Promise.resolve('x').then(detectorContinuation);
   await context.Promise.resolve('x').then(normalContinuation);
 
   assert.equal(abnormalityRan, false);
+  assert.equal(sourceMatchedRan, false);
   assert.equal(normalRan, true);
   stats = controller.getAbnormalityGuardStats();
   assert.equal(stats.installed, true);
-  assert.equal(stats.hits, 1);
+  assert.equal(stats.hits, 2);
 });
 
 test('YouTube player guard reset-lite shields enforcement storage without deleting user data', async () => {
@@ -466,7 +474,7 @@ test('YouTube player guard reset-lite shields enforcement storage without deleti
   assert.equal(stats.writes, 1);
 });
 
-test('YouTube player guard recovers once from a visible YouTube playback wall', async () => {
+test('YouTube player guard does not reload or wipe profile data from a visible wall during install', async () => {
   const marks = [];
   let cookieWrites = 0;
   let reloads = 0;
@@ -527,18 +535,18 @@ test('YouTube player guard recovers once from a visible YouTube playback wall', 
   await new Promise(resolve => setTimeout(resolve, 0));
 
   const stats = controller.getStorageResetLiteStats();
-  assert.equal(context.sessionStorage.getItem('talon.youtube.resetLite.reloaded.v5'), '1');
-  assert.equal(context.localStorage.map.has('yt-player-volume'), false);
+  assert.equal(context.sessionStorage.getItem('talon.youtube.resetLite.reloaded.v5'), null);
+  assert.equal(context.localStorage.map.has('yt-player-volume'), true);
   assert.equal(context.localStorage.map.has('yt-adblock-enforcement'), false);
-  assert.equal(reloads, 1);
-  assert.equal(stats.persistentRuns, 1);
-  assert.equal(stats.wallRecoveryReloads, 1);
-  assert.ok(cookieWrites > 0);
-  assert.equal(marks.some(entry => entry.value === 'wall-present'), true);
-  assert.equal(marks.some(entry => entry.value === 'reloading'), true);
+  assert.equal(reloads, 0);
+  assert.equal(stats.persistentRuns, 0);
+  assert.equal(stats.wallRecoveryReloads, 0);
+  assert.equal(cookieWrites, 0);
+  assert.equal(marks.some(entry => entry.value === 'wall-present'), false);
+  assert.equal(marks.some(entry => entry.value === 'reloading'), false);
 });
 
-test('YouTube player guard detects playback walls added after YouTube SPA navigation', async () => {
+test('YouTube player guard does not install wall recovery observers during normal install', async () => {
   const marks = [];
   const mutationCallbacks = [];
   let cookieWrites = 0;
@@ -608,26 +616,25 @@ test('YouTube player guard detects playback walls added after YouTube SPA naviga
   context.localStorage.setItem('yt-player-volume', '75');
   assert.equal(controller.install(), true);
   assert.equal(reloads, 0);
-  assert.equal(mutationCallbacks.length, 1);
+  assert.equal(mutationCallbacks.length, 0);
 
   wallVisible = true;
-  mutationCallbacks[0]([{ addedNodes: [document.documentElement] }]);
   await Promise.resolve();
   await Promise.resolve();
   await new Promise(resolve => setTimeout(resolve, 0));
 
   const stats = controller.getStorageResetLiteStats();
-  assert.equal(context.sessionStorage.getItem('talon.youtube.resetLite.reloaded.v5'), '1');
-  assert.equal(context.localStorage.map.has('yt-player-volume'), false);
-  assert.equal(reloads, 1);
-  assert.equal(stats.persistentRuns, 1);
-  assert.equal(stats.wallRecoveryReloads, 1);
-  assert.ok(cookieWrites > 0);
-  assert.equal(marks.some(entry => entry.value === 'wall-present'), true);
-  assert.equal(marks.some(entry => entry.value === 'reloading'), true);
+  assert.equal(context.sessionStorage.getItem('talon.youtube.resetLite.reloaded.v5'), null);
+  assert.equal(context.localStorage.map.has('yt-player-volume'), true);
+  assert.equal(reloads, 0);
+  assert.equal(stats.persistentRuns, 0);
+  assert.equal(stats.wallRecoveryReloads, 0);
+  assert.equal(cookieWrites, 0);
+  assert.equal(marks.some(entry => entry.value === 'wall-present'), false);
+  assert.equal(marks.some(entry => entry.value === 'reloading'), false);
 });
 
-test('YouTube player guard does not loop wall recovery after the one-shot reset', async () => {
+test('YouTube player guard explicit wall observer marks the wall without reload recovery', async () => {
   const marks = [];
   let reloads = 0;
   const document = {
@@ -664,6 +671,7 @@ test('YouTube player guard does not loop wall recovery after the one-shot reset'
   context.sessionStorage.setItem('talon.youtube.resetLite.reloaded.v5', '1');
 
   assert.equal(controller.install(), true);
+  assert.equal(controller.installWallRecoveryObserver(), true);
   await Promise.resolve();
   await Promise.resolve();
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -674,7 +682,9 @@ test('YouTube player guard does not loop wall recovery after the one-shot reset'
   assert.equal(reloads, 0);
   assert.equal(stats.persistentRuns, 0);
   assert.equal(stats.wallRecoveryReloads, 0);
-  assert.equal(marks.some(entry => entry.value === 'already-reloaded'), true);
+  assert.equal(marks.some(entry => entry.value === 'wall-present'), true);
+  assert.equal(marks.some(entry => entry.value === 'wall-present-no-reload'), true);
+  assert.equal(marks.some(entry => entry.value === 'reloading'), false);
 });
 
 test('YouTube player guard leaves YouTube detector timers untouched by default', async () => {

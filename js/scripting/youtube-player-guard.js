@@ -51,6 +51,8 @@ const RESET_LITE_STORAGE_KEY_PATTERNS = Object.freeze([
     /abnormality/i,
     /interruption/i,
 ]);
+const ABNORMALITY_CALLBACK_TEXT_RE =
+    /(?:onAbnormalityDetected|abnormality|ad[-_\s]?block(?:er)?[^}]{0,160}(?:detect|enforce|violate|wall|block)|(?:detect|enforce|violate|wall|block)[^}]{0,160}ad[-_\s]?block(?:er)?|playback[-_\s]?blocked)/i;
 
 const markGuard = value => {
     try {
@@ -67,6 +69,8 @@ const createController = env => {
     const nativeJSONParse = win.JSON?.parse;
     const nativeJSONStringify = win.JSON?.stringify;
     const nativePromiseThen = win.Promise?.prototype?.then;
+    const nativeFunctionToString = win.Function?.prototype?.toString ||
+        Function.prototype.toString;
     const nativeAppendChild = win.Node?.prototype?.appendChild;
     let installed = false;
     let lastHref = String(win.location?.href || '');
@@ -528,8 +532,16 @@ const createController = env => {
         let matched = false;
         try {
             const name = typeof value.name === 'string' ? value.name : '';
-            matched = name.includes('onAbnormalityDetected');
+            matched = ABNORMALITY_CALLBACK_TEXT_RE.test(name);
         } catch {
+        }
+        if ( matched === false ) {
+            try {
+                matched = ABNORMALITY_CALLBACK_TEXT_RE.test(
+                    nativeFunctionToString.call(value) || ''
+                );
+            } catch {
+            }
         }
         try {
             abnormalityCallbackCache.set(value, matched);
@@ -547,9 +559,10 @@ const createController = env => {
         try {
             win.Promise.prototype.then = new win.Proxy(nativePromiseThen, {
                 apply(target, thisArg, args) {
-                    if ( isAbnormalityCallback(args?.[0]) ) {
+                    for ( const index of [ 0, 1 ] ) {
+                        if ( isAbnormalityCallback(args?.[index]) === false ) { continue; }
                         abnormalityGuardHits += 1;
-                        args[0] = function talonIgnoredYouTubeAbnormality() {};
+                        args[index] = function talonIgnoredYouTubeAbnormality() {};
                     }
                     return win.Reflect.apply(target, thisArg, args);
                 },
@@ -878,25 +891,11 @@ const createController = env => {
 
     const triggerWallRecovery = () => {
         if ( wallRecoveryTriggered ) {
-            markResetLite('already-triggered');
+            markResetLite('wall-present-no-reload');
             return;
         }
-        if ( wasWallRecoveryReloaded() ) {
-            markResetLite('already-reloaded');
-            return;
-        }
-        if ( markWallRecoveryReloaded() === false ) { return; }
         wallRecoveryTriggered = true;
-        markResetLite('triggered');
-        runPersistentWallResetLite()
-            .finally(() => {
-                wallRecoveryReloads += 1;
-                markResetLite('reloading');
-                try {
-                    win.location.reload();
-                } catch {
-                }
-            });
+        markResetLite('wall-present-no-reload');
     };
 
     const installWallRecoveryObserver = () => {
@@ -1108,7 +1107,6 @@ const createController = env => {
         installed = true;
         installStorageResetLiteGuard();
         cleanupSuspiciousWebStorage();
-        installWallRecoveryObserver();
         // YouTube now treats player-response ad metadata pruning as an
         // ad-blocker signal. Keep the reset/timing guards, but leave player
         // response payloads intact so playback can proceed.

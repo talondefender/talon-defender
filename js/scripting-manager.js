@@ -221,6 +221,7 @@ const modeSetCoversHostname = (modeSet, hostname) => {
 
 const getYouTubeAdSkipMatches = filteringModeDetails => {
     const enabledModes = [
+        filteringModeDetails?.basic,
         filteringModeDetails?.optimal,
         filteringModeDetails?.complete,
     ];
@@ -240,7 +241,6 @@ const getYouTubeAdSkipMatches = filteringModeDetails => {
 const getYouTubeAdSkipExcludeMatches = filteringModeDetails => {
     const disabledModes = [
         filteringModeDetails?.none,
-        filteringModeDetails?.basic,
     ];
     const hostnames = YOUTUBE_AD_SKIP_HOSTNAMES.filter(hostname =>
         disabledModes.some(modeSet => modeSetCoversHostname(modeSet, hostname))

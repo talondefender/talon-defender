@@ -9,11 +9,13 @@ if ( global.TalonYoutubeAdSkipController ) {
 }
 
 const SUBSYSTEM_ID = 'youtubeAdSkip';
-const FAST_PLAYBACK_RATE = 16;
 const CHECK_INTERVAL_MS = 500;
 const HIDDEN_CHECK_INTERVAL_MS = 1500;
 const MUTATION_TICK_DELAY_MS = 750;
 const NOTICE_CHECK_INTERVAL_MS = 1500;
+const SKIP_CLICK_COOLDOWN_MS = 1000;
+const GUARD_READY_TIMEOUT_MS = 250;
+const AD_SURFACE_STYLE_ID = 'talon-youtube-ad-skip-style';
 
 const YOUTUBE_HOST_RE = /(^|\.)youtube(?:-nocookie)?\.com$/i;
 const INTERRUPTION_NOTICE_RE = /\bexperiencing\s+interruptions\b/i;
@@ -23,7 +25,60 @@ const AD_STATE_SELECTOR = [
     '#movie_player.ad-showing',
 ].join(',');
 
+const AD_INDICATOR_SELECTOR = [
+    '.ytp-ad-badge',
+    '.ytp-ad-module',
+    '.ytp-ad-skip-button',
+    '.ytp-ad-skip-button-modern',
+    '.ytp-ad-skip-button-container',
+].join(',');
+
 const PLAYER_SELECTOR = '.html5-video-player,#movie_player';
+
+const SKIP_BUTTON_SELECTOR = [
+    '.ytp-ad-skip-button',
+    '.ytp-ad-skip-button-modern',
+    '.ytp-ad-skip-button-container button',
+    '.ytp-skip-ad-button',
+    '[class*="ytp-ad-skip"]',
+    '[class*="ytp-skip-ad"]',
+    '[class*="skip-ad"]',
+    'button.ytp-ad-skip-button',
+    'button.ytp-skip-ad-button',
+    'button[class*="ytp-ad-skip"]',
+    'button[class*="ytp-skip-ad"]',
+    'button[class*="skip-ad"]',
+    '[id^="skip-button"]',
+    '[id*="skip-button"] button',
+    'button[aria-label*="Skip ad"]',
+    'button[aria-label*="Skip Ad"]',
+    'button[aria-label*="Skip ads"]',
+    'button[aria-label*="Skip Ads"]',
+    'button[aria-label*="skip ad"]',
+    'button[aria-label*="skip ads"]',
+    'button[title*="Skip ad"]',
+    'button[title*="Skip Ad"]',
+    'button[title*="Skip ads"]',
+    'button[title*="Skip Ads"]',
+    'button[title*="skip ad"]',
+    'button[title*="skip ads"]',
+].join(',');
+
+const SKIP_BUTTON_FALLBACK_SELECTOR = 'button,[role="button"]';
+const SKIP_BUTTON_FALLBACK_TEXT_RE =
+    /\bskip\s+(?:ad|ads)\b|\bskip\b.{0,24}\b(?:ad|ads)\b|\b(?:ad|ads)\b.{0,24}\bskip\b/i;
+
+const AD_SURFACE_CSS = [
+    '.ytp-ad-overlay-container,',
+    '.ytp-ad-image-overlay,',
+    '.ytp-ad-text-overlay,',
+    '.ytp-ad-survey,',
+    '.ytp-ad-companion-slot,',
+    'ytd-ad-slot-renderer {',
+    '  display: none !important;',
+    '  visibility: hidden !important;',
+    '}',
+].join('\n');
 
 const INTERRUPTION_NOTICE_SELECTOR = [
     'tp-yt-paper-toast',
@@ -46,6 +101,34 @@ const createController = env => {
     let tickScheduled = false;
     let lastNoticeCheckAt = 0;
     let noticeScanPending = false;
+    let lastSkipClickAt = 0;
+    let skipActivationCount = 0;
+
+    const markState = value => {
+        try {
+            doc.documentElement?.setAttribute('data-talon-youtube-ad-skip', value);
+        } catch {
+        }
+    };
+
+    const markSkipActivation = element => {
+        skipActivationCount += 1;
+        try {
+            doc.documentElement?.setAttribute(
+                'data-talon-youtube-skip-activations',
+                String(skipActivationCount)
+            );
+            const label = [
+                element?.getAttribute?.('aria-label'),
+                element?.getAttribute?.('title'),
+                element?.textContent,
+            ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+            if ( label ) {
+                doc.documentElement?.setAttribute('data-talon-youtube-last-skip-label', label);
+            }
+        } catch {
+        }
+    };
 
     const isYouTubeHost = () =>
         YOUTUBE_HOST_RE.test(String(win.location?.hostname || ''));
@@ -64,6 +147,162 @@ const createController = env => {
         } catch {
         }
         return null;
+    };
+
+    const installAdSurfaceStyle = () => {
+        try {
+            if ( doc.getElementById?.(AD_SURFACE_STYLE_ID) !== null ) { return true; }
+            const style = doc.createElement?.('style');
+            if ( !style ) { return false; }
+            style.id = AD_SURFACE_STYLE_ID;
+            style.textContent = AD_SURFACE_CSS;
+            const parent = doc.head || doc.documentElement;
+            if ( typeof parent?.appendChild === 'function' ) {
+                parent.appendChild(style);
+                return true;
+            }
+            if ( typeof parent?.append === 'function' ) {
+                parent.append(style);
+                return true;
+            }
+        } catch {
+        }
+        return false;
+    };
+
+    const elementIsActionable = element => {
+        if ( !element ) { return false; }
+        try {
+            if ( element.disabled === true || element.hidden === true ) { return false; }
+            if ( element.getAttribute?.('aria-disabled') === 'true' ) { return false; }
+            const style = win.getComputedStyle?.(element);
+            if ( style && (style.display === 'none' ||
+                style.visibility === 'hidden' ||
+                Number(style.opacity) === 0) ) {
+                return false;
+            }
+            const rects = element.getClientRects?.();
+            if ( rects && rects.length === 0 ) { return false; }
+        } catch {
+        }
+        return true;
+    };
+
+    const skipControlLooksLikeAdSkip = element => {
+        try {
+            if ( element.matches?.(SKIP_BUTTON_SELECTOR) ) { return true; }
+        } catch {
+        }
+        const text = [
+            element.getAttribute?.('aria-label'),
+            element.getAttribute?.('title'),
+            element.textContent,
+        ].filter(Boolean).join(' ');
+        return SKIP_BUTTON_FALLBACK_TEXT_RE.test(text);
+    };
+
+    const skipButtonCandidates = () => {
+        const candidates = [];
+        const seen = new Set();
+        const addCandidate = element => {
+            if ( !element || seen.has(element) ) { return; }
+            seen.add(element);
+            candidates.push(element);
+        };
+        for ( const button of queryAll(SKIP_BUTTON_SELECTOR) ) {
+            addCandidate(button);
+        }
+        for ( const button of queryAll(SKIP_BUTTON_FALLBACK_SELECTOR) ) {
+            if ( skipControlLooksLikeAdSkip(button) ) {
+                addCandidate(button);
+            }
+        }
+        return candidates;
+    };
+
+    const activationTargetsFor = element => {
+        const targets = [];
+        const seen = new Set();
+        const addTarget = target => {
+            if ( !target || seen.has(target) ) { return; }
+            seen.add(target);
+            targets.push(target);
+        };
+        addTarget(element);
+        try {
+            addTarget(element.closest?.('button,[role="button"],a'));
+        } catch {
+        }
+        try {
+            addTarget(element.querySelector?.('button,[role="button"],a'));
+        } catch {
+        }
+        return targets;
+    };
+
+    const dispatchSkipActivationEvents = button => {
+        let dispatched = false;
+        const targets = activationTargetsFor(button);
+        const eventTypes = [
+            'pointerover',
+            'mouseover',
+            'pointerdown',
+            'mousedown',
+            'pointerup',
+            'mouseup',
+            'click',
+        ];
+        for ( const target of targets ) {
+            try {
+                target.focus?.({ preventScroll: true });
+            } catch {
+            }
+            for ( const type of eventTypes ) {
+                try {
+                    const Ctor = type.startsWith('pointer') && typeof win.PointerEvent === 'function'
+                        ? win.PointerEvent
+                        : win.MouseEvent;
+                    if ( typeof Ctor !== 'function' ) { continue; }
+                    const buttons = type.endsWith('down') ? 1 : 0;
+                    const event = new Ctor(type, {
+                        bubbles: true,
+                        button: 0,
+                        buttons,
+                        cancelable: true,
+                        composed: true,
+                        view: win,
+                    });
+                    dispatched = target.dispatchEvent?.(event) !== false || dispatched;
+                } catch {
+                }
+            }
+            try {
+                target.click();
+                dispatched = true;
+            } catch {
+            }
+        }
+        if ( dispatched ) { markSkipActivation(button); }
+        return dispatched;
+    };
+
+    const clickSkipButtons = () => {
+        const now = Date.now();
+        if ( now - lastSkipClickAt < SKIP_CLICK_COOLDOWN_MS ) { return false; }
+        for ( const button of skipButtonCandidates() ) {
+            if ( elementIsActionable(button) === false ) { continue; }
+            if ( dispatchSkipActivationEvents(button) ) {
+                lastSkipClickAt = now;
+                return true;
+            }
+        }
+        return false;
+    };
+
+    const isAdShowing = () => {
+        if ( queryOne(AD_STATE_SELECTOR) !== null ) { return true; }
+        if ( queryAll(AD_INDICATOR_SELECTOR).some(elementIsActionable) ) { return true; }
+        return skipButtonCandidates().some(elementIsActionable);
     };
 
     const hideInterruptionNotice = element => {
@@ -179,7 +418,7 @@ const createController = env => {
         });
     };
 
-    const accelerateAdVideo = video => {
+    const handleAdVideo = video => {
         if ( !video ) { return; }
         saveVideoState(video);
         try {
@@ -187,8 +426,8 @@ const createController = env => {
         } catch {
         }
         try {
-            if ( Number(video.playbackRate) < FAST_PLAYBACK_RATE ) {
-                video.playbackRate = FAST_PLAYBACK_RATE;
+            if ( video.paused === true && typeof video.play === 'function' ) {
+                video.play().catch?.(() => {});
             }
         } catch {
         }
@@ -218,6 +457,7 @@ const createController = env => {
 
     const tick = () => {
         if ( isYouTubeHost() === false ) { return false; }
+        installAdSurfaceStyle();
         observePlayerState();
         const now = Date.now();
         let suppressedNotice = false;
@@ -227,10 +467,11 @@ const createController = env => {
             noticeScanPending = false;
             suppressedNotice = suppressInterruptionNotices();
         }
-        const adShowing = queryOne(AD_STATE_SELECTOR) !== null;
+        const adShowing = isAdShowing();
+        const skipClicked = adShowing ? clickSkipButtons() : false;
         if ( adShowing ) {
             for ( const video of videos() ) {
-                accelerateAdVideo(video);
+                handleAdVideo(video);
             }
             lastAdState = true;
             return true;
@@ -239,7 +480,7 @@ const createController = env => {
             restoreVideos();
             lastAdState = false;
         }
-        return suppressedNotice;
+        return suppressedNotice || skipClicked;
     };
 
     const scheduleTick = () => {
@@ -267,7 +508,13 @@ const createController = env => {
     const shouldRun = async () => {
         const guard = win.TalonBreakageGuard;
         try {
-            await guard?.whenReady?.();
+            const ready = guard?.whenReady?.();
+            if ( ready?.then ) {
+                await Promise.race([
+                    ready,
+                    new Promise(resolve => win.setTimeout?.(resolve, GUARD_READY_TIMEOUT_MS)),
+                ]);
+            }
             return guard?.shouldRunSubsystem?.(SUBSYSTEM_ID) !== false;
         } catch {
         }
@@ -286,10 +533,13 @@ const createController = env => {
 
     const start = async () => {
         if ( isYouTubeHost() === false ) { return { started: false }; }
+        markState('entered');
         if ( await shouldRun() === false ) {
             stop();
+            markState('suppressed');
             return { started: false };
         }
+        markState('running');
         tick();
         if ( intervalId === undefined ) {
             refreshTimer();
@@ -312,6 +562,7 @@ const createController = env => {
         }
         restoreVideos();
         lastAdState = false;
+        markState('stopped');
     };
 
     const onVisibilityChange = () => refreshTimer();
