@@ -63,6 +63,10 @@ const USER_RULES_BASE_RULE_ID = 9000000;
 const USER_RULES_PRIORITY = 1000000;
 const TRUSTED_DIRECTIVE_BASE_RULE_ID = 8000000;
 const TRUSTED_DIRECTIVE_PRIORITY = USER_RULES_PRIORITY + 1000000;
+const TALON_SITE_FIXES_RULESET_ID = 'talon-site-fixes';
+const TALON_SITE_FIXES_RUNTIME_BASE_RULE_ID = 7000000;
+const TALON_SITE_FIXES_RUNTIME_RULES_RANGE = 1000;
+const TALON_SITE_FIXES_RUNTIME_PRIORITY = 500000;
 const STRICTBLOCK_PRIORITY = 29;
 const COMMUNITY_RULES_BASE_RULE_ID = 6000000;
 const COMMUNITY_RULES_RANGE = 1000000; // 6,000,000–6,999,999
@@ -86,6 +90,11 @@ const logDynamicRegexUsage = regexCount => {
     if ( regexCount === 0 ) { return; }
     ubolLog(`Using ${regexCount}/${dnr.MAX_NUMBER_OF_REGEX_RULES} dynamic regex-based DNR rules`);
 };
+
+const isTalonSiteFixRuntimeRuleId = id =>
+    Number.isInteger(id) &&
+    id >= TALON_SITE_FIXES_RUNTIME_BASE_RULE_ID &&
+    id < TALON_SITE_FIXES_RUNTIME_BASE_RULE_ID + TALON_SITE_FIXES_RUNTIME_RULES_RANGE;
 
 const COMMUNITY_RULE_QUOTA_CLASS_PRIORITY = Object.freeze({
     exactExceptions: 0,
@@ -281,6 +290,76 @@ async function updateDynamicRules() {
     }
 
     return response;
+}
+
+/******************************************************************************/
+
+async function updateTalonSiteFixRuntimeRules() {
+    const currentRules = await dnr.getDynamicRules();
+    const removeRuleIds = [];
+    for ( const rule of currentRules ) {
+        if ( isTalonSiteFixRuntimeRuleId(rule.id) === false ) { continue; }
+        removeRuleIds.push(rule.id);
+    }
+
+    const enabledRulesets = Array.isArray(rulesetConfig.enabledRulesets)
+        ? rulesetConfig.enabledRulesets
+        : [];
+    if ( enabledRulesets.includes(TALON_SITE_FIXES_RULESET_ID) === false ) {
+        if ( removeRuleIds.length === 0 ) {
+            return { added: 0, removed: 0 };
+        }
+        try {
+            await dnr.updateDynamicRules({ removeRuleIds });
+            ubolLog(`Remove ${removeRuleIds.length} Talon site-fix runtime DNR rules`);
+            return { added: 0, removed: removeRuleIds.length };
+        } catch(reason) {
+            ubolErr(`updateTalonSiteFixRuntimeRules/remove/${reason}`);
+            return { error: `${reason}` };
+        }
+    }
+
+    const rules = await fetchJSON(`/rulesets/main/${TALON_SITE_FIXES_RULESET_ID}.json`)
+        .catch(reason => {
+            ubolErr(`updateTalonSiteFixRuntimeRules/fetch/${reason}`);
+            return undefined;
+        });
+    if ( Array.isArray(rules) === false ) {
+        return { error: 'invalid_talon_site_fixes_rules' };
+    }
+
+    const addRules = [];
+    let nextRuleId = TALON_SITE_FIXES_RUNTIME_BASE_RULE_ID;
+    const maxRuleId =
+        TALON_SITE_FIXES_RUNTIME_BASE_RULE_ID + TALON_SITE_FIXES_RUNTIME_RULES_RANGE;
+    for ( const rule of rules ) {
+        if ( nextRuleId >= maxRuleId ) { break; }
+        if ( rule instanceof Object === false ) { continue; }
+        if ( rule.action?.type !== 'block' ) { continue; }
+        if ( rule.condition instanceof Object === false ) { continue; }
+        const copy = JSON.parse(JSON.stringify(rule));
+        copy.id = nextRuleId++;
+        copy.priority = Math.max(Number(copy.priority) || 1, TALON_SITE_FIXES_RUNTIME_PRIORITY);
+        addRules.push(copy);
+    }
+
+    if ( removeRuleIds.length === 0 && addRules.length === 0 ) {
+        return { added: 0, removed: 0 };
+    }
+
+    try {
+        await dnr.updateDynamicRules({ removeRuleIds, addRules });
+        if ( removeRuleIds.length !== 0 ) {
+            ubolLog(`Remove ${removeRuleIds.length} Talon site-fix runtime DNR rules`);
+        }
+        if ( addRules.length !== 0 ) {
+            ubolLog(`Add ${addRules.length} Talon site-fix runtime DNR rules`);
+        }
+        return { added: addRules.length, removed: removeRuleIds.length };
+    } catch(reason) {
+        ubolErr(`updateTalonSiteFixRuntimeRules/${reason}`);
+        return { error: `${reason}` };
+    }
 }
 
 /******************************************************************************/
@@ -1020,6 +1099,7 @@ export {
     setStrictBlockMode,
     updateDynamicRules,
     updateCommunityRules,
+    updateTalonSiteFixRuntimeRules,
     updateSessionRules,
     updateUserRules,
 };

@@ -56,6 +56,7 @@ const nativeWindowOpen = Window.prototype.open;
 const nativeAnchorClick = HTMLAnchorElement.prototype.click;
 const nativeFormSubmit = HTMLFormElement.prototype.submit;
 const nativeFormRequestSubmit = HTMLFormElement.prototype.requestSubmit;
+const nativeElementSetAttribute = Element.prototype.setAttribute;
 const nativeWindowPostMessage = Window.prototype.postMessage;
 const nativeElementRequestFullscreen = Element.prototype.requestFullscreen;
 const nativeElementWebkitRequestFullscreen = Element.prototype.webkitRequestFullscreen;
@@ -86,6 +87,68 @@ const shouldBlockPopupUrl = url => {
     return isSameOrigin(url) === false;
 };
 
+const shouldBlockNavigationUrl = url => {
+    if ( typeof url !== 'string' ) { return true; }
+    const value = url.trim();
+    if ( value === '' || value.startsWith('#') ) { return false; }
+    return isSameOrigin(value) === false;
+};
+
+const sameDocumentTargetNames = new Set([ '', '_self', '_top', '_parent' ]);
+
+const normalizeTargetName = target =>
+    String(target || '').trim().toLowerCase();
+
+const isPopupTargetName = target =>
+    sameDocumentTargetNames.has(normalizeTargetName(target)) === false;
+
+const getBaseTargetName = ( ) => {
+    const base = document.querySelector('base[target]');
+    return normalizeTargetName(base?.getAttribute('target') || '');
+};
+
+const getNavigationTargetName = element => {
+    let target = normalizeTargetName(element?.getAttribute?.('target') || '');
+    if ( target === '' ) {
+        target = getBaseTargetName();
+    }
+    return target;
+};
+
+const getNavigationUrl = element => {
+    if ( element instanceof HTMLAnchorElement ) {
+        return element.getAttribute('href') || element.href || '';
+    }
+    if ( element instanceof HTMLFormElement ) {
+        return element.getAttribute('action') || element.action || document.location.href;
+    }
+    return '';
+};
+
+const topPlayerGestureSelector = [
+    '#main-player',
+    '#video-iframe',
+    '#trailer-iframe',
+    'iframe[src*="fsvid.lol"]',
+    'iframe[src*="kakaflix.lol"]',
+    'iframe[src*="uqload.is"]',
+    'iframe[src*="vidzy.cc"]',
+    '.plyr',
+    '.jwplayer',
+    '.video-js',
+    '[id*="player" i]',
+    '[class*="player" i]',
+    '[data-plyr]',
+].join(',');
+
+const eventPathContainsTopPlayer = ev => {
+    const path = typeof ev.composedPath === 'function' ? ev.composedPath() : [];
+    return path.some(entry =>
+        entry instanceof Element &&
+        entry.matches?.(topPlayerGestureSelector)
+    );
+};
+
 const playerGestureWindowMs = 5000;
 let recentPlayerGestureAt = 0;
 let recentCreativeMessageAt = 0;
@@ -104,52 +167,152 @@ const hasRecentPlayerGesture = ( ) =>
 const hasRecentCreativeMessage = ( ) =>
     Date.now() - recentCreativeMessageAt <= playerGestureWindowMs;
 
+const isTopPlayerGestureEvent = ev => {
+    if ( isFrenchStreamPage === false || ev?.isTrusted !== true ) { return false; }
+    const target = ev.target instanceof Element ? ev.target : null;
+    return (
+        target?.closest?.(topPlayerGestureSelector) instanceof Element ||
+        eventPathContainsTopPlayer(ev)
+    );
+};
+
 const shouldBlockPlayerGesturePopupUrl = url => {
-    if ( isFrenchStreamPlayerFrame === false ) { return false; }
+    if ( isFrenchStreamPlayerFrame === false && isFrenchStreamPage === false ) {
+        return false;
+    }
     if ( hasRecentPlayerGesture() === false && hasRecentCreativeMessage() === false ) {
         return false;
     }
     if ( typeof url !== 'string' || url.trim() === '' ) { return true; }
+    if ( isFrenchStreamPage ) {
+        return shouldBlockNavigationUrl(url);
+    }
     return url.trim().startsWith('#') === false;
+};
+
+const shouldBlockPlayerGestureNavigationUrl = url => {
+    if ( isFrenchStreamPlayerFrame === false && isFrenchStreamPage === false ) {
+        return false;
+    }
+    if ( hasRecentPlayerGesture() === false && hasRecentCreativeMessage() === false ) {
+        return false;
+    }
+    if ( typeof url !== 'string' ) { return true; }
+    const value = url.trim();
+    if ( value === '' || value.startsWith('#') ) { return false; }
+    if ( isFrenchStreamPage ) {
+        return shouldBlockNavigationUrl(value);
+    }
+    return true;
 };
 
 const shouldBlockPopupOpen = url =>
     shouldBlockPlayerGesturePopupUrl(url) || shouldBlockPopupUrl(url);
 
-const blockAnchorPopup = anchor => {
-    if ( anchor instanceof HTMLAnchorElement === false ) { return false; }
-    let target = String(anchor.getAttribute('target') || '').toLowerCase();
-    if ( target === '' ) {
-        const base = document.querySelector('base[target]');
-        target = String(base?.getAttribute('target') || '').toLowerCase();
-    }
+const shouldBlockPopupNavigation = element => {
     if (
-        target === '' ||
-        target === '_self' ||
-        target === '_top' ||
-        target === '_parent'
+        element instanceof HTMLAnchorElement === false &&
+        element instanceof HTMLFormElement === false
     ) {
         return false;
     }
-    return shouldBlockPopupUrl(anchor.getAttribute('href') || '');
+    const url = getNavigationUrl(element);
+    if ( shouldBlockPlayerGestureNavigationUrl(url) ) { return true; }
+    if ( isPopupTargetName(getNavigationTargetName(element)) === false ) { return false; }
+    return shouldBlockNavigationUrl(url);
+};
+
+const safeFrenchStreamContentClickEvents = new Set([
+    'pointerdown',
+    'mousedown',
+    'touchstart',
+    'click',
+]);
+
+const shouldShieldFrenchStreamContentNavigation = (ev, element) => {
+    if ( isFrenchStreamPage === false || ev?.isTrusted !== true ) { return false; }
+    if ( element instanceof HTMLAnchorElement === false ) { return false; }
+    if ( safeFrenchStreamContentClickEvents.has(ev.type) === false ) { return false; }
+    if ( ev.type !== 'touchstart' && ev.button !== 0 ) { return false; }
+    if ( ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey ) { return false; }
+    if ( isPopupTargetName(getNavigationTargetName(element)) ) { return false; }
+    const url = getNavigationUrl(element).trim();
+    if ( url === '' || url.startsWith('#') ) { return false; }
+    if ( shouldBlockNavigationUrl(url) ) { return false; }
+    return element.matches?.([
+        'a[href*="newsid"]',
+        'a.short-poster[href]',
+        '.short a[href]',
+        '.sect-c a[href]',
+    ].join(','));
+};
+
+const blockAnchorPopup = anchor => {
+    if ( anchor instanceof HTMLAnchorElement === false ) { return false; }
+    return shouldBlockPopupNavigation(anchor);
 };
 
 const blockFormPopup = form => {
     if ( form instanceof HTMLFormElement === false ) { return false; }
-    let target = String(form.getAttribute('target') || '').toLowerCase();
-    if ( target === '' ) {
-        const base = document.querySelector('base[target]');
-        target = String(base?.getAttribute('target') || '').toLowerCase();
+    return shouldBlockPopupNavigation(form);
+};
+
+const shouldNeutralizePopupTargetAssignment = (element, target) => {
+    if ( isPopupTargetName(target) === false ) { return false; }
+    if ( element instanceof HTMLBaseElement ) {
+        return isFrenchStreamPage || isFrenchStreamPlayerFrame;
     }
     if (
-        target === '' ||
-        target === '_self' ||
-        target === '_top' ||
-        target === '_parent'
+        element instanceof HTMLAnchorElement === false &&
+        element instanceof HTMLFormElement === false
     ) {
         return false;
     }
-    return shouldBlockPopupUrl(form.getAttribute('action') || document.location.href);
+    if ( hasRecentPlayerGesture() || hasRecentCreativeMessage() ) { return true; }
+    return shouldBlockNavigationUrl(getNavigationUrl(element));
+};
+
+const neutralizePopupTarget = element => {
+    if ( element instanceof Element === false ) { return; }
+    if ( shouldNeutralizePopupTargetAssignment(element, element.getAttribute('target')) === false ) {
+        return;
+    }
+    try {
+        Reflect.apply(nativeElementSetAttribute, element, [ 'target', '_self' ]);
+    } catch {
+        try {
+            element.removeAttribute('target');
+        } catch {
+        }
+    }
+};
+
+const neutralizePopupBaseTargets = ( ) => {
+    if ( isFrenchStreamPage === false && isFrenchStreamPlayerFrame === false ) { return; }
+    for ( const base of document.querySelectorAll('base[target]') ) {
+        neutralizePopupTarget(base);
+    }
+};
+
+const navigationElementFromEvent = ev => {
+    const target = ev.target instanceof Element ? ev.target : null;
+    return target?.closest?.('a[href],form') || null;
+};
+
+const preventPopupNavigation = ev => {
+    if ( isTopPlayerGestureEvent(ev) ) {
+        recordPlayerGesture();
+    }
+    neutralizePopupBaseTargets();
+    const element = navigationElementFromEvent(ev);
+    if ( shouldBlockPopupNavigation(element) ) {
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        return;
+    }
+    if ( shouldShieldFrenchStreamContentNavigation(ev, element) ) {
+        ev.stopImmediatePropagation();
+    }
 };
 
 const parseMessageData = data => {
@@ -318,6 +481,7 @@ const hidePopupOverlays = ( ) => {
     for ( const overlay of document.querySelectorAll('#dontfoid') ) {
         overlay.remove();
     }
+    neutralizePopupBaseTargets();
     removeStartupFlickerFrames();
 };
 
@@ -385,6 +549,73 @@ try {
     self.open = guardedOpen;
 }
 
+const wrapTargetSetAttribute = prototype => {
+    if ( typeof nativeElementSetAttribute !== 'function' ) { return; }
+    try {
+        Object.defineProperty(prototype, 'setAttribute', {
+            configurable: true,
+            writable: true,
+            value: function setAttribute(name, value) {
+                let nextValue = value;
+                if (
+                    String(name || '').toLowerCase() === 'target' &&
+                    shouldNeutralizePopupTargetAssignment(this, value)
+                ) {
+                    nextValue = '_self';
+                }
+                return Reflect.apply(nativeElementSetAttribute, this, [ name, nextValue ]);
+            },
+        });
+    } catch {
+    }
+};
+
+const findTargetPropertyDescriptor = prototype => {
+    for (
+        let current = prototype;
+        current instanceof Object;
+        current = Object.getPrototypeOf(current)
+    ) {
+        const descriptor = Object.getOwnPropertyDescriptor(current, 'target');
+        if ( descriptor !== undefined ) { return descriptor; }
+    }
+    return undefined;
+};
+
+const wrapTargetProperty = prototype => {
+    const descriptor = findTargetPropertyDescriptor(prototype);
+    if (
+        descriptor instanceof Object === false ||
+        typeof descriptor.get !== 'function' ||
+        typeof descriptor.set !== 'function'
+    ) {
+        return;
+    }
+    try {
+        Object.defineProperty(prototype, 'target', {
+            configurable: true,
+            enumerable: descriptor.enumerable,
+            get() {
+                return Reflect.apply(descriptor.get, this, []);
+            },
+            set(value) {
+                const nextValue = shouldNeutralizePopupTargetAssignment(this, value)
+                    ? '_self'
+                    : value;
+                return Reflect.apply(descriptor.set, this, [ nextValue ]);
+            },
+        });
+    } catch {
+    }
+};
+
+wrapTargetProperty(HTMLAnchorElement.prototype);
+wrapTargetProperty(HTMLFormElement.prototype);
+wrapTargetProperty(HTMLBaseElement.prototype);
+wrapTargetSetAttribute(HTMLAnchorElement.prototype);
+wrapTargetSetAttribute(HTMLFormElement.prototype);
+wrapTargetSetAttribute(HTMLBaseElement.prototype);
+
 HTMLAnchorElement.prototype.click = function click() {
     if ( blockAnchorPopup(this) ) { return; }
     return Reflect.apply(nativeAnchorClick, this, arguments);
@@ -409,17 +640,12 @@ if ( typeof nativeWindowPostMessage === 'function' ) {
     };
 }
 
-const preventAnchorPopup = ev => {
-    const anchor = ev.target instanceof Element
-        ? ev.target.closest('a[href]')
-        : null;
-    if ( blockAnchorPopup(anchor) === false ) { return; }
-    ev.preventDefault();
-    ev.stopImmediatePropagation();
-};
-
-document.addEventListener('click', preventAnchorPopup, true);
-document.addEventListener('auxclick', preventAnchorPopup, true);
+for ( const eventName of [ 'pointerdown', 'mousedown', 'touchstart', 'click', 'auxclick' ] ) {
+    document.addEventListener(eventName, preventPopupNavigation, {
+        capture: true,
+        passive: false,
+    });
+}
 window.addEventListener('message', preventUnsolicitedFullscreenMessage, true);
 
 if ( isFrenchStreamPlayerFrame ) {
@@ -449,6 +675,7 @@ if ( isFrenchStreamPage ) {
 }
 
 const preventFormPopup = ev => {
+    neutralizePopupBaseTargets();
     if ( blockFormPopup(ev.target) === false ) { return; }
     ev.preventDefault();
     ev.stopImmediatePropagation();

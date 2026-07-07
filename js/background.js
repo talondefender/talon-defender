@@ -1195,6 +1195,7 @@ import {
     setStrictBlockMode,
     updateDynamicRules,
     updateSessionRules,
+    updateTalonSiteFixRuntimeRules,
     updateUserRules,
 } from './ruleset-manager.js';
 
@@ -2468,6 +2469,20 @@ async function enablePaywall({ broadcast = true } = {}) {
     }
 }
 
+async function clearPaywallAllowAllRules() {
+    try {
+        await dnr.setAllowAllRules(
+            PAYWALL_RULE_BASE_ID,
+            [],
+            [],
+            false,
+            PAYWALL_RULE_PRIORITY
+        );
+    } catch (reason) {
+        ubolErr(`paywall/clearAllowAllRules/${reason}`);
+    }
+}
+
 async function disablePaywall({ broadcast = true } = {}) {
     paywallActive = false;
     try {
@@ -2503,17 +2518,7 @@ async function disablePaywall({ broadcast = true } = {}) {
         }
     } catch {
     }
-    try {
-        await dnr.setAllowAllRules(
-            PAYWALL_RULE_BASE_ID,
-            [],
-            [],
-            false,
-            PAYWALL_RULE_PRIORITY
-        );
-    } catch (reason) {
-        ubolErr(`paywall/clearAllowAllRules/${reason}`);
-    }
+    await clearPaywallAllowAllRules();
     await refreshReloadNeededBadges().catch(ubolErr);
     await syncToolbarIconsForAllTabs().catch(ubolErr);
     if (broadcast) {
@@ -2632,6 +2637,8 @@ async function applyEntitlementStatusEffects(
 
     if ( paywallWasActive ) {
         await disablePaywall({ broadcast });
+    } else {
+        await clearPaywallAllowAllRules();
     }
     if ( registerInjectablesOnEntitled ) {
         await syncInjectablesAndRefreshTabs({
@@ -3974,6 +3981,7 @@ async function startSession() {
     if (dnrUpdatePromise) {
         await dnrUpdatePromise;
     }
+    await updateTalonSiteFixRuntimeRules();
 
     // Permissions may have been removed while the extension was disabled
     await syncWithBrowserPermissions();
@@ -4075,6 +4083,7 @@ async function runStartupRulesetMaintenance() {
         );
         broadcastMessage({ enabledRulesets: reportedEnabledRulesets });
     }
+    await updateTalonSiteFixRuntimeRules();
 
     return {
         isNewVersion,
@@ -4131,6 +4140,8 @@ async function start() {
     }).catch(ubolErr);
     if (entitlementStatus?.status === 'expired') {
         await enablePaywall({ broadcast: false }).catch(ubolErr);
+    } else {
+        await clearPaywallAllowAllRules();
     }
     if ( isDeveloperModeAllowed === false ) {
         if ( rulesetConfig.developerMode || rulesetConfig.communityRulesURL !== '' ) {

@@ -18,8 +18,6 @@ const SSAP_NAMESPACE = 'ssap';
 const SSAP_MAX_RANGES = 16;
 const SSAP_LOOP_CHECK_MS = 250;
 const SSAP_LOOP_WINDOW_MS = 15000;
-const DETECTOR_TIMER_DELAY_MS = 17000;
-const DETECTOR_TIMER_MULTIPLIER = 0.001;
 const YOUTUBE_URL_FALLBACK = 'https:' + '//www.youtube.com/';
 const PLAYBACK_WALL_SELECTORS = Object.freeze([
     'ytd-enforcement-message-view-model',
@@ -28,11 +26,14 @@ const PLAYBACK_WALL_SELECTORS = Object.freeze([
     '#player-error-message-container',
     '#error-screen',
 ]);
-const RESET_LITE_RELOAD_FLAG = 'talon.youtube.resetLite.reloaded.v4';
-const RESET_LITE_WINDOW_NAME_TOKEN = 'talon-youtube-reset-lite-reloaded-v4';
+const RESET_LITE_RELOAD_FLAG = 'talon.youtube.resetLite.reloaded.v5';
+const RESET_LITE_WINDOW_NAME_TOKEN = 'talon-youtube-reset-lite-reloaded-v5';
 const PLAYBACK_WALL_TEXT_PATTERN_RE =
     /Ad\s+blockers\s+violate\s+YouTube(?:['\u2019]|&#(?:39|x27);)s\s+Terms\s+of\s+Service/i;
 const MAX_PLAYBACK_WALL_BODY_TEXT_LENGTH = 1000000;
+const WALL_RECOVERY_CHECK_INTERVAL_MS = 500;
+const WALL_RECOVERY_CHECK_WINDOW_MS = 20000;
+const WALL_RECOVERY_MUTATION_DELAY_MS = 50;
 const RESET_LITE_COOKIE_NAMES = Object.freeze([
     'GPS',
     'PREF',
@@ -67,7 +68,6 @@ const createController = env => {
     const nativeJSONStringify = win.JSON?.stringify;
     const nativePromiseThen = win.Promise?.prototype?.then;
     const nativeAppendChild = win.Node?.prototype?.appendChild;
-    const nativeSetTimeout = win.setTimeout;
     let installed = false;
     let lastHref = String(win.location?.href || '');
     let ssapRanges = [];
@@ -82,8 +82,6 @@ const createController = env => {
     let abnormalityGuardHits = 0;
     const abnormalityCallbackCache = new WeakMap();
     let iframeFetchBridgeInstalled = false;
-    let detectorTimerGuardInstalled = false;
-    let detectorTimerGuardHits = 0;
     let storageResetLiteInstalled = false;
     let storageResetLiteReads = 0;
     let storageResetLiteWrites = 0;
@@ -96,6 +94,10 @@ const createController = env => {
     let wallRecoveryObserverInstalled = false;
     let wallRecoveryTriggered = false;
     let wallRecoveryReloads = 0;
+    let wallRecoveryMutationObserver;
+    let wallRecoveryCheckIntervalId;
+    let wallRecoveryCheckStopTimerId;
+    let wallRecoveryCheckPending = false;
 
     const isYouTubeHost = () =>
         YOUTUBE_HOST_RE.test(String(win.location?.hostname || ''));
@@ -901,70 +903,123 @@ const createController = env => {
         if ( wallRecoveryObserverInstalled ) { return true; }
         wallRecoveryObserverInstalled = true;
         markResetLite('observer-installed');
+
         const check = () => {
             if ( isPlaybackWallPresent() ) {
                 markResetLite('wall-present');
                 triggerWallRecovery();
             }
         };
+
+        const stopWatchWindow = () => {
+            if ( wallRecoveryCheckIntervalId !== undefined ) {
+                try {
+                    win.clearInterval?.(wallRecoveryCheckIntervalId);
+                } catch {
+                }
+                wallRecoveryCheckIntervalId = undefined;
+            }
+            if ( wallRecoveryCheckStopTimerId !== undefined ) {
+                try {
+                    win.clearTimeout?.(wallRecoveryCheckStopTimerId);
+                } catch {
+                }
+                wallRecoveryCheckStopTimerId = undefined;
+            }
+            if ( wallRecoveryMutationObserver !== undefined ) {
+                try {
+                    wallRecoveryMutationObserver.disconnect();
+                } catch {
+                }
+                wallRecoveryMutationObserver = undefined;
+            }
+            wallRecoveryCheckPending = false;
+        };
+
+        const scheduleCheck = delay => {
+            if ( wallRecoveryTriggered || wallRecoveryCheckPending ) { return; }
+            wallRecoveryCheckPending = true;
+            try {
+                win.setTimeout?.(() => {
+                    wallRecoveryCheckPending = false;
+                    check();
+                }, Math.max(0, Number(delay) || 0));
+            } catch {
+                wallRecoveryCheckPending = false;
+                check();
+            }
+        };
+
+        const startWatchWindow = () => {
+            if ( wallRecoveryTriggered ) { return; }
+            const root = doc?.documentElement || doc?.body;
+            if ( !root ) {
+                check();
+                return;
+            }
+            if ( typeof win.MutationObserver === 'function' &&
+                wallRecoveryMutationObserver === undefined ) {
+                try {
+                    wallRecoveryMutationObserver = new win.MutationObserver(() => {
+                        scheduleCheck(WALL_RECOVERY_MUTATION_DELAY_MS);
+                    });
+                    wallRecoveryMutationObserver.observe(root, {
+                        childList: true,
+                        subtree: true,
+                        characterData: true,
+                    });
+                } catch {
+                    wallRecoveryMutationObserver = undefined;
+                }
+            }
+            if ( wallRecoveryCheckIntervalId === undefined &&
+                typeof win.setInterval === 'function' ) {
+                try {
+                    wallRecoveryCheckIntervalId = win.setInterval(
+                        check,
+                        WALL_RECOVERY_CHECK_INTERVAL_MS
+                    );
+                } catch {
+                    wallRecoveryCheckIntervalId = undefined;
+                }
+            }
+            if ( wallRecoveryCheckStopTimerId !== undefined ) {
+                try {
+                    win.clearTimeout?.(wallRecoveryCheckStopTimerId);
+                } catch {
+                }
+                wallRecoveryCheckStopTimerId = undefined;
+            }
+            try {
+                wallRecoveryCheckStopTimerId = win.setTimeout?.(
+                    stopWatchWindow,
+                    WALL_RECOVERY_CHECK_WINDOW_MS
+                );
+            } catch {
+                wallRecoveryCheckStopTimerId = undefined;
+            }
+            check();
+        };
+
         if ( !doc?.documentElement && !doc?.body ) {
             markResetLite('observer-no-document');
             return true;
         }
         try {
-            doc?.addEventListener?.('DOMContentLoaded', check, { once: true });
+            doc?.addEventListener?.('DOMContentLoaded', startWatchWindow, { once: true });
+            win.addEventListener?.('pageshow', startWatchWindow);
             doc?.addEventListener?.('yt-navigate-finish', () => {
-                win.setTimeout?.(check, 250);
+                startWatchWindow();
+                scheduleCheck(250);
             });
-            win.setTimeout?.(check, 500);
-            win.setTimeout?.(check, 2000);
-            win.setTimeout?.(check, 5000);
+            doc?.addEventListener?.('yt-navigate-start', startWatchWindow);
+            win.setTimeout?.(startWatchWindow, 500);
+            win.setTimeout?.(startWatchWindow, 2000);
+            win.setTimeout?.(startWatchWindow, 5000);
         } catch {
         }
-        check();
+        startWatchWindow();
         return true;
-    };
-
-    const isNativeCallback = value => {
-        if ( typeof value !== 'function' ) { return false; }
-        try {
-            return String(value).includes('[native code]');
-        } catch {
-        }
-        return false;
-    };
-
-    const adjustDetectorTimerDelay = (callback, delay) => {
-        const numericDelay = Number(delay);
-        if ( Number.isFinite(numericDelay) === false ||
-            numericDelay !== DETECTOR_TIMER_DELAY_MS ||
-            isNativeCallback(callback) === false ) {
-            return delay;
-        }
-        detectorTimerGuardHits += 1;
-        return Math.max(1, numericDelay * DETECTOR_TIMER_MULTIPLIER);
-    };
-
-    const installDetectorTimerGuard = () => {
-        if ( detectorTimerGuardInstalled ||
-            typeof nativeSetTimeout !== 'function' ||
-            typeof win.Proxy !== 'function' ) {
-            return false;
-        }
-        try {
-            win.setTimeout = new win.Proxy(nativeSetTimeout, {
-                apply(target, thisArg, args) {
-                    if ( args.length >= 2 ) {
-                        args[1] = adjustDetectorTimerDelay(args[0], args[1]);
-                    }
-                    return win.Reflect.apply(target, thisArg, args);
-                },
-            });
-            detectorTimerGuardInstalled = true;
-            return true;
-        } catch {
-        }
-        return false;
     };
 
     const bridgeFetchIntoIframe = iframe => {
@@ -1053,15 +1108,14 @@ const createController = env => {
         installed = true;
         installStorageResetLiteGuard();
         cleanupSuspiciousWebStorage();
+        installWallRecoveryObserver();
         // YouTube now treats player-response ad metadata pruning as an
         // ad-blocker signal. Keep the reset/timing guards, but leave player
         // response payloads intact so playback can proceed.
         // Keep the targeted abnormality shield, but leave DOM append and
         // Array push proxies opt-in so YouTube SPA rendering stays responsive.
         installAbnormalityGuard();
-        installDetectorTimerGuard();
         installNavigationListeners();
-        installWallRecoveryObserver();
         return true;
     };
 
@@ -1073,8 +1127,8 @@ const createController = env => {
             hits: abnormalityGuardHits,
         }),
         getDetectorTimerGuardStats: () => ({
-            installed: detectorTimerGuardInstalled,
-            hits: detectorTimerGuardHits,
+            installed: false,
+            hits: 0,
         }),
         getStorageResetLiteStats: () => ({
             installed: storageResetLiteInstalled,
@@ -1086,13 +1140,11 @@ const createController = env => {
             persistentCookieClears: persistentResetLiteCookieClears,
             wallRecoveryReloads,
         }),
-        adjustDetectorTimerDelay,
         cleanupSuspiciousWebStorage,
         clearVisitorCookiesForWall,
         clearWebStorageForWall,
         install,
         installAbnormalityGuard,
-        installDetectorTimerGuard,
         installIframeFetchBridge,
         installFetchGuard,
         installJsonParseGuard,

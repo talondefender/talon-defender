@@ -340,6 +340,21 @@
         "*://*.vidzy.cc/*"
       ],
       "js": [
+        "rulesets/scripting/scriptlet/main/talon-site-fixes.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "*://*.french-stream.one/*",
+        "*://*.fsvid.lol/*",
+        "*://*.kakaflix.lol/*",
+        "*://*.uqload.is/*",
+        "*://*.vidzy.cc/*"
+      ],
+      "js": [
         "js/scripting/french-stream-site-fix-loader.js"
       ],
       "run_at": "document_start",
@@ -362,7 +377,7 @@
   "storage": {
     "managed_schema": "managed_storage.json"
   },
-  "version": "0.1.9",
+  "version": "0.1.10",
   "web_accessible_resources": [
     {
       "resources": [

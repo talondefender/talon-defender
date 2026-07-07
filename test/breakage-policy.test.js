@@ -145,7 +145,23 @@ test('manifest and public allowlist expose bounded static runtime bootstrap lane
     Array.isArray(entry.js) &&
     entry.js.includes(frenchStreamLoaderPath)
   );
+  const frenchStreamMainScripts = contentScripts.filter(entry =>
+    Array.isArray(entry.js) &&
+    entry.js.includes(frenchStreamMainSiteFixPath)
+  );
   assert.equal(frenchStreamLoaders.length, 1);
+  assert.equal(frenchStreamMainScripts.length, 1);
+  assert.deepEqual(frenchStreamMainScripts[0].matches, [
+    '*://*.french-stream.one/*',
+    '*://*.fsvid.lol/*',
+    '*://*.kakaflix.lol/*',
+    '*://*.uqload.is/*',
+    '*://*.vidzy.cc/*',
+  ]);
+  assert.deepEqual(frenchStreamMainScripts[0].js, [frenchStreamMainSiteFixPath]);
+  assert.equal(frenchStreamMainScripts[0].run_at, 'document_start');
+  assert.equal(frenchStreamMainScripts[0].all_frames, true);
+  assert.equal(frenchStreamMainScripts[0].world, 'MAIN');
   assert.deepEqual(frenchStreamLoaders[0].matches, [
     '*://*.french-stream.one/*',
     '*://*.fsvid.lol/*',
@@ -157,13 +173,6 @@ test('manifest and public allowlist expose bounded static runtime bootstrap lane
   assert.equal(frenchStreamLoaders[0].run_at, 'document_start');
   assert.equal(frenchStreamLoaders[0].all_frames, true);
   assert.equal(frenchStreamLoaders[0].world, undefined);
-  assert.equal(
-    contentScripts.some(entry =>
-      Array.isArray(entry.js) &&
-      entry.js.includes(frenchStreamMainSiteFixPath)
-    ),
-    false
-  );
   const youtubeGuardResources = webAccessibleResources.filter(entry =>
     Array.isArray(entry.resources) &&
     entry.resources.includes(talonYouTubeGuardPath)

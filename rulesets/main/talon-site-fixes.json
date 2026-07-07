@@ -534,5 +534,378 @@
         "xmlhttprequest"
       ]
     }
+  },
+  {
+    "id": 980030,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||bancusnonpeak.cyou/",
+      "resourceTypes": [
+        "script",
+        "xmlhttprequest",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980031,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||domingbesnarecrex.qpon/",
+      "resourceTypes": [
+        "script",
+        "xmlhttprequest",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980032,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||devilyquondam.cyou/",
+      "resourceTypes": [
+        "script",
+        "xmlhttprequest",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980033,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc",
+        "bancusnonpeak.cyou",
+        "domingbesnarecrex.qpon",
+        "devilyquondam.cyou"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||haivamtuzeton.site/ad/visit.php",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980034,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc",
+        "bancusnonpeak.cyou",
+        "domingbesnarecrex.qpon",
+        "devilyquondam.cyou",
+        "haivamtuzeton.site"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||shein.com/risk/challenge",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980035,
+    "priority": 1999900,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": ".cyou/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame",
+        "script",
+        "xmlhttprequest"
+      ]
+    }
+  },
+  {
+    "id": 980036,
+    "priority": 1999900,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": ".qpon/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame",
+        "script",
+        "xmlhttprequest"
+      ]
+    }
+  },
+  {
+    "id": 980037,
+    "priority": 1999900,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": ".shop/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame",
+        "script",
+        "xmlhttprequest"
+      ]
+    }
+  },
+  {
+    "id": 980038,
+    "priority": 1999900,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": ".cfd/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame",
+        "script",
+        "xmlhttprequest"
+      ]
+    }
+  },
+  {
+    "id": 980039,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc",
+        "bancusnonpeak.cyou",
+        "domingbesnarecrex.qpon",
+        "devilyquondam.cyou"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||haivamtuzeton.site/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame",
+        "script",
+        "xmlhttprequest"
+      ]
+    }
+  },
+  {
+    "id": 980040,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc",
+        "bancusnonpeak.cyou",
+        "domingbesnarecrex.qpon",
+        "devilyquondam.cyou",
+        "haivamtuzeton.site"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||gamingamerica.com/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980041,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc",
+        "bancusnonpeak.cyou",
+        "domingbesnarecrex.qpon",
+        "devilyquondam.cyou",
+        "haivamtuzeton.site"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||newsuggest.com/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980042,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc",
+        "bancusnonpeak.cyou",
+        "domingbesnarecrex.qpon",
+        "devilyquondam.cyou",
+        "haivamtuzeton.site"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||endfield.gryphline.com/landing/ua/obt",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980043,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc",
+        "bancusnonpeak.cyou",
+        "domingbesnarecrex.qpon",
+        "devilyquondam.cyou",
+        "haivamtuzeton.site"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||best.aliexpress.com/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980044,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "french-stream.one",
+        "fsvid.lol",
+        "kakaflix.lol",
+        "uqload.is",
+        "vidzy.cc",
+        "bancusnonpeak.cyou",
+        "domingbesnarecrex.qpon",
+        "devilyquondam.cyou",
+        "haivamtuzeton.site"
+      ],
+      "domainType": "thirdParty",
+      "urlFilter": "||oncehuman.game/",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
   }
 ]

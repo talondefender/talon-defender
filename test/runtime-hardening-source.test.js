@@ -480,6 +480,10 @@ test('extension source keeps only bounded static runtime lanes', async () => {
     Array.isArray(entry.js) &&
     entry.js.includes(frenchStreamLoaderPath)
   );
+  const frenchStreamMainScripts = contentScripts.filter(entry =>
+    Array.isArray(entry.js) &&
+    entry.js.includes(frenchStreamMainSiteFixPath)
+  );
   const youtubeGuardResources = (manifest.web_accessible_resources ?? []).filter(entry =>
     Array.isArray(entry.resources) &&
     entry.resources.includes(talonYouTubeGuardPath)
@@ -511,6 +515,18 @@ test('extension source keeps only bounded static runtime lanes', async () => {
   assert.equal(youtubeGuardLoaders[0].all_frames, true);
   assert.equal(youtubeGuardLoaders[0].world, undefined);
   assert.equal(frenchStreamLoaders.length, 1);
+  assert.equal(frenchStreamMainScripts.length, 1);
+  assert.deepEqual(frenchStreamMainScripts[0].matches, [
+    '*://*.french-stream.one/*',
+    '*://*.fsvid.lol/*',
+    '*://*.kakaflix.lol/*',
+    '*://*.uqload.is/*',
+    '*://*.vidzy.cc/*',
+  ]);
+  assert.deepEqual(frenchStreamMainScripts[0].js, [frenchStreamMainSiteFixPath]);
+  assert.equal(frenchStreamMainScripts[0].run_at, 'document_start');
+  assert.equal(frenchStreamMainScripts[0].all_frames, true);
+  assert.equal(frenchStreamMainScripts[0].world, 'MAIN');
   assert.deepEqual(frenchStreamLoaders[0].matches, [
     '*://*.french-stream.one/*',
     '*://*.fsvid.lol/*',
@@ -531,13 +547,6 @@ test('extension source keeps only bounded static runtime lanes', async () => {
     contentScripts.some(entry =>
       Array.isArray(entry.js) &&
       entry.js.includes(talonYouTubePath)
-    ),
-    false
-  );
-  assert.equal(
-    contentScripts.some(entry =>
-      Array.isArray(entry.js) &&
-      entry.js.includes(frenchStreamMainSiteFixPath)
     ),
     false
   );
@@ -589,6 +598,10 @@ test('extension source keeps only bounded static runtime lanes', async () => {
   assert.match(backgroundSource, /isEntitled\(\) === false/);
   assert.match(backgroundSource, /files: \[ FRENCH_STREAM_SITE_FIX_MAIN_PATH \]/);
   assert.match(backgroundSource, /world: 'MAIN'/);
+  assert.match(backgroundSource, /updateTalonSiteFixRuntimeRules/);
+  assert.match(rulesetSource, /TALON_SITE_FIXES_RUNTIME_BASE_RULE_ID = 7000000/);
+  assert.match(rulesetSource, /updateTalonSiteFixRuntimeRules/);
+  assert.match(rulesetSource, /\/rulesets\/main\/\$\{TALON_SITE_FIXES_RULESET_ID\}\.json/);
   const privateComparatorToken = String.fromCharCode(99, 111, 102, 102, 101, 101);
   assert.doesNotMatch(talonYouTubeGuardSource, new RegExp(`analytics|posthog|${privateComparatorToken}-break`, 'i'));
   assert.doesNotMatch(talonYouTubeGuardLoaderSource, new RegExp(`analytics|posthog|${privateComparatorToken}-break`, 'i'));

@@ -466,7 +466,7 @@ test('YouTube player guard reset-lite shields enforcement storage without deleti
   assert.equal(stats.writes, 1);
 });
 
-test('YouTube player guard wall recovery retries persisted v3 enforcement state', async () => {
+test('YouTube player guard recovers once from a visible YouTube playback wall', async () => {
   const marks = [];
   let cookieWrites = 0;
   let reloads = 0;
@@ -527,23 +527,157 @@ test('YouTube player guard wall recovery retries persisted v3 enforcement state'
   await new Promise(resolve => setTimeout(resolve, 0));
 
   const stats = controller.getStorageResetLiteStats();
-  assert.equal(context.sessionStorage.getItem('talon.youtube.resetLite.reloaded.v4'), '1');
+  assert.equal(context.sessionStorage.getItem('talon.youtube.resetLite.reloaded.v5'), '1');
   assert.equal(context.localStorage.map.has('yt-player-volume'), false);
   assert.equal(context.localStorage.map.has('yt-adblock-enforcement'), false);
   assert.equal(reloads, 1);
   assert.equal(stats.persistentRuns, 1);
   assert.equal(stats.wallRecoveryReloads, 1);
-  assert.equal(cookieWrites > 0, true);
-  assert.equal(
-    marks.some(entry =>
-      entry.name === 'data-talon-youtube-reset-lite' &&
-      entry.value === 'reloading'
-    ),
-    true
-  );
+  assert.ok(cookieWrites > 0);
+  assert.equal(marks.some(entry => entry.value === 'wall-present'), true);
+  assert.equal(marks.some(entry => entry.value === 'reloading'), true);
 });
 
-test('YouTube player guard accelerates only the native 17-second detector timer', async () => {
+test('YouTube player guard detects playback walls added after YouTube SPA navigation', async () => {
+  const marks = [];
+  const mutationCallbacks = [];
+  let cookieWrites = 0;
+  let reloads = 0;
+  let wallVisible = false;
+  const document = {
+    documentElement: {
+      setAttribute(name, value) {
+        marks.push({ name, value });
+      },
+    },
+    body: {
+      textContent: '',
+    },
+    addEventListener: () => {},
+    querySelector(selector) {
+      return wallVisible && String(selector).includes('ytd-enforcement-message-view-model')
+        ? { textContent: "Ad blockers violate YouTube's Terms of Service" }
+        : null;
+    },
+    get cookie() {
+      return '';
+    },
+    set cookie(value) {
+      cookieWrites += value ? 1 : 0;
+    },
+  };
+  class HarnessMutationObserver {
+    constructor(callback) {
+      mutationCallbacks.push(callback);
+    }
+    observe() {}
+    disconnect() {}
+  }
+  const { context, controller } = await createController({
+    document,
+    indexedDB: {
+      databases: async () => [],
+    },
+    caches: {
+      keys: async () => [],
+      delete: async () => true,
+    },
+    navigator: {
+      serviceWorker: {
+        getRegistrations: async () => [],
+      },
+    },
+    location: {
+      hostname: 'www.youtube.com',
+      href: `${youtubeOrigin}/watch?v=test`,
+      origin: youtubeOrigin,
+      pathname: '/watch',
+      reload() {
+        reloads += 1;
+      },
+    },
+    MutationObserver: HarnessMutationObserver,
+    setTimeout(callback, delay) {
+      if ( Number(delay) <= 100 ) {
+        callback();
+      }
+      return 1;
+    },
+  });
+
+  context.localStorage.setItem('yt-player-volume', '75');
+  assert.equal(controller.install(), true);
+  assert.equal(reloads, 0);
+  assert.equal(mutationCallbacks.length, 1);
+
+  wallVisible = true;
+  mutationCallbacks[0]([{ addedNodes: [document.documentElement] }]);
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const stats = controller.getStorageResetLiteStats();
+  assert.equal(context.sessionStorage.getItem('talon.youtube.resetLite.reloaded.v5'), '1');
+  assert.equal(context.localStorage.map.has('yt-player-volume'), false);
+  assert.equal(reloads, 1);
+  assert.equal(stats.persistentRuns, 1);
+  assert.equal(stats.wallRecoveryReloads, 1);
+  assert.ok(cookieWrites > 0);
+  assert.equal(marks.some(entry => entry.value === 'wall-present'), true);
+  assert.equal(marks.some(entry => entry.value === 'reloading'), true);
+});
+
+test('YouTube player guard does not loop wall recovery after the one-shot reset', async () => {
+  const marks = [];
+  let reloads = 0;
+  const document = {
+    documentElement: {
+      setAttribute(name, value) {
+        marks.push({ name, value });
+      },
+    },
+    body: {
+      textContent: '',
+    },
+    addEventListener: () => {},
+    querySelector(selector) {
+      return String(selector).includes('ytd-enforcement-message-view-model')
+        ? { textContent: "Ad blockers violate YouTube's Terms of Service" }
+        : null;
+    },
+  };
+  const { context, controller } = await createController({
+    document,
+    location: {
+      hostname: 'www.youtube.com',
+      href: `${youtubeOrigin}/watch?v=test`,
+      origin: youtubeOrigin,
+      pathname: '/watch',
+      reload() {
+        reloads += 1;
+      },
+    },
+  });
+
+  context.localStorage.setItem('yt-player-volume', '75');
+  context.localStorage.setItem('yt-adblock-enforcement', 'wall');
+  context.sessionStorage.setItem('talon.youtube.resetLite.reloaded.v5', '1');
+
+  assert.equal(controller.install(), true);
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const stats = controller.getStorageResetLiteStats();
+  assert.equal(context.localStorage.map.has('yt-player-volume'), true);
+  assert.equal(context.localStorage.map.has('yt-adblock-enforcement'), false);
+  assert.equal(reloads, 0);
+  assert.equal(stats.persistentRuns, 0);
+  assert.equal(stats.wallRecoveryReloads, 0);
+  assert.equal(marks.some(entry => entry.value === 'already-reloaded'), true);
+});
+
+test('YouTube player guard leaves YouTube detector timers untouched by default', async () => {
   const scheduledTimers = [];
   const { context, controller } = await createController({
     setTimeout(callback, delay, ...args) {
@@ -557,20 +691,20 @@ test('YouTube player guard accelerates only the native 17-second detector timer'
 
   assert.equal(controller.install(), true);
   let stats = controller.getDetectorTimerGuardStats();
-  assert.equal(stats.installed, true);
+  assert.equal(stats.installed, false);
   assert.equal(stats.hits, 0);
 
   context.setTimeout(nativeLookingCallback, 17000, 'detector');
   context.setTimeout(normalCallback, 17000, 'normal');
   context.setTimeout(nativeLookingCallback, 16000, 'other-delay');
 
-  assert.equal(scheduledTimers[0].delay, 17);
+  assert.equal(scheduledTimers[0].delay, 17000);
   assert.deepEqual(scheduledTimers[0].args, ['detector']);
   assert.equal(scheduledTimers[1].delay, 17000);
   assert.equal(scheduledTimers[2].delay, 16000);
   stats = controller.getDetectorTimerGuardStats();
-  assert.equal(stats.installed, true);
-  assert.equal(stats.hits, 1);
+  assert.equal(stats.installed, false);
+  assert.equal(stats.hits, 0);
 });
 
 test('YouTube player guard can explicitly bridge guarded fetch into new about:blank iframes', async () => {

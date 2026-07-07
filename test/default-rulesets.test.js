@@ -373,7 +373,7 @@ test('YouTube compatibility allow rules outrank dynamic blocking rules', async (
 test('Talon site fixes target French Stream popup abuse narrowly', async () => {
   const rules = await readJson('../rulesets/main/talon-site-fixes.json');
   assert.equal(Array.isArray(rules), true);
-  assert.equal(rules.length, 29);
+  assert.equal(rules.length, 44);
   assert.equal(rules.every(rule => rule?.action?.type === 'block'), true);
   assert.equal(
     rules.some(rule => rule?.condition?.urlFilter === '||french-stream.one/js/9c9e0968.js'),
@@ -505,6 +505,85 @@ test('Talon site fixes target French Stream popup abuse narrowly', async () => {
     );
   }
   for (const urlFilter of [
+    '||bancusnonpeak.cyou/',
+    '||domingbesnarecrex.qpon/',
+    '||devilyquondam.cyou/',
+  ]) {
+    assert.equal(
+      rules.some(rule =>
+        rule?.condition?.urlFilter === urlFilter &&
+        rule?.condition?.resourceTypes?.includes('script') &&
+        rule?.condition?.resourceTypes?.includes('sub_frame') &&
+        rule?.condition?.initiatorDomains?.includes('french-stream.one') &&
+        rule?.condition?.initiatorDomains?.includes('vidzy.cc')
+      ),
+      true,
+      `${urlFilter} must block current French Stream rotating ad loaders`
+    );
+  }
+  assert.equal(
+    rules.some(rule =>
+      rule?.condition?.urlFilter === '||haivamtuzeton.site/ad/visit.php' &&
+      rule?.condition?.resourceTypes?.includes('main_frame') &&
+      rule?.condition?.initiatorDomains?.includes('bancusnonpeak.cyou')
+    ),
+    true
+  );
+  assert.equal(
+    rules.some(rule =>
+      rule?.condition?.urlFilter === '||haivamtuzeton.site/' &&
+      rule?.condition?.resourceTypes?.includes('script') &&
+      rule?.condition?.resourceTypes?.includes('main_frame') &&
+      rule?.condition?.initiatorDomains?.includes('domingbesnarecrex.qpon')
+    ),
+    true
+  );
+  assert.equal(
+    rules.some(rule =>
+      rule?.condition?.urlFilter === '||shein.com/risk/challenge' &&
+      rule?.condition?.resourceTypes?.includes('main_frame') &&
+      rule?.condition?.initiatorDomains?.includes('haivamtuzeton.site')
+    ),
+    true
+  );
+  for (const urlFilter of [
+    '||gamingamerica.com/',
+    '||newsuggest.com/',
+    '||endfield.gryphline.com/landing/ua/obt',
+    '||best.aliexpress.com/',
+    '||oncehuman.game/',
+  ]) {
+    assert.equal(
+      rules.some(rule =>
+        rule?.condition?.urlFilter === urlFilter &&
+        rule?.condition?.resourceTypes?.includes('main_frame') &&
+        rule?.condition?.initiatorDomains?.includes('french-stream.one') &&
+        rule?.condition?.initiatorDomains?.includes('vidzy.cc')
+      ),
+      true,
+      `${urlFilter} must block current French Stream player popup landings`
+    );
+  }
+  for (const urlFilter of [
+    '.cyou/',
+    '.qpon/',
+    '.shop/',
+    '.cfd/',
+  ]) {
+    assert.equal(
+      rules.some(rule =>
+        rule?.condition?.urlFilter === urlFilter &&
+        rule?.condition?.resourceTypes?.includes('main_frame') &&
+        rule?.condition?.resourceTypes?.includes('script') &&
+        rule?.condition?.domainType === 'thirdParty' &&
+        rule?.condition?.initiatorDomains?.includes('french-stream.one') &&
+        rule?.condition?.initiatorDomains?.includes('vidzy.cc')
+      ),
+      true,
+      `${urlFilter} must be blocked for French Stream-scoped rotating ad hosts`
+    );
+  }
+  for (const urlFilter of [
     '||wk.sanpoiljejuna.cfd/cx/',
     '||hy.shibahsjessing.qpon/cx/',
     '||v2006.com/',
@@ -549,6 +628,14 @@ test('Talon site fixes target French Stream popup abuse narrowly', async () => {
   assert.match(scriptletSource, /Window\.prototype, 'open'/);
   assert.match(scriptletSource, /Object\.defineProperty\(self, 'open'/);
   assert.match(scriptletSource, /shouldBlockPlayerGesturePopupUrl/);
+  assert.match(scriptletSource, /shouldBlockPopupNavigation/);
+  assert.match(scriptletSource, /shouldShieldFrenchStreamContentNavigation/);
+  assert.match(scriptletSource, /safeFrenchStreamContentClickEvents/);
+  assert.match(scriptletSource, /shouldBlockPlayerGestureNavigationUrl/);
+  assert.match(scriptletSource, /topPlayerGestureSelector/);
+  assert.match(scriptletSource, /neutralizePopupBaseTargets/);
+  assert.match(scriptletSource, /wrapTargetSetAttribute\(HTMLAnchorElement\.prototype\)/);
+  assert.doesNotMatch(scriptletSource, /Element\.prototype\.setAttribute\s*=/);
   assert.match(scriptletSource, /HTMLAnchorElement\.prototype\.click/);
   assert.match(scriptletSource, /HTMLFormElement\.prototype\.submit/);
   assert.match(scriptletSource, /document\.querySelector\('base\[target\]'\)/);

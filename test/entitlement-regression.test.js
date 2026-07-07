@@ -329,6 +329,24 @@ test('background entitlement handlers keep runtime-only refresh and replace-devi
   assert.match(source, /case 'getInjectableSyncDiagnostics'/);
 });
 
+test('background entitlement cleanup clears stale paywall allow-all rules for entitled users', async () => {
+  const source = await readText('../js/background.js');
+  const cleanupStart = source.indexOf('async function clearPaywallAllowAllRules()');
+  const cleanupEnd = source.indexOf('async function disablePaywall', cleanupStart);
+  const cleanupSource = source.slice(cleanupStart, cleanupEnd);
+  const effectsStart = source.indexOf('async function applyEntitlementStatusEffects');
+  const effectsEnd = source.indexOf('async function enforceEntitlement', effectsStart);
+  const effectsSource = source.slice(effectsStart, effectsEnd);
+  const startSource = source.slice(
+    source.indexOf('async function start() {'),
+    source.indexOf('/******************************************************************************/', source.indexOf('async function start() {'))
+  );
+
+  assert.match(cleanupSource, /dnr\.setAllowAllRules\(\s*PAYWALL_RULE_BASE_ID,\s*\[\],\s*\[\],\s*false,\s*PAYWALL_RULE_PRIORITY\s*\)/);
+  assert.match(effectsSource, /if \( paywallWasActive \) \{[\s\S]*?await disablePaywall\(\{ broadcast \}\);[\s\S]*?\} else \{[\s\S]*?await clearPaywallAllowAllRules\(\);[\s\S]*?\}/);
+  assert.match(startSource, /if \(entitlementStatus\?\.status === 'expired'\) \{[\s\S]*?await enablePaywall\(\{ broadcast: false \}\)\.catch\(ubolErr\);[\s\S]*?\} else \{[\s\S]*?await clearPaywallAllowAllRules\(\);[\s\S]*?\}/);
+});
+
 test('license storage keeps raw keys local and clears sync-safe activation tokens', async () => {
   const entitlementSource = await readText('../js/entitlement.js');
   const optionsSource = await readText('../options/options.js');
