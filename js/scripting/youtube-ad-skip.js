@@ -9,6 +9,7 @@ if ( global.TalonYoutubeAdSkipController ) {
 }
 
 const SUBSYSTEM_ID = 'youtubeAdSkip';
+const AD_PLAYBACK_RATE = 16;
 const CHECK_INTERVAL_MS = 500;
 const HIDDEN_CHECK_INTERVAL_MS = 1500;
 const MUTATION_TICK_DELAY_MS = 750;
@@ -423,6 +424,12 @@ const createController = env => {
         saveVideoState(video);
         try {
             video.muted = true;
+        } catch {
+        }
+        try {
+            if ( Number(video.playbackRate) < AD_PLAYBACK_RATE ) {
+                video.playbackRate = AD_PLAYBACK_RATE;
+            }
         } catch {
         }
         try {

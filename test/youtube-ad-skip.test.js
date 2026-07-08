@@ -232,7 +232,7 @@ function createHarness() {
   return { context, interruptionToast, state, video };
 }
 
-test('YouTube ad skip clicks native skip controls and mutes visible ads without speed-through', async () => {
+test('YouTube ad skip clicks native skip controls and speeds visible ads without seeking', async () => {
   const source = await readSource('js/scripting/youtube-ad-skip.js');
   const { context, state, video } = createHarness();
   vm.runInNewContext(source, context);
@@ -243,7 +243,7 @@ test('YouTube ad skip clicks native skip controls and mutes visible ads without 
   assert.equal(state.skipEvents.includes('click'), true);
   assert.equal(state.skipFocuses, 1);
   assert.equal(video.muted, true);
-  assert.equal(video.playbackRate, 1);
+  assert.equal(video.playbackRate, 16);
   assert.equal(video.currentTime, 2);
   assert.equal(state.styles.length, 1);
   assert.equal(state.styles[0].id, 'talon-youtube-ad-skip-style');
@@ -266,7 +266,7 @@ test('YouTube ad skip recognizes visible ad indicators when ad-showing class is 
   assert.equal(controller.tick(), true);
   assert.equal(state.skipClicks, 1);
   assert.equal(video.muted, true);
-  assert.equal(video.playbackRate, 1);
+  assert.equal(video.playbackRate, 16);
   assert.equal(video.paused, false);
   assert.equal(video.playCalls, 1);
 });
@@ -284,7 +284,7 @@ test('YouTube ad skip accepts labeled fallback skip controls', async () => {
   assert.equal(state.skipClicks, 1);
   assert.equal(state.skipEvents.includes('click'), true);
   assert.equal(video.muted, true);
-  assert.equal(video.playbackRate, 1);
+  assert.equal(video.playbackRate, 16);
 });
 
 test('YouTube ad skip ignores plain Skip controls without an ad-specific label or class', async () => {
@@ -335,7 +335,7 @@ test('YouTube ad skip does not seek the player and trigger short-video restart l
   assert.equal(controller.tick(), true);
   assert.equal(video.currentTime, 0);
   assert.equal(state.skipClicks, 0);
-  assert.equal(video.playbackRate, 1);
+  assert.equal(video.playbackRate, 16);
 });
 
 test('YouTube ad skip avoids broad document mutation work and coalesces player churn', async () => {

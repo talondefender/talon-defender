@@ -50,7 +50,7 @@
     "localExtra": {
       "js/scripting/css-specific.js": "Talon-approved fail-closed guard around the injected procedural cosmetic API constructor. Keep this hardening when importing upstream css-specific.js updates.",
       "js/scripting/youtube-ad-skip.js": "Talon-owned YouTube ad-skip lane. Do not import or copy uBO Lite's YouTube scriptlet/runtime strategy into this path; upstream uBO scriptlets are intentionally excluded from YouTube hosts.",
-      "js/scripting/youtube-player-guard.js": "Talon-owned YouTube page-world guard: prunes YouTube ad metadata and corrects SSAP restart loops without remote analytics or web-accessible script injection."
+      "js/scripting/youtube-player-guard.js": "Talon-owned YouTube page-world guard: leaves YouTube player ad metadata intact, shields targeted enforcement/reset paths, and corrects SSAP restart loops without remote analytics or web-accessible script injection."
     },
     "upstreamExtra": {}
   },
