@@ -42,7 +42,11 @@ export class ReadWriteDNREditor extends DNREditor {
     }
 
     async getText() {
-        return localRead('userDnrRules');
+        const bin = await browser.storage.local.get('userDnrRules');
+        if ( bin === null || typeof bin !== 'object' || Array.isArray(bin) ) {
+            throw new Error('invalid local storage response for user DNR rules');
+        }
+        return bin.userDnrRules;
     }
 
     on(editor) {

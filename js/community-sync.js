@@ -3,7 +3,7 @@
 
 import {
     browser,
-    localRead, localRemove, localWrite,
+    localRemove, localWrite,
     runtime,
 } from './ext.js';
 
@@ -93,6 +93,8 @@ const LEGACY_PRIVATE_STORAGE_KEYS = {
     directives: 'communityBundleDirectives',
     scriptlets: 'communityBundleScriptlets',
 };
+const COMMUNITY_INJECTABLE_FINGERPRINT_KEY =
+    'communityInjectableFingerprintV1';
 
 const ALARM_NAME = 'community-sync';
 const COMMUNITY_FETCH_TIMEOUT_MS = 10000;
@@ -123,6 +125,7 @@ const COMMUNITY_STATE_KEYS = [
     ...Object.values(BASELINE_STORAGE_KEYS),
     ...Object.values(OVERLAY_STORAGE_KEYS),
     ...Object.values(LEGACY_PRIVATE_STORAGE_KEYS),
+    COMMUNITY_INJECTABLE_FINGERPRINT_KEY,
 ];
 const COMMUNITY_ROLLBACK_SNAPSHOT_KEYS = [
     STORAGE_KEYS.meta,
@@ -147,6 +150,7 @@ const COMMUNITY_ROLLBACK_SNAPSHOT_KEYS = [
     STORAGE_KEYS.lastError,
     LEGACY_PRIVATE_STORAGE_KEYS.directives,
     LEGACY_PRIVATE_STORAGE_KEYS.scriptlets,
+    COMMUNITY_INJECTABLE_FINGERPRINT_KEY,
 ];
 const COMMUNITY_ACTIVATION_META_KEYS = [
     'activationStatus',
@@ -454,7 +458,7 @@ const scheduleCommunityAlarm = ({ delayMs, periodMs } = {}) => {
     if ( Number.isFinite(periodMs) && periodMs > 0 ) {
         alarm.periodInMinutes = Math.max(1, Math.ceil(periodMs / (60 * 1000)));
     }
-    browser.alarms.create(ALARM_NAME, alarm);
+    return browser.alarms.create(ALARM_NAME, alarm);
 };
 
 const scheduleCommunityRetryAlarm = (delayMs = COMMUNITY_SYNC_FAILURE_RETRY_MS) =>
@@ -462,7 +466,7 @@ const scheduleCommunityRetryAlarm = (delayMs = COMMUNITY_SYNC_FAILURE_RETRY_MS) 
 
 const scheduleCommunitySuccessAlarm = ({ ttlHours, delayMs } = {}) => {
     const ttlMs = normalizeCommunitySyncTtlHours(ttlHours) * 60 * 60 * 1000;
-    scheduleCommunityAlarm({
+    return scheduleCommunityAlarm({
         delayMs: Number.isFinite(delayMs) && delayMs > 0 ? delayMs : ttlMs,
         periodMs: ttlMs,
     });
@@ -1088,20 +1092,40 @@ const cloneValue = value => value === undefined
     ? undefined
     : structuredClone(value);
 
-const readLocalStorageSnapshot = async keys => {
-    if ( browser.storage?.local?.get === undefined ) { return {}; }
-    try {
-        const bin = await browser.storage.local.get(keys);
-        if ( bin instanceof Object === false ) { return {}; }
-        const snapshot = {};
-        for ( const key of keys ) {
-            if ( Object.hasOwn(bin, key) === false ) { continue; }
-            snapshot[key] = cloneValue(bin[key]);
-        }
-        return snapshot;
-    } catch {
+const readAuthoritativeLocalStorage = async keys => {
+    if ( browser.storage?.local?.get === undefined ) {
+        throw new Error('community storage read unavailable');
     }
-    return {};
+    let bin;
+    try {
+        bin = await browser.storage.local.get(keys);
+    } catch (error) {
+        const message = error instanceof Error
+            ? error.message
+            : String(error || 'unknown storage error');
+        throw new Error(`community storage read failed: ${message}`, {
+            cause: error,
+        });
+    }
+    if ( bin === null || typeof bin !== 'object' || Array.isArray(bin) ) {
+        throw new Error('community storage read returned invalid data');
+    }
+    return bin;
+};
+
+const readAuthoritativeLocalValue = async key => {
+    const bin = await readAuthoritativeLocalStorage(key);
+    return Object.hasOwn(bin, key) ? cloneValue(bin[key]) : undefined;
+};
+
+const readLocalStorageSnapshot = async keys => {
+    const bin = await readAuthoritativeLocalStorage(keys);
+    const snapshot = {};
+    for ( const key of keys ) {
+        if ( Object.hasOwn(bin, key) === false ) { continue; }
+        snapshot[key] = cloneValue(bin[key]);
+    }
+    return snapshot;
 };
 
 const restoreLocalStorageSnapshot = async (snapshot, keys) => {
@@ -1125,21 +1149,14 @@ const restoreLocalStorageSnapshot = async (snapshot, keys) => {
 };
 
 const readCommunityBaselineState = async () => {
-    const [
-        meta,
-        rules,
-        cosmetics,
-        heuristics,
-        publicDirectives,
-        publicScriptlets,
-    ] = await Promise.all([
-        localRead(BASELINE_STORAGE_KEYS.meta),
-        localRead(BASELINE_STORAGE_KEYS.rules),
-        localRead(BASELINE_STORAGE_KEYS.cosmetics),
-        localRead(BASELINE_STORAGE_KEYS.heuristics),
-        localRead(BASELINE_STORAGE_KEYS.publicDirectives),
-        localRead(BASELINE_STORAGE_KEYS.publicScriptlets),
-    ]);
+    const keys = Object.values(BASELINE_STORAGE_KEYS);
+    const bin = await readAuthoritativeLocalStorage(keys);
+    const meta = bin[BASELINE_STORAGE_KEYS.meta];
+    const rules = bin[BASELINE_STORAGE_KEYS.rules];
+    const cosmetics = bin[BASELINE_STORAGE_KEYS.cosmetics];
+    const heuristics = bin[BASELINE_STORAGE_KEYS.heuristics];
+    const publicDirectives = bin[BASELINE_STORAGE_KEYS.publicDirectives];
+    const publicScriptlets = bin[BASELINE_STORAGE_KEYS.publicScriptlets];
     return {
         meta: meta instanceof Object ? meta : {},
         schemaVersion: normalizeCommunityRuleSchemaVersion(meta?.schemaVersion) ||
@@ -1153,13 +1170,11 @@ const readCommunityBaselineState = async () => {
 };
 
 const readCommunityOverlayState = async () => {
-    const [
-        rawIndex,
-        rawPayloads,
-    ] = await Promise.all([
-        localRead(OVERLAY_STORAGE_KEYS.index),
-        localRead(OVERLAY_STORAGE_KEYS.payloads),
-    ]);
+    const bin = await readAuthoritativeLocalStorage(
+        Object.values(OVERLAY_STORAGE_KEYS)
+    );
+    const rawIndex = bin[OVERLAY_STORAGE_KEYS.index];
+    const rawPayloads = bin[OVERLAY_STORAGE_KEYS.payloads];
     const index = normalizeOverlayIndex(rawIndex);
     const payloads = normalizeOverlayPayloads(rawPayloads);
     for ( const siteKey of Object.keys(index) ) {
@@ -1183,23 +1198,24 @@ const persistOverlayState = async ({ index, payloads }) => Promise.all([
 ]);
 
 const ensureCommunityBaselineMigration = async () => {
-    const baselineMeta = await localRead(BASELINE_STORAGE_KEYS.meta);
+    const migrationKeys = [
+        BASELINE_STORAGE_KEYS.meta,
+        STORAGE_KEYS.meta,
+        STORAGE_KEYS.rules,
+        STORAGE_KEYS.cosmetics,
+        STORAGE_KEYS.heuristics,
+        STORAGE_KEYS.publicDirectives,
+        STORAGE_KEYS.publicScriptlets,
+    ];
+    const bin = await readAuthoritativeLocalStorage(migrationKeys);
+    const baselineMeta = bin[BASELINE_STORAGE_KEYS.meta];
     if ( baselineMeta instanceof Object ) { return false; }
-    const [
-        meta,
-        rules,
-        cosmetics,
-        heuristics,
-        publicDirectives,
-        publicScriptlets,
-    ] = await Promise.all([
-        localRead(STORAGE_KEYS.meta),
-        localRead(STORAGE_KEYS.rules),
-        localRead(STORAGE_KEYS.cosmetics),
-        localRead(STORAGE_KEYS.heuristics),
-        localRead(STORAGE_KEYS.publicDirectives),
-        localRead(STORAGE_KEYS.publicScriptlets),
-    ]);
+    const meta = bin[STORAGE_KEYS.meta];
+    const rules = bin[STORAGE_KEYS.rules];
+    const cosmetics = bin[STORAGE_KEYS.cosmetics];
+    const heuristics = bin[STORAGE_KEYS.heuristics];
+    const publicDirectives = bin[STORAGE_KEYS.publicDirectives];
+    const publicScriptlets = bin[STORAGE_KEYS.publicScriptlets];
     if (
         meta instanceof Object === false &&
         Array.isArray(rules) === false &&
@@ -1360,10 +1376,11 @@ const writeCompiledCommunityState = async ({
     attemptedAt = Date.now(),
     fetchAt = attemptedAt,
     ruleSanitization = null,
+    activationSnapshot: suppliedActivationSnapshot,
 } = {}) => {
-    const activationSnapshot = await snapshotCommunityActivationState({
-        attemptedAt,
-    });
+    const activationSnapshot = suppliedActivationSnapshot instanceof Object
+        ? suppliedActivationSnapshot
+        : await snapshotCommunityActivationState({ attemptedAt });
     const rawApplied = await updateCommunityRules(compiled?.rules || [], {
         source: 'remote',
         version: metaPatch.version,
@@ -1374,9 +1391,13 @@ const writeCompiledCommunityState = async ({
         throw new Error(`apply failed: ${applyError}`);
     }
     const applied = mergeCommunityApplyResult(rawApplied, ruleSanitization);
+    const injectableFingerprint = await sha256Hex(JSON.stringify(
+        compiledStateToInjectableState(compiled)
+    ));
     const metaToStore = {
         ...metaPatch,
         applied,
+        injectableFingerprint,
     };
     await Promise.all([
         localWrite(STORAGE_KEYS.rules, compiled?.rules || []),
@@ -1387,6 +1408,7 @@ const writeCompiledCommunityState = async ({
         localWrite(STORAGE_KEYS.publicScriptlets, compiled?.publicScriptlets ?? null),
         localWrite(STORAGE_KEYS.privateDirectives, null),
         localWrite(STORAGE_KEYS.privateScriptlets, null),
+        localWrite(COMMUNITY_INJECTABLE_FINGERPRINT_KEY, injectableFingerprint),
         localRemove(LEGACY_PRIVATE_STORAGE_KEYS.directives),
         localRemove(LEGACY_PRIVATE_STORAGE_KEYS.scriptlets),
         localWrite(STORAGE_KEYS.lastAttempt, attemptedAt),
@@ -1483,34 +1505,26 @@ export const canonicalizeCommunityScriptlets = (
 };
 
 const readStoredCommunityInjectableSnapshot = async () => {
-    const [
-        cosmetics,
-        heuristics,
-        publicDirectives,
-        publicScriptlets,
-        privateDirectives,
-        privateScriptlets,
-        legacyDirectives,
-        legacyScriptlets,
-    ] = await Promise.all([
-        localRead(STORAGE_KEYS.cosmetics),
-        localRead(STORAGE_KEYS.heuristics),
-        localRead(STORAGE_KEYS.publicDirectives),
-        localRead(STORAGE_KEYS.publicScriptlets),
-        localRead(STORAGE_KEYS.privateDirectives),
-        localRead(STORAGE_KEYS.privateScriptlets),
-        localRead(LEGACY_PRIVATE_STORAGE_KEYS.directives),
-        localRead(LEGACY_PRIVATE_STORAGE_KEYS.scriptlets),
-    ]);
+    const keys = [
+        STORAGE_KEYS.cosmetics,
+        STORAGE_KEYS.heuristics,
+        STORAGE_KEYS.publicDirectives,
+        STORAGE_KEYS.publicScriptlets,
+        STORAGE_KEYS.privateDirectives,
+        STORAGE_KEYS.privateScriptlets,
+        LEGACY_PRIVATE_STORAGE_KEYS.directives,
+        LEGACY_PRIVATE_STORAGE_KEYS.scriptlets,
+    ];
+    const bin = await readAuthoritativeLocalStorage(keys);
     return {
-        cosmetics: cosmetics ?? null,
-        heuristics: heuristics ?? null,
-        publicDirectives: publicDirectives ?? null,
-        publicScriptlets: publicScriptlets ?? null,
-        privateDirectives: privateDirectives ?? null,
-        privateScriptlets: privateScriptlets ?? null,
-        legacyDirectives: legacyDirectives ?? null,
-        legacyScriptlets: legacyScriptlets ?? null,
+        cosmetics: bin[STORAGE_KEYS.cosmetics] ?? null,
+        heuristics: bin[STORAGE_KEYS.heuristics] ?? null,
+        publicDirectives: bin[STORAGE_KEYS.publicDirectives] ?? null,
+        publicScriptlets: bin[STORAGE_KEYS.publicScriptlets] ?? null,
+        privateDirectives: bin[STORAGE_KEYS.privateDirectives] ?? null,
+        privateScriptlets: bin[STORAGE_KEYS.privateScriptlets] ?? null,
+        legacyDirectives: bin[LEGACY_PRIVATE_STORAGE_KEYS.directives] ?? null,
+        legacyScriptlets: bin[LEGACY_PRIVATE_STORAGE_KEYS.scriptlets] ?? null,
     };
 };
 
@@ -1571,13 +1585,17 @@ const buildPrivateStateAfterScrub = beforeSnapshot => snapshotToInjectableState(
     legacyScriptlets: null,
 });
 
-export async function scrubPrivateCommunityState(
-    cleanupReason = 'developer-mode-off'
-) {
-    const beforeSnapshot = await readStoredCommunityInjectableSnapshot();
+const scrubPrivateCommunityStateFromSnapshot = async (
+    beforeSnapshot,
+    cleanupReason
+) => {
     const beforeState = snapshotToInjectableState(beforeSnapshot);
     const afterState = buildPrivateStateAfterScrub(beforeSnapshot);
-    await removeStoredCommunityKeys(COMMUNITY_PRIVATE_ONLY_KEYS);
+    const injectableFingerprint = await sha256Hex(JSON.stringify(afterState));
+    await Promise.all([
+        removeStoredCommunityKeys(COMMUNITY_PRIVATE_ONLY_KEYS),
+        localWrite(COMMUNITY_INJECTABLE_FINGERPRINT_KEY, injectableFingerprint),
+    ]);
     const requiresInjectableRefresh = hasCommunityInjectableStateChanged(
         beforeState,
         afterState
@@ -1585,8 +1603,26 @@ export async function scrubPrivateCommunityState(
     return {
         cleanupReason: requiresInjectableRefresh ? cleanupReason : '',
         requiresInjectableRefresh,
+        injectableFingerprint,
     };
+};
+
+export async function scrubPrivateCommunityState(
+    cleanupReason = 'developer-mode-off'
+) {
+    const beforeSnapshot = await readStoredCommunityInjectableSnapshot();
+    return scrubPrivateCommunityStateFromSnapshot(beforeSnapshot, cleanupReason);
 }
+
+const applyPrivateScrubToActivationSnapshot = (activation, scrubResult) => {
+    const snapshot = activation?.storageSnapshot;
+    if ( snapshot instanceof Object === false ) { return; }
+    for ( const key of COMMUNITY_PRIVATE_ONLY_KEYS ) {
+        delete snapshot[key];
+    }
+    snapshot[COMMUNITY_INJECTABLE_FINGERPRINT_KEY] =
+        scrubResult?.injectableFingerprint || '';
+};
 
 const snapshotCommunityActivationState = async ({ candidateMeta, attemptedAt } = {}) => {
     const [
@@ -1606,29 +1642,48 @@ const snapshotCommunityActivationState = async ({ candidateMeta, attemptedAt } =
     };
 };
 
+const restoreCommunityActivationSnapshotState = async activation => {
+    const storageSnapshot = activation?.storageSnapshot;
+    if (
+        storageSnapshot instanceof Object === false ||
+        Array.isArray(activation?.activeRules) === false
+    ) {
+        throw new Error('community rollback snapshot unavailable');
+    }
+    const restoredMeta = Object.hasOwn(storageSnapshot, STORAGE_KEYS.meta)
+        ? storageSnapshot[STORAGE_KEYS.meta]
+        : undefined;
+    const restored = await updateCommunityRules(activation.activeRules, {
+        source: 'rollback',
+        version: restoredMeta?.version,
+        schemaVersion: restoredMeta?.schemaVersion,
+    });
+    const restoreError = getCommunityApplyError(restored);
+    await restoreLocalStorageSnapshot(
+        storageSnapshot,
+        COMMUNITY_ROLLBACK_SNAPSHOT_KEYS
+    );
+    if ( restoreError !== '' ) {
+        throw new Error(`rollback community rules failed: ${restoreError}`);
+    }
+};
+
 export async function finalizeCommunityActivationSuccess(activation) {
     if ( activation instanceof Object === false ) { return {}; }
     const now = Date.now();
-    const currentMeta = await localRead(STORAGE_KEYS.meta);
+    const currentMeta = await readAuthoritativeLocalValue(STORAGE_KEYS.meta);
     const nextMeta = buildCommunityActivationMeta(currentMeta);
-    const writes = [
-        localWrite(STORAGE_KEYS.meta, nextMeta),
-        localWrite(STORAGE_KEYS.lastSuccess, now),
-        localRemove(STORAGE_KEYS.lastError),
-    ];
+    let baselineMetaToFinalize;
+    let overlayStateToPersist;
     if ( activation.kind === 'baseline' ) {
-        writes.push(
-            localWrite(BASELINE_STORAGE_KEYS.meta, {
-                ...(activation?.baselineMeta instanceof Object
-                    ? activation.baselineMeta
-                    : await localRead(BASELINE_STORAGE_KEYS.meta) || {}),
-                lastSuccess: now,
-                lastError: '',
-            })
-        );
-        scheduleCommunitySuccessAlarm({
-            ttlHours: activation?.candidateMeta?.ttlHours,
-        });
+        const baselineMeta = activation?.baselineMeta instanceof Object
+            ? activation.baselineMeta
+            : await readAuthoritativeLocalValue(BASELINE_STORAGE_KEYS.meta) || {};
+        baselineMetaToFinalize = {
+            ...baselineMeta,
+            lastSuccess: now,
+            lastError: '',
+        };
     } else if (
         activation.kind === 'overlay' &&
         typeof activation.overlaySiteKey === 'string' &&
@@ -1648,10 +1703,26 @@ export async function finalizeCommunityActivationSuccess(activation) {
         });
         if ( entry !== null ) {
             overlayState.index[activation.overlaySiteKey] = entry;
-            writes.push(persistOverlayState(overlayState));
+            overlayStateToPersist = overlayState;
         }
     }
+    const writes = [
+        localWrite(STORAGE_KEYS.meta, nextMeta),
+        localWrite(STORAGE_KEYS.lastSuccess, now),
+        localRemove(STORAGE_KEYS.lastError),
+    ];
+    if ( baselineMetaToFinalize instanceof Object ) {
+        writes.push(localWrite(BASELINE_STORAGE_KEYS.meta, baselineMetaToFinalize));
+    }
+    if ( overlayStateToPersist instanceof Object ) {
+        writes.push(persistOverlayState(overlayStateToPersist));
+    }
     await Promise.all(writes);
+    if ( activation.kind === 'baseline' ) {
+        await scheduleCommunitySuccessAlarm({
+            ttlHours: activation?.candidateMeta?.ttlHours,
+        });
+    }
     return {
         meta: nextMeta,
         lastSuccess: now,
@@ -1659,11 +1730,17 @@ export async function finalizeCommunityActivationSuccess(activation) {
 }
 
 export async function rollbackCommunityActivation(activation, reason) {
+    if (
+        activation instanceof Object === false ||
+        Array.isArray(activation.activeRules) === false ||
+        Object.hasOwn(activation, 'storageSnapshot') === false ||
+        activation.storageSnapshot instanceof Object === false
+    ) {
+        throw new Error('community rollback snapshot unavailable');
+    }
     const failureMessage = normalizeRollbackReason(reason) || 'activation failed';
     const attemptedAt = Number(activation?.attemptedAt) || Date.now();
-    const storageSnapshot = activation?.storageSnapshot instanceof Object
-        ? activation.storageSnapshot
-        : {};
+    const storageSnapshot = activation.storageSnapshot;
     const candidateMeta = activation?.candidateMeta instanceof Object
         ? activation.candidateMeta
         : {};
@@ -1703,7 +1780,7 @@ export async function rollbackCommunityActivation(activation, reason) {
         localWrite(STORAGE_KEYS.lastFetch, attemptedAt),
         localWrite(STORAGE_KEYS.lastError, effectiveFailureMessage),
     ]);
-    scheduleCommunityRetryAlarm();
+    await scheduleCommunityRetryAlarm();
     return {
         meta: rollbackMeta,
         lastError: effectiveFailureMessage,
@@ -1712,7 +1789,7 @@ export async function rollbackCommunityActivation(activation, reason) {
 
 const clearCommunityState = async cleanupReason => {
     const beforeState = await readStoredCommunityInjectableState();
-    clearCommunityAlarm();
+    await clearCommunityAlarm();
     const applied = await updateCommunityRules([], {
         source: 'cleanup',
         schemaVersion: COMMUNITY_RULE_SCHEMA_VERSION_LEGACY,
@@ -1733,7 +1810,21 @@ async function applyFallback(reason, baseResult = {}) {
     const message = reason instanceof Error ? reason.message : String(reason);
     ubolErr(`community-sync: ${message}`);
     const now = Date.now();
-    const privateCleanup = await scrubPrivateCommunityState(
+    // Read every value needed to preserve/restore last-known-good state before
+    // cleanup or diagnostics writes. A transient storage failure must not turn
+    // an unknown state into an empty fallback state.
+    const baselineMeta = await readAuthoritativeLocalValue(
+        BASELINE_STORAGE_KEYS.meta
+    );
+    const storedBin = await readAuthoritativeLocalStorage([
+        STORAGE_KEYS.rules,
+        STORAGE_KEYS.meta,
+    ]);
+    const storedRules = storedBin[STORAGE_KEYS.rules];
+    const storedMeta = storedBin[STORAGE_KEYS.meta];
+    const storedInjectableSnapshot = await readStoredCommunityInjectableSnapshot();
+    const privateCleanup = await scrubPrivateCommunityStateFromSnapshot(
+        storedInjectableSnapshot,
         'fallback-private-state'
     );
     const requiresInjectableRefresh = Boolean(
@@ -1744,7 +1835,6 @@ async function applyFallback(reason, baseResult = {}) {
         baseResult.cleanupReason ||
         '';
     try {
-        const baselineMeta = await localRead(BASELINE_STORAGE_KEYS.meta);
         await Promise.all([
             localWrite(STORAGE_KEYS.lastError, message),
             localWrite(STORAGE_KEYS.lastAttempt, now),
@@ -1759,17 +1849,7 @@ async function applyFallback(reason, baseResult = {}) {
     } catch (error) {
         ubolErr(error);
     }
-    scheduleCommunityRetryAlarm();
-
-    const [
-        storedRules,
-        storedMeta,
-        storedInjectableSnapshot,
-    ] = await Promise.all([
-        localRead(STORAGE_KEYS.rules),
-        localRead(STORAGE_KEYS.meta),
-        readStoredCommunityInjectableSnapshot(),
-    ]);
+    await scheduleCommunityRetryAlarm();
     let storedRestoreError = '';
     if ( hasStoredCompiledCommunityState({
         rules: storedRules,
@@ -1822,19 +1902,18 @@ async function applyFallback(reason, baseResult = {}) {
 
 async function getCommunitySyncState(force = false) {
     await ensureCommunityBaselineMigration();
-    const [
-        baselineMeta,
-        lastAttempt,
-        lastSuccess,
-        lastFetch,
-        lastError,
-    ] = await Promise.all([
-        localRead(BASELINE_STORAGE_KEYS.meta),
-        localRead(STORAGE_KEYS.lastAttempt),
-        localRead(STORAGE_KEYS.lastSuccess),
-        localRead(STORAGE_KEYS.lastFetch),
-        localRead(STORAGE_KEYS.lastError),
+    const bin = await readAuthoritativeLocalStorage([
+        BASELINE_STORAGE_KEYS.meta,
+        STORAGE_KEYS.lastAttempt,
+        STORAGE_KEYS.lastSuccess,
+        STORAGE_KEYS.lastFetch,
+        STORAGE_KEYS.lastError,
     ]);
+    const baselineMeta = bin[BASELINE_STORAGE_KEYS.meta];
+    const lastAttempt = bin[STORAGE_KEYS.lastAttempt];
+    const lastSuccess = bin[STORAGE_KEYS.lastSuccess];
+    const lastFetch = bin[STORAGE_KEYS.lastFetch];
+    const lastError = bin[STORAGE_KEYS.lastError];
 
     const baselineLastFetch = Number(baselineMeta?.lastFetch) || 0;
     const legacyLastFetch = Number(lastFetch) || 0;
@@ -1869,16 +1948,6 @@ export async function syncCommunityRules({ force = false } = {}) {
         return clearCommunityState('disabled');
     }
 
-    let privateStateResult = {
-        cleanupReason: '',
-        requiresInjectableRefresh: false,
-    };
-    if ( isDeveloperModeAllowed === false || rulesetConfig.developerMode !== true ) {
-        privateStateResult = await scrubPrivateCommunityState(
-            'developer-mode-off'
-        );
-    }
-
     const configuredURL = rulesetConfig.communityRulesURL || COMMUNITY_URL_DEFAULT;
     const url = normalizeCommunityURL(configuredURL);
     if ( url === '' ) {
@@ -1887,11 +1956,20 @@ export async function syncCommunityRules({ force = false } = {}) {
     const publicHotfixLane = isPublicCommunityHotfixLane(url);
 
     const syncState = await getCommunitySyncState(force);
+    let privateStateResult = {
+        cleanupReason: '',
+        requiresInjectableRefresh: false,
+    };
     if ( syncState.due === false ) {
+        if ( isDeveloperModeAllowed === false || rulesetConfig.developerMode !== true ) {
+            privateStateResult = await scrubPrivateCommunityState(
+                'developer-mode-off'
+            );
+        }
         if ( syncState.reason === 'retry-backoff' ) {
-            scheduleCommunityRetryAlarm(syncState.nextDelayMs);
+            await scheduleCommunityRetryAlarm(syncState.nextDelayMs);
         } else {
-            scheduleCommunitySuccessAlarm({
+            await scheduleCommunitySuccessAlarm({
                 ttlHours: syncState.ttlMs / (60 * 60 * 1000),
                 delayMs: syncState.nextDelayMs,
             });
@@ -1980,7 +2058,7 @@ export async function syncCommunityRules({ force = false } = {}) {
         return applyFallback(new Error('schema v4 requires full integrity scope'), privateStateResult);
     }
     const now = Date.now();
-    const currentCompiledMeta = await localRead(STORAGE_KEYS.meta);
+    const currentCompiledMeta = await readAuthoritativeLocalValue(STORAGE_KEYS.meta);
     const extrasSigned = integrityScope === 'full';
     const sanitizedBaseline = sanitizeCommunityPayloadForStorage({
         rules,
@@ -2015,6 +2093,19 @@ export async function syncCommunityRules({ force = false } = {}) {
     });
     const beforeInjectableSnapshot = await readStoredCommunityInjectableSnapshot();
     const beforeInjectableState = snapshotToInjectableState(beforeInjectableSnapshot);
+    const activationSnapshot = await snapshotCommunityActivationState({
+        attemptedAt: now,
+    });
+    if ( isDeveloperModeAllowed === false || rulesetConfig.developerMode !== true ) {
+        privateStateResult = await scrubPrivateCommunityStateFromSnapshot(
+            beforeInjectableSnapshot,
+            'developer-mode-off'
+        );
+        applyPrivateScrubToActivationSnapshot(
+            activationSnapshot,
+            privateStateResult
+        );
+    }
 
     await Promise.all([
         localWrite(BASELINE_STORAGE_KEYS.meta, baselineMetaToStore),
@@ -2049,8 +2140,13 @@ export async function syncCommunityRules({ force = false } = {}) {
             attemptedAt: now,
             fetchAt: now,
             ruleSanitization: sanitizedBaseline.ruleSanitization,
+            activationSnapshot,
         });
     } catch (error) {
+        await restoreLocalStorageSnapshot(
+            activationSnapshot.storageSnapshot,
+            COMMUNITY_ROLLBACK_SNAPSHOT_KEYS
+        );
         return applyFallback(error, privateStateResult);
     }
 
@@ -2099,15 +2195,28 @@ export async function syncCommunityOverlayRules({
         cleanupReason: '',
         requiresInjectableRefresh: false,
     };
-    if ( isDeveloperModeAllowed === false || rulesetConfig.developerMode !== true ) {
-        privateStateResult = await scrubPrivateCommunityState(
-            'developer-mode-off'
-        );
-    }
+    let privateStateScrubbed = false;
+    const ensurePrivateStateScrubbed = async beforeSnapshot => {
+        if (
+            privateStateScrubbed ||
+            (isDeveloperModeAllowed && rulesetConfig.developerMode === true)
+        ) {
+            return privateStateResult;
+        }
+        privateStateResult = beforeSnapshot instanceof Object
+            ? await scrubPrivateCommunityStateFromSnapshot(
+                beforeSnapshot,
+                'developer-mode-off'
+            )
+            : await scrubPrivateCommunityState('developer-mode-off');
+        privateStateScrubbed = true;
+        return privateStateResult;
+    };
 
     const configuredURL = rulesetConfig.communityRulesURL || COMMUNITY_URL_DEFAULT;
     const url = normalizeCommunityURL(configuredURL);
     if ( url === '' ) {
+        await ensurePrivateStateScrubbed();
         return { skipped: 'invalid-url' };
     }
 
@@ -2121,7 +2230,13 @@ export async function syncCommunityOverlayRules({
     ]);
     const existingEntry = overlayState.index[normalizedSiteKey];
     const existingPayload = overlayState.payloads[normalizedSiteKey];
+    const previousOverlayState = cloneValue(overlayState);
+    const resetOverlayStateToPrevious = () => {
+        overlayState.index = cloneValue(previousOverlayState.index);
+        overlayState.payloads = cloneValue(previousOverlayState.payloads);
+    };
     const persistOverlayError = async message => {
+        await ensurePrivateStateScrubbed();
         overlayState.index[normalizedSiteKey] = normalizeOverlayIndexEntry({
             siteKey: normalizedSiteKey,
             ...(overlayState.index[normalizedSiteKey] || existingEntry || {}),
@@ -2148,6 +2263,7 @@ export async function syncCommunityOverlayRules({
     if ( force !== true ) {
         const negativeUntil = Number(existingEntry?.negativeUntil) || 0;
         if ( negativeUntil > now ) {
+            await ensurePrivateStateScrubbed();
             return {
                 skipped: 'negative-cache',
                 overlaySiteKey: normalizedSiteKey,
@@ -2159,6 +2275,7 @@ export async function syncCommunityOverlayRules({
             ? existingEntry.lastError
             : '';
         if ( lastError !== '' && (now - lastAttempt) < COMMUNITY_OVERLAY_FETCH_RETRY_MS ) {
+            await ensurePrivateStateScrubbed();
             return {
                 skipped: 'retry-backoff',
                 overlaySiteKey: normalizedSiteKey,
@@ -2172,6 +2289,7 @@ export async function syncCommunityOverlayRules({
         knownVersion: existingEntry?.version,
     });
     if ( overlayUrl === '' ) {
+        await ensurePrivateStateScrubbed();
         return { skipped: 'invalid-overlay-url' };
     }
 
@@ -2185,6 +2303,7 @@ export async function syncCommunityOverlayRules({
     }
 
     if ( response.status === 204 ) {
+        await ensurePrivateStateScrubbed();
         overlayState.index[normalizedSiteKey] = normalizeOverlayIndexEntry({
             siteKey: normalizedSiteKey,
             ...(existingEntry || {}),
@@ -2217,8 +2336,9 @@ export async function syncCommunityOverlayRules({
             negativeUntil: now + COMMUNITY_OVERLAY_NEGATIVE_CACHE_MS,
         });
         delete overlayState.payloads[normalizedSiteKey];
-        await persistOverlayState(overlayState);
         if ( hadPayload === false ) {
+            await ensurePrivateStateScrubbed();
+            await persistOverlayState(overlayState);
             return {
                 source: 'overlay-miss',
                 overlaySiteKey: normalizedSiteKey,
@@ -2232,6 +2352,15 @@ export async function syncCommunityOverlayRules({
         });
         const beforeInjectableSnapshot = await readStoredCommunityInjectableSnapshot();
         const beforeInjectableState = snapshotToInjectableState(beforeInjectableSnapshot);
+        const activationSnapshot = await snapshotCommunityActivationState({
+            attemptedAt: now,
+        });
+        await ensurePrivateStateScrubbed(beforeInjectableSnapshot);
+        applyPrivateScrubToActivationSnapshot(
+            activationSnapshot,
+            privateStateResult
+        );
+        await persistOverlayState(overlayState);
         let writeResult;
         try {
             writeResult = await writeCompiledCommunityState({
@@ -2247,9 +2376,17 @@ export async function syncCommunityOverlayRules({
                 }),
                 attemptedAt: now,
                 fetchAt: now,
+                activationSnapshot,
             });
         } catch (error) {
-            return persistOverlayError(String(error || 'overlay removal apply failed'));
+            let failureMessage = String(error || 'overlay removal apply failed');
+            try {
+                await restoreCommunityActivationSnapshotState(activationSnapshot);
+            } catch (restoreError) {
+                failureMessage = `${failureMessage}; ${String(restoreError)}`;
+            }
+            resetOverlayStateToPrevious();
+            return persistOverlayError(failureMessage);
         }
         const afterInjectableState = compiledStateToInjectableState(compiled);
         return {
@@ -2345,6 +2482,7 @@ export async function syncCommunityOverlayRules({
     }
 
     if ( bundle.baselineVersion.trim() !== String(baselineState.meta?.version || '').trim() ) {
+        await ensurePrivateStateScrubbed();
         overlayState.index[normalizedSiteKey] = normalizeOverlayIndexEntry({
             siteKey: normalizedSiteKey,
             ...(existingEntry || {}),
@@ -2402,14 +2540,21 @@ export async function syncCommunityOverlayRules({
     enforceOverlayCapacity(overlayState.index, overlayState.payloads, {
         protectSiteKey: normalizedSiteKey,
     });
-    await persistOverlayState(overlayState);
-
     const compiled = buildCompiledCommunityState({
         baseline: baselineState,
         overlays: sortOverlaySources(overlayState.index, overlayState.payloads),
     });
     const beforeInjectableSnapshot = await readStoredCommunityInjectableSnapshot();
     const beforeInjectableState = snapshotToInjectableState(beforeInjectableSnapshot);
+    const activationSnapshot = await snapshotCommunityActivationState({
+        attemptedAt: now,
+    });
+    await ensurePrivateStateScrubbed(beforeInjectableSnapshot);
+    applyPrivateScrubToActivationSnapshot(
+        activationSnapshot,
+        privateStateResult
+    );
+    await persistOverlayState(overlayState);
     let writeResult;
     try {
         writeResult = await writeCompiledCommunityState({
@@ -2426,9 +2571,17 @@ export async function syncCommunityOverlayRules({
             attemptedAt: now,
             fetchAt: now,
             ruleSanitization: sanitizedOverlay.ruleSanitization,
+            activationSnapshot,
         });
     } catch (error) {
-        return persistOverlayError(String(error || 'overlay apply failed'));
+        let failureMessage = String(error || 'overlay apply failed');
+        try {
+            await restoreCommunityActivationSnapshotState(activationSnapshot);
+        } catch (restoreError) {
+            failureMessage = `${failureMessage}; ${String(restoreError)}`;
+        }
+        resetOverlayStateToPrevious();
+        return persistOverlayError(failureMessage);
     }
     const afterInjectableState = compiledStateToInjectableState(compiled);
     return {

@@ -197,7 +197,6 @@ dnr.setAllowAllRules = async function(id, allowed, notAllowed, reverse, priority
             throw new Error('setAllowAllRules rollback verification failed');
         }
         await recordAllowAllRulesRollback();
-        return false;
     };
 
     try {
@@ -215,7 +214,7 @@ dnr.setAllowAllRules = async function(id, allowed, notAllowed, reverse, priority
         }
         const verified = await verifyState(addDynamicRules, addSessionRules);
         if ( verified !== true ) {
-            return restorePreviousState();
+            throw new Error('setAllowAllRules desired-state verification failed');
         }
         if ( dynamicMatches !== sessionMatches ) {
             await recordAllowAllRulesPartialRepair();
@@ -223,7 +222,7 @@ dnr.setAllowAllRules = async function(id, allowed, notAllowed, reverse, priority
         return true;
     } catch (reason) {
         try {
-            return await restorePreviousState();
+            await restorePreviousState();
         } catch (rollbackReason) {
             const originalMessage = reason instanceof Error
                 ? reason.message
@@ -235,5 +234,11 @@ dnr.setAllowAllRules = async function(id, allowed, notAllowed, reverse, priority
                 `setAllowAllRules rollback failed: ${rollbackMessage}; original error: ${originalMessage}`
             );
         }
+        const originalMessage = reason instanceof Error
+            ? reason.message
+            : String(reason);
+        throw new Error(
+            `setAllowAllRules desired state failed and was rolled back: ${originalMessage}`
+        );
     }
 };

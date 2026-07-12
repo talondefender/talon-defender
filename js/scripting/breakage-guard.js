@@ -12,6 +12,7 @@ const runtime = self.browser?.runtime || self.chrome?.runtime;
 const storage = self.browser?.storage?.local || self.chrome?.storage?.local;
 const siteKeyResolver = self.TalonSiteKeyResolver;
 const SUBSYSTEM_BACKOFFS_KEY = 'autoBackoffSubsystemsV1';
+const PROTECTION_CHANGED_EVENT = 'talon-protection-changed';
 
 const RISK_TIERS = Object.freeze({
     low: 1,
@@ -73,6 +74,9 @@ const CHECKOUT_HINT_SELECTOR = [
     '[data-paypal-checkout]',
 ].join(',');
 const MAX_MUTATION_AUDIT_PER_PAGE = 6;
+const MAX_PRIMARY_SCAN_NODES = 512;
+const MAX_PRIMARY_TEXT_LENGTH = 4096;
+const MAX_PRIMARY_TEXT_NODE_SAMPLE = 2048;
 
 const normalizeHostnameCandidate = value => {
     if ( typeof value !== 'string' ) { return ''; }
@@ -130,7 +134,6 @@ const patternMatchesHostname = (pattern, hostname) => {
 };
 
 const hostname = (self.location?.hostname || '').toLowerCase();
-const pathname = (self.location?.pathname || '').toLowerCase();
 const registrableDomain = hostname => {
     const resolved = siteKeyResolver?.getRegistrableDomain?.(hostname);
     if ( typeof resolved === 'string' && resolved !== '' ) { return resolved; }
@@ -139,6 +142,7 @@ const registrableDomain = hostname => {
 };
 
 const classifyProtection = () => {
+    const pathname = (self.location?.pathname || '').toLowerCase();
     for ( const rule of PROTECTED_HOST_RULES ) {
         if ( patternMatchesHostname(rule.pattern, hostname) ) {
             return {
@@ -165,9 +169,6 @@ const classifyProtection = () => {
         return { category: 'government/education/health', allowedRiskTier: RISK_TIERS.low, matchedBy: 'tld' };
     }
 
-    if ( document.querySelector('article,[property="article:published_time"],meta[property="og:type"][content="article"]') ) {
-        return { category: 'news/article', allowedRiskTier: RISK_TIERS.medium, matchedBy: 'dom-article' };
-    }
     if ( document.querySelector('input[type="password"], form[action*="login" i], form[action*="signin" i]') ) {
         return { category: 'auth/account', allowedRiskTier: RISK_TIERS.low, matchedBy: 'dom-auth' };
     }
@@ -177,6 +178,9 @@ const classifyProtection = () => {
     if ( document.querySelector('input[type="search"], form[role="search"]') && pathname.includes('/search') ) {
         return { category: 'site-search', allowedRiskTier: RISK_TIERS.medium, matchedBy: 'dom-search' };
     }
+    if ( document.querySelector('article,[property="article:published_time"],meta[property="og:type"][content="article"]') ) {
+        return { category: 'news/article', allowedRiskTier: RISK_TIERS.medium, matchedBy: 'dom-article' };
+    }
 
     return { category: '', allowedRiskTier: RISK_TIERS.high, matchedBy: '' };
 };
@@ -185,6 +189,11 @@ let protection = classifyProtection();
 let auditOverrides = { global: {}, hosts: {} };
 let subsystemBackoffs = {};
 let readyPromise;
+let lastRefreshAt = 0;
+let resolveClassificationReady;
+const classificationReadyPromise = document.readyState === 'loading'
+    ? new Promise(resolve => { resolveClassificationReady = resolve; })
+    : Promise.resolve();
 
 const readLocalValue = key => {
     if ( storage?.get === undefined ) { return Promise.resolve(undefined); }
@@ -216,17 +225,26 @@ const loadSubsystemBackoffs = async () => {
 
 const whenReady = () => {
     if ( readyPromise !== undefined ) { return readyPromise; }
+    lastRefreshAt = Date.now();
     readyPromise = Promise.all([
         loadOverrides(),
         loadSubsystemBackoffs(),
+        classificationReadyPromise,
     ]).catch(() => { });
     return readyPromise;
 };
 
 const refresh = () => {
+    const currentTime = Date.now();
+    if ( readyPromise !== undefined && (currentTime - lastRefreshAt) < 250 ) {
+        return readyPromise;
+    }
+    lastRefreshAt = currentTime;
+    reclassifyProtection();
     readyPromise = Promise.all([
         loadOverrides(),
         loadSubsystemBackoffs(),
+        classificationReadyPromise,
     ]).catch(() => { });
     return readyPromise;
 };
@@ -295,6 +313,21 @@ const isSafeMutationSelector = (selector, options = {}) => {
     const { allowGlobal = false, requireKnownConsent = false } = options;
     const s = selector.trim();
     if ( s === '' || s.length > 256 ) { return false; }
+    if ( /[\u0000-\u001F\u007F{};@]/.test(s) ) { return false; }
+    if ( /:(?:visited|target|focus(?:-within|-visible)?|checked|valid|invalid|user-valid|user-invalid)\b/i.test(s) ) {
+        return false;
+    }
+    const combinatorCount = (s.match(/[>+~]|\s+(?=[.#[:*a-z])/gi) || []).length;
+    const pseudoCount = (s.match(/:{1,2}[a-z-]+/gi) || []).length;
+    const attributeCount = (s.match(/\[/g) || []).length;
+    if ( combinatorCount > 8 || pseudoCount > 8 || attributeCount > 12 ) {
+        return false;
+    }
+    try {
+        document.documentElement?.matches?.(s);
+    } catch {
+        return false;
+    }
     if ( allowGlobal === false && (s === '*' || s === 'html' || s === 'body') ) {
         return false;
     }
@@ -305,11 +338,74 @@ const isSafeMutationSelector = (selector, options = {}) => {
     return true;
 };
 
-const textWeight = el => {
-    if ( el instanceof Element === false ) { return 0; }
-    const text = el.textContent || '';
-    return text.trim().replace(/\s+/g, ' ').length;
+const primarySignalsAreStrong = signals =>
+    signals.forms >= 4 ||
+    (signals.paragraphs >= 3 && signals.textLength >= 400) ||
+    (signals.headings >= 2 && signals.textLength >= 350);
+
+const scanPrimarySignals = (el, { stopWhenPrimary = false } = {}) => {
+    const signals = {
+        paragraphs: el?.tagName === 'P' ? 1 : 0,
+        headings: /^H[1-3]$/.test(el?.tagName || '') ? 1 : 0,
+        forms: /^(?:FORM|INPUT|TEXTAREA|SELECT|BUTTON)$/.test(el?.tagName || '') ? 1 : 0,
+        textLength: 0,
+        overflowed: false,
+    };
+    if ( el instanceof Element === false ) { return signals; }
+
+    let walker;
+    try {
+        // Numeric flags keep this helper usable in isolated test/fallback realms
+        // where NodeFilter is not exposed, while matching SHOW_ELEMENT | SHOW_TEXT.
+        walker = document.createTreeWalker(el, 1 | 4);
+    } catch {
+        signals.overflowed = true;
+        return signals;
+    }
+
+    let scanned = 0;
+    let node;
+    while ( (node = walker.nextNode()) ) {
+        scanned += 1;
+        if ( scanned > MAX_PRIMARY_SCAN_NODES ) {
+            signals.overflowed = true;
+            break;
+        }
+
+        if ( node.nodeType === 1 ) {
+            const tagName = node.tagName || '';
+            if ( tagName === 'P' ) {
+                signals.paragraphs += 1;
+            } else if ( /^H[1-3]$/.test(tagName) ) {
+                signals.headings += 1;
+            } else if ( /^(?:FORM|INPUT|TEXTAREA|SELECT|BUTTON)$/.test(tagName) ) {
+                signals.forms += 1;
+            }
+        } else if ( node.nodeType === 3 ) {
+            const parentTag = node.parentElement?.tagName || '';
+            if ( /^(?:SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(parentTag) ) { continue; }
+            const raw = typeof node.nodeValue === 'string' ? node.nodeValue : '';
+            if ( raw.length > MAX_PRIMARY_TEXT_NODE_SAMPLE ) {
+                // A huge text node is itself a strong signal that this is not a
+                // disposable ad shell. Avoid normalizing the entire string.
+                signals.textLength = MAX_PRIMARY_TEXT_LENGTH;
+                signals.overflowed = true;
+            } else if ( raw !== '' && signals.textLength < MAX_PRIMARY_TEXT_LENGTH ) {
+                const normalizedLength = raw.trim().replace(/\s+/g, ' ').length;
+                signals.textLength = Math.min(
+                    MAX_PRIMARY_TEXT_LENGTH,
+                    signals.textLength + normalizedLength
+                );
+            }
+        }
+
+        if ( stopWhenPrimary && primarySignalsAreStrong(signals) ) { break; }
+        if ( signals.overflowed ) { break; }
+    }
+    return signals;
 };
+
+const textWeight = el => scanPrimarySignals(el).textLength;
 
 const isShellElement = el => {
     if ( el instanceof Element === false ) { return false; }
@@ -342,14 +438,10 @@ const isLikelyPrimaryContent = el => {
         return false;
     }
 
-    const paragraphs = el.querySelectorAll('p').length;
-    const headings = el.querySelectorAll('h1,h2,h3').length;
-    const forms = el.querySelectorAll('form,input,textarea,select,button').length;
-    const textLen = textWeight(el);
-    if ( forms >= 4 ) { return true; }
-    if ( paragraphs >= 3 && textLen >= 400 ) { return true; }
-    if ( headings >= 2 && textLen >= 350 ) { return true; }
-    return false;
+    const signals = scanPrimarySignals(el, { stopWhenPrimary: true });
+    // If the bounded scan cannot classify the entire subtree, fail closed: a
+    // very large container is more likely page content than an ad shell.
+    return signals.overflowed || primarySignalsAreStrong(signals);
 };
 
 const reportBreakageSignal = (signal, details = {}) => {
@@ -522,6 +614,12 @@ let mutationAuditCount = 0;
 let mutationAuditTimer;
 
 const ensureBaseline = () => {
+    if (
+        baselinePrimary?.element instanceof Element &&
+        baselinePrimary.element.isConnected === false
+    ) {
+        baselinePrimary = null;
+    }
     if ( baselinePrimary !== null ) { return; }
     const el = pickPrimaryElement();
     if ( el === null ) { return; }
@@ -529,6 +627,59 @@ const ensureBaseline = () => {
         element: el,
         snapshot: primarySnapshotFor(el),
     };
+};
+
+const routeKey = ( ) =>
+    `${self.location?.pathname || ''}${self.location?.search || ''}${self.location?.hash || ''}`;
+let lastRouteKey = routeKey();
+let routeReclassifyTimer;
+
+function reclassifyProtection({ resetBaseline = false } = {}) {
+    const nextRouteKey = routeKey();
+    const routeChanged = nextRouteKey !== lastRouteKey;
+    if ( routeChanged ) { lastRouteKey = nextRouteKey; }
+    const previous = protection;
+    protection = classifyProtection();
+    if ( self.TalonBreakageGuard instanceof Object ) {
+        self.TalonBreakageGuard.protection = protection;
+    }
+    if ( resetBaseline || routeChanged ) {
+        baselinePrimary = null;
+        mutationAuditCount = 0;
+        reportBreakageSignal.seen.clear();
+        if ( mutationAuditTimer !== undefined ) {
+            self.clearTimeout(mutationAuditTimer);
+            mutationAuditTimer = undefined;
+        }
+    }
+    ensureBaseline();
+    if (
+        previous?.category !== protection.category ||
+        previous?.allowedRiskTier !== protection.allowedRiskTier ||
+        previous?.matchedBy !== protection.matchedBy
+    ) {
+        const detail = { protection: { ...protection } };
+        try {
+            if ( typeof self.CustomEvent === 'function' ) {
+                self.dispatchEvent?.(new self.CustomEvent(PROTECTION_CHANGED_EVENT, { detail }));
+            } else {
+                self.dispatchEvent?.({ type: PROTECTION_CHANGED_EVENT, detail });
+            }
+        } catch {
+        }
+    }
+    return protection;
+}
+
+const scheduleRouteReclassification = ( ) => {
+    reclassifyProtection({ resetBaseline: true });
+    if ( routeReclassifyTimer !== undefined ) {
+        self.clearTimeout(routeReclassifyTimer);
+    }
+    routeReclassifyTimer = self.setTimeout(() => {
+        routeReclassifyTimer = undefined;
+        reclassifyProtection();
+    }, 250);
 };
 
 const auditAfterMutation = reason => {
@@ -610,15 +761,21 @@ const auditAfterMutation = reason => {
 
 if ( document.readyState === 'loading' ) {
     document.addEventListener('DOMContentLoaded', () => {
-        protection = classifyProtection();
-        ensureBaseline();
+        reclassifyProtection();
+        resolveClassificationReady?.();
+        resolveClassificationReady = undefined;
     }, { once: true });
 } else {
     ensureBaseline();
 }
 
+self.addEventListener?.('popstate', scheduleRouteReclassification);
+self.addEventListener?.('hashchange', scheduleRouteReclassification);
+self.navigation?.addEventListener?.('navigatesuccess', scheduleRouteReclassification);
+
 self.TalonBreakageGuard = {
     RISK_TIERS,
+    PROTECTION_CHANGED_EVENT,
     protection,
     registrableDomain,
     getSiteKey: registrableDomain,
@@ -645,6 +802,7 @@ self.TalonBreakageGuard = {
     shouldAllowRemoteCosmeticSelector,
     isSubsystemSuppressed,
     auditAfterMutation,
+    reclassifyProtection,
     reportBreakageSignal,
     hostPatternMatches: patternMatchesHostname,
     isExactHostPattern,

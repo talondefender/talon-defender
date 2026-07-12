@@ -1,11 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
+  applyFilteringModeMutationWithRetry,
+  applyRulesetToggleDelta,
   applyRulesetToggleChange,
+  createRulesetToggleDelta,
+  createSerializedActionQueue,
+  filteringModesEqual,
   formatRulesetApplyError,
   getRulesetToggleState,
+  mergeFilteringModeChanges,
   normalizeEnabledRulesets,
+  normalizeFilteringModes,
 } from '../options/ruleset-toggle-state.js';
 import {
   planStaticRulesetQuotaChange,
@@ -52,6 +60,209 @@ test('applyRulesetToggleChange enables and disables only the targeted rulesets',
       false
     ),
     ['easyprivacy']
+  );
+});
+
+test('ruleset deltas preserve unrelated rulesets', () => {
+  const enableDelta = createRulesetToggleDelta(['annoyances-cookies'], true);
+  const disableDelta = createRulesetToggleDelta(['annoyances-overlays'], false);
+
+  assert.deepEqual(enableDelta, {
+    enableRulesets: ['annoyances-cookies'],
+    disableRulesets: [],
+  });
+  assert.deepEqual(
+    applyRulesetToggleDelta(
+      applyRulesetToggleDelta(
+        ['easylist', 'annoyances-overlays'],
+        enableDelta
+      ),
+      disableDelta
+    ).sort(),
+    ['annoyances-cookies', 'easylist']
+  );
+});
+
+test('serialized action queue preserves rapid mutation order and survives a rejection', async () => {
+  const queue = createSerializedActionQueue();
+  const events = [];
+  let releaseFirst;
+  const firstGate = new Promise(resolve => {
+    releaseFirst = resolve;
+  });
+
+  const first = queue.enqueue(async () => {
+    events.push('first:start');
+    await firstGate;
+    events.push('first:end');
+  });
+  const failed = queue.enqueue(async () => {
+    events.push('second');
+    throw new Error('expected');
+  });
+  const third = queue.enqueue(async () => {
+    events.push('third');
+  });
+
+  await Promise.resolve();
+  assert.deepEqual(events, ['first:start']);
+  assert.equal(queue.pendingCount, 3);
+  releaseFirst();
+  await first;
+  await assert.rejects(failed, /expected/);
+  await third;
+
+  assert.deepEqual(events, ['first:start', 'first:end', 'second', 'third']);
+  assert.equal(queue.pendingCount, 0);
+});
+
+test('global-pause resume merges changes made while protection was paused', () => {
+  const saved = {
+    none: ['allowed.example'],
+    basic: [],
+    optimal: ['all-urls', 'checkout.example'],
+    complete: [],
+  };
+  const paused = {
+    none: ['all-urls'],
+    basic: [],
+    optimal: [],
+    complete: [],
+  };
+  const changedWhilePaused = {
+    none: ['all-urls', 'newly-allowed.example'],
+    basic: [],
+    optimal: [],
+    complete: ['checkout.example'],
+  };
+
+  const merged = mergeFilteringModeChanges(saved, paused, changedWhilePaused);
+  assert.deepEqual(merged, {
+    none: ['allowed.example', 'newly-allowed.example'],
+    basic: [],
+    optimal: ['all-urls'],
+    complete: ['checkout.example'],
+  });
+  assert.equal(filteringModesEqual(merged, {
+    complete: ['checkout.example'],
+    optimal: ['all-urls'],
+    basic: [],
+    none: ['newly-allowed.example', 'allowed.example'],
+  }), true);
+  assert.equal(normalizeFilteringModes({
+    none: ['duplicate.example'],
+    basic: [],
+    optimal: ['duplicate.example'],
+    complete: [],
+  }), null);
+});
+
+test('global-pause CAS re-merges a concurrent site change and retries once', async () => {
+  const saved = {
+    none: ['allowed.example'],
+    basic: [],
+    optimal: ['all-urls'],
+    complete: [],
+  };
+  const paused = {
+    none: ['all-urls'],
+    basic: [],
+    optimal: [],
+    complete: [],
+  };
+  const requests = [];
+  const result = await applyFilteringModeMutationWithRetry({
+    initialState: { ...paused, configRevision: 4 },
+    buildModes: currentModes =>
+      mergeFilteringModeChanges(saved, paused, currentModes),
+    apply: async request => {
+      requests.push(request);
+      if (requests.length === 1) {
+        return {
+          error: 'stale_filtering_mode_revision',
+          configRevision: 5,
+          none: ['all-urls', 'newly-allowed.example'],
+          basic: [],
+          optimal: [],
+          complete: ['checkout.example'],
+        };
+      }
+      return {
+        ...request.modes,
+        configRevision: 6,
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.attempts, 2);
+  assert.deepEqual(requests.map(request => request.expectedRevision), [4, 5]);
+  assert.deepEqual(requests[1].modes, {
+    none: ['allowed.example', 'newly-allowed.example'],
+    basic: [],
+    optimal: ['all-urls'],
+    complete: ['checkout.example'],
+  });
+});
+
+test('Pop-ups and Extra protection own disjoint rulesets', async () => {
+  const source = await readFile(new URL('../options/options.js', import.meta.url), 'utf8');
+  const extraProtectionBlock = source.match(
+    /const EXTRA_PROTECTION_RULESETS = \[([\s\S]*?)\];/
+  )?.[1] || '';
+  assert.doesNotMatch(extraProtectionBlock, /annoyances-overlays/);
+  assert.match(source, /rulesets: \["annoyances-overlays"\]/);
+  assert.match(source, /enableRulesetIds: delta\.enableRulesets/);
+  assert.match(source, /disableRulesetIds: delta\.disableRulesets/);
+  assert.match(source, /request\.expectedRevision = rulesetConfigRevision/);
+  assert.match(source, /result\?\.error === "stale_ruleset_revision"/);
+  assert.doesNotMatch(source, /enabledRulesets: next/);
+});
+
+test('customer-facing locale additions are valid and contain no replacement question marks', async () => {
+  const localeExpectations = new Map([
+    ['ja', ['追加保護', '一部有効']],
+    ['ko', ['추가 보호', '일부 활성화']],
+    ['fi', ['Lisäsuojaus', 'Osittain käytössä']],
+    ['sv', ['Extra skydd', 'Delvis aktiv']],
+  ]);
+  for (const [locale, [label, partial]] of localeExpectations) {
+    const raw = await readFile(
+      new URL(`../_locales/${locale}/messages.json`, import.meta.url),
+      'utf8'
+    );
+    const messages = JSON.parse(raw);
+    assert.equal(messages.optionsFilterExtraProtectionLabel.message, label);
+    assert.equal(messages.uiPartial.message, partial);
+    assert.doesNotMatch(messages.optionsFilterExtraProtectionNote.message, /\?/);
+    assert.ok(messages.popupRuntimeHotfixReloadNotice.message.length > 10);
+    assert.ok(messages.popupRuntimeHotfixReloadButton.message.length > 2);
+  }
+
+  for (const locale of ['da', 'de', 'en', 'es', 'fr', 'it', 'nb', 'nl', 'no']) {
+    const raw = await readFile(
+      new URL(`../_locales/${locale}/messages.json`, import.meta.url),
+      'utf8'
+    );
+    const messages = JSON.parse(raw);
+    assert.doesNotMatch(messages.optionsFilterExtraProtectionLabel.message, /\?/);
+    assert.doesNotMatch(messages.optionsFilterExtraProtectionNote.message, /\?/);
+    assert.ok(messages.popupRuntimeHotfixReloadNotice.message.length > 10);
+    assert.ok(messages.popupRuntimeHotfixReloadButton.message.length > 2);
+  }
+
+  const popupSource = await readFile(
+    new URL('../popup/popup.js', import.meta.url),
+    'utf8'
+  );
+  assert.match(
+    popupSource,
+    /t\([\s\S]{0,160}"popupRuntimeHotfixReloadNotice"[\s\S]{0,160}"popupRuntimeReloadNotice"/
+  );
+  assert.match(popupSource, /t\("popupRuntimeHotfixReloadButton"\)/);
+  assert.doesNotMatch(
+    popupSource,
+    /Reload this tab to apply the latest Talon Defender hotfix\./
   );
 });
 

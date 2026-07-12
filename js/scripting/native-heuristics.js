@@ -4,7 +4,9 @@
 (function uBOL_nativeHeuristics() {
 
     if ( self.TalonNativeHeuristicsController ) {
-        self.TalonNativeHeuristicsController.refresh().catch(() => {});
+        const readiness = self.TalonNativeHeuristicsController.refresh();
+        self.TalonNativeHeuristicsReady = readiness;
+        readiness.catch(() => {});
         return;
     }
 
@@ -21,8 +23,33 @@
     const guard = self.TalonBreakageGuard;
     const shadowController = self.TalonShadowRootController;
     const blockHints = self.TalonBlockHintsController;
+    const cooperativeScheduler = self.TalonCooperativeScheduler;
+    const COOPERATIVE_FALLBACK_BUDGET_MS = 4;
+    const scheduleCooperativeTask = callback => {
+        if ( typeof cooperativeScheduler?.schedule === 'function' ) {
+            return cooperativeScheduler.schedule(callback);
+        }
+        return self.requestAnimationFrame(() => callback(
+            self.performance.now() + COOPERATIVE_FALLBACK_BUDGET_MS
+        ));
+    };
+    const cancelCooperativeTask = task => {
+        if ( task === undefined ) { return; }
+        if ( typeof cooperativeScheduler?.cancel === 'function' ) {
+            cooperativeScheduler.cancel(task);
+            return;
+        }
+        self.cancelAnimationFrame(task);
+    };
+    const cooperativeDeadline = deadline => Number.isFinite(deadline)
+        ? deadline
+        : self.performance.now() + COOPERATIVE_FALLBACK_BUDGET_MS;
     const shadowRootsChangedEvent =
         shadowController?.ROOTS_CHANGED_EVENT || 'talon-shadow-roots-changed';
+    const shadowContentChangedEvent =
+        shadowController?.CONTENT_CHANGED_EVENT || 'talon-shadow-content-changed';
+    const protectionChangedEvent =
+        guard?.PROTECTION_CHANGED_EVENT || 'talon-protection-changed';
     const registrableDomain = hostname => {
         const resolved = guard?.registrableDomain?.(hostname);
         if ( typeof resolved === 'string' && resolved !== '' ) { return resolved; }
@@ -72,10 +99,14 @@
     let configPromise;
     const loadConfig = () => {
         if (configPromise !== undefined) { return configPromise; }
-        configPromise = fetch(getURL(CONFIG_PATH)).then(r => {
+        const pending = fetch(getURL(CONFIG_PATH)).then(r => {
             if (r.ok === false) { throw new Error(r.statusText); }
             return r.json();
-        }).catch(() => defaultConfig);
+        });
+        configPromise = pending;
+        pending.catch(() => {
+            if (configPromise === pending) { configPromise = undefined; }
+        });
         return configPromise;
     };
 
@@ -89,17 +120,38 @@
         try {
             const maybePromise = storage.get(REMOTE_CONFIG_KEY);
             if (maybePromise?.then) {
-                remoteConfigPromise = maybePromise.then(bin => bin?.[REMOTE_CONFIG_KEY] || null)
-                    .catch(() => null);
+                const pending = maybePromise.then(
+                    bin => bin?.[REMOTE_CONFIG_KEY] || null
+                );
+                remoteConfigPromise = pending;
+                pending.catch(() => {
+                    if (remoteConfigPromise === pending) {
+                        remoteConfigPromise = undefined;
+                    }
+                });
                 return remoteConfigPromise;
             }
-        } catch {
+        } catch (reason) {
+            return Promise.reject(reason);
         }
-        remoteConfigPromise = new Promise(resolve => {
+        const pending = new Promise((resolve, reject) => {
             try {
-                storage.get(REMOTE_CONFIG_KEY, bin => resolve(bin?.[REMOTE_CONFIG_KEY] || null));
-            } catch {
-                resolve(null);
+                storage.get(REMOTE_CONFIG_KEY, bin => {
+                    const lastError = runtime?.lastError;
+                    if (lastError) {
+                        reject(new Error(lastError.message || 'storage.get failed'));
+                        return;
+                    }
+                    resolve(bin?.[REMOTE_CONFIG_KEY] || null);
+                });
+            } catch (reason) {
+                reject(reason);
+            }
+        });
+        remoteConfigPromise = pending;
+        pending.catch(() => {
+            if (remoteConfigPromise === pending) {
+                remoteConfigPromise = undefined;
             }
         });
         return remoteConfigPromise;
@@ -142,7 +194,10 @@
     };
 
     const hostname = (self.location?.hostname || '').toLowerCase();
-    if (hostname === '') { return; }
+    if (hostname === '') {
+        self.TalonNativeHeuristicsReady = Promise.resolve({ applied: false });
+        return;
+    }
     const pageDomain = registrableDomain(hostname);
     let hostProtection = guard?.getProtection?.() || {
         category: '',
@@ -155,14 +210,11 @@
         : null;
 
     // Dynamic boosts: after repeated heuristic hides, promote stronger cosmetics.
-    let hideCount = 0;
     let strongHideCount = 0;
     let aggressionBoost = 0; // session-only, max 1
     let persistedBoostState = null;
     let strongHidesSincePersist = 0;
     let persistTimer;
-    let genericHighSent = false;
-    let completeSent = false;
 
     const schedulePersistStrongHide = () => {
         if (BOOST_STORAGE_KEY === null) { return; }
@@ -191,8 +243,6 @@
     };
 
     const recordHeuristicHide = (isStrong = false) => {
-        hideCount += 1;
-
         if (isStrong) {
             strongHideCount += 1;
             if (guard?.isProtectedSurface?.() !== true &&
@@ -201,30 +251,6 @@
                 aggressionBoost = 1;
             }
             schedulePersistStrongHide();
-        }
-        if (guard?.isProtectedSurface?.() !== true &&
-            genericHighSent === false &&
-            hideCount >= 3) {
-            genericHighSent = true;
-            try {
-                runtime?.sendMessage?.({
-                    what: 'promoteGenericHigh',
-                    hostname: pageDomain || hostname,
-                }).catch(() => { });
-            } catch {
-            }
-        }
-        if (guard?.isProtectedSurface?.() !== true &&
-            completeSent === false &&
-            hideCount >= 6) {
-            completeSent = true;
-            try {
-                runtime?.sendMessage?.({
-                    what: 'promoteComplete',
-                    hostname: pageDomain || hostname,
-                }).catch(() => { });
-            } catch {
-            }
         }
     };
 
@@ -295,13 +321,162 @@
         return rect.width > 0 && rect.height > 0;
     };
 
+    const ownedStyles = new Map();
+
+    const setOwnedStyle = (element, property, value, priority = 'important') => {
+        if ( element instanceof Element === false ) { return false; }
+        let properties = ownedStyles.get(element);
+        if ( properties instanceof Map === false ) {
+            properties = new Map();
+            ownedStyles.set(element, properties);
+        }
+        let record = properties.get(property);
+        if ( record === undefined ) {
+            record = {
+                originalValue: element.style.getPropertyValue?.(property) || '',
+                originalPriority: element.style.getPropertyPriority?.(property) || '',
+                appliedValue: '',
+                appliedPriority: '',
+            };
+            properties.set(property, record);
+        }
+        element.style.setProperty(property, value, priority);
+        record.appliedValue = element.style.getPropertyValue?.(property) || String(value);
+        record.appliedPriority = element.style.getPropertyPriority?.(property) || priority;
+        return true;
+    };
+
+    const restoreOwnedStylesFor = element => {
+        const properties = ownedStyles.get(element);
+        if ( properties instanceof Map === false ) { return false; }
+        for ( const [ property, record ] of properties ) {
+            const currentValue = element.style.getPropertyValue?.(property) || '';
+            const currentPriority = element.style.getPropertyPriority?.(property) || '';
+            if ( currentValue !== record.appliedValue ) { continue; }
+            if ( currentPriority !== record.appliedPriority ) { continue; }
+            if ( record.originalValue === '' ) {
+                if ( typeof element.style.removeProperty === 'function' ) {
+                    element.style.removeProperty(property);
+                } else {
+                    element.style.setProperty(property, '');
+                }
+            } else {
+                element.style.setProperty(
+                    property,
+                    record.originalValue,
+                    record.originalPriority
+                );
+            }
+        }
+        ownedStyles.delete(element);
+        return true;
+    };
+
+    const pruneDisconnectedOwnedStyles = () => {
+        for ( const element of Array.from(ownedStyles.keys()) ) {
+            if ( element.isConnected !== false ) { continue; }
+            restoreOwnedStylesFor(element);
+        }
+    };
+
+    const restoreOwnedStyles = () => {
+        for ( const element of Array.from(ownedStyles.keys()) ) {
+            restoreOwnedStylesFor(element);
+        }
+    };
+
     const TEXT_LABEL_SELECTOR = 'span,small,a,div,p,strong,em,label';
+
+    const readBoundedText = (element, maxLength = 80) => {
+        const childNodes = element?.childNodes;
+        if ( childNodes === undefined ) {
+            const fallback = element?.textContent || '';
+            return fallback.length <= maxLength ? fallback.trim() : '';
+        }
+        if ( childNodes.length > 24 ) { return ''; }
+        const queue = [];
+        for ( let i = 0; i < childNodes.length && i < 24; i++ ) {
+            queue.push({ node: childNodes[i], depth: 0 });
+        }
+        let text = '';
+        let visited = 0;
+        while ( queue.length !== 0 && visited++ < 24 ) {
+            const { node, depth } = queue.shift();
+            if ( node?.nodeType === 3 ) {
+                text += node.nodeValue || '';
+                if ( text.length > maxLength ) { return ''; }
+                continue;
+            }
+            if ( depth >= 1 || node?.childNodes === undefined ) { continue; }
+            if ( node.childNodes.length > 24 ) { return ''; }
+            for (
+                let i = 0;
+                i < node.childNodes.length && queue.length < 24;
+                i++
+            ) {
+                queue.push({ node: node.childNodes[i], depth: depth + 1 });
+            }
+        }
+        return text.trim();
+    };
+
+    const compileSafeLabelRegex = source => {
+        if ( typeof source !== 'string' || source.length === 0 || source.length > 256 ) {
+            return null;
+        }
+        if ( /\\[1-9]/.test(source) || /\(\?<([=!])/.test(source) ) { return null; }
+        if ( /\([^)]*[+*][^)]*\)\s*(?:[+*]|\{\d)/.test(source) ) { return null; }
+        if ( /\([^)]*\|[^)]*\)\s*(?:[+*]|\{\d)/.test(source) ) { return null; }
+        try { return new RegExp(source, 'i'); } catch { return null; }
+    };
+
+    const normalizeSafeSelectors = selectors => {
+        if ( Array.isArray(selectors) === false ) { return []; }
+        const out = [];
+        const seen = new Set();
+        let probe;
+        try { probe = document.createElement('div'); } catch {
+        }
+        for ( const value of selectors ) {
+            if ( typeof value !== 'string' ) { continue; }
+            const selector = value.trim();
+            if (
+                selector === '' ||
+                selector.length > 256 ||
+                /[\u0000-\u001F\u007F{};]/.test(selector) ||
+                seen.has(selector)
+            ) {
+                continue;
+            }
+            try {
+                probe?.matches?.(selector);
+            } catch {
+                continue;
+            }
+            seen.add(selector);
+            out.push(selector);
+        }
+        return out;
+    };
 
     let pendingLabels = [];
     let pendingIndex = 0;
     let seenLabels = new WeakSet();
     let hiddenContainers = new WeakSet();
     let iframeCandidates = new WeakSet();
+    const MAX_PENDING_LABELS = 512;
+    const PENDING_LABEL_RECOVERY_DELAY_MS = 100;
+    let pendingLabelOverflowed = false;
+    let pendingLabelRecoveryTimer;
+
+    const compactPendingLabels = () => {
+        if ( pendingIndex === 0 ) { return; }
+        if ( pendingIndex < 256 && pendingIndex * 2 < pendingLabels.length ) {
+            return;
+        }
+        pendingLabels.splice(0, pendingIndex);
+        pendingIndex = 0;
+    };
 
     let labelRegexes = [];
     let labelSelectors = [];
@@ -360,6 +535,18 @@
         return domain !== '' && domain !== pageDomain;
     };
 
+    const SENSITIVE_FRAME_HINT_RE = /\b(?:auth|account|login|sign[-_ ]?in|oauth|sso|captcha|payment|checkout|billing|wallet|stripe|paypal|klarna|braintree|support|chat|video|player|stream|game|map|calendar|document|editor|survey)\b/i;
+
+    const hasSensitiveFramePurpose = (frame, hintParts) => {
+        if ( SENSITIVE_FRAME_HINT_RE.test(hintParts) ) { return true; }
+        const sandbox = frame.getAttribute('sandbox') || '';
+        const allow = frame.getAttribute('allow') || '';
+        if ( /payment|publickey-credentials|get-user-media|camera|microphone/i.test(`${sandbox} ${allow}`) ) {
+            return true;
+        }
+        return false;
+    };
+
     const isAdIframeCandidate = frame => {
         if (frame instanceof HTMLIFrameElement === false) { return false; }
         if (isVisible(frame) === false) { return false; }
@@ -381,11 +568,31 @@
             frame.name || '',
         ].join(' ');
 
-        if (standardSized) {
-            return attrHintRe.test(hintParts) || isThirdPartyFrame(frame);
+        if (hasSensitiveFramePurpose(frame, hintParts)) { return false; }
+
+        const thirdParty = isThirdPartyFrame(frame);
+        const namedAdHint = attrHintRe.test(hintParts);
+        const explicitAdHint = [
+            'data-ad',
+            'data-ad-unit',
+            'data-ad-slot',
+            'data-ad-client',
+            'data-advertisement',
+            'data-sponsored',
+        ].some(name => frame.hasAttribute?.(name) === true);
+        const recentBlockHint = blockHints?.hasRecentHint?.(frame, {
+            includeSubtree: true,
+        }) === true;
+
+        // Dimensions and third-party origin are common for legitimate widgets.
+        // Require an independent ad-specific signal before treating a frame as an ad.
+        if ( recentBlockHint ) {
+            return namedAdHint || explicitAdHint || standardSized;
         }
-        // Non-standard sizes require stronger hints to avoid false positives.
-        return attrHintRe.test(hintParts) && isThirdPartyFrame(frame);
+        if ( explicitAdHint ) {
+            return namedAdHint || thirdParty || standardSized;
+        }
+        return namedAdHint && thirdParty && standardSized;
     };
 
     let minContainerHeight = defaultConfig.minContainerHeight;
@@ -396,74 +603,238 @@
     const enqueueLabel = el => {
         if (el instanceof Element === false) { return; }
         if (seenLabels.has(el)) { return; }
+        compactPendingLabels();
+        if ( (pendingLabels.length - pendingIndex) >= MAX_PENDING_LABELS ) {
+            pendingLabelOverflowed = true;
+            return;
+        }
         seenLabels.add(el);
         pendingLabels.push(el);
     };
 
-    const collectCandidates = root => {
+    // Candidate discovery is resumable so large DOM insertions always yield.
+    let configuredCandidateSelector = '';
+    let candidateScanJobs = [];
+    let candidateScanIndex = 0;
+    let candidateScanTimer;
+    let queuedScanRoots = new WeakSet();
+    const MAX_CANDIDATE_SCAN_NODES_PER_SLICE = 128;
+    const MAX_CANDIDATE_SCAN_JOBS = 256;
+    let candidateScanOverflowed = false;
+
+    const schedulePendingLabelRecovery = () => {
+        if ( pendingLabelOverflowed === false ) { return; }
+        if ( pendingLabelRecoveryTimer !== undefined ) { return; }
+        pendingLabelRecoveryTimer = self.setTimeout(() => {
+            pendingLabelRecoveryTimer = undefined;
+            if ( (pendingLabels.length - pendingIndex) !== 0 ) {
+                schedulePendingLabelRecovery();
+                return;
+            }
+            pendingLabelOverflowed = false;
+            if (
+                candidateScanTimer !== undefined ||
+                candidateScanIndex < candidateScanJobs.length
+            ) {
+                candidateScanOverflowed = true;
+                return;
+            }
+            collectCandidates(document);
+        }, PENDING_LABEL_RECOVERY_DELAY_MS);
+    };
+
+    const compactCandidateScanJobs = () => {
+        if ( candidateScanIndex === 0 ) { return; }
         if (
-            root !== document &&
-            root instanceof Element === false &&
-            root instanceof DocumentFragment === false
+            candidateScanIndex < 64 &&
+            candidateScanIndex * 2 < candidateScanJobs.length
         ) {
             return;
         }
-        const selectorList = [...labelSelectors, ...widgetSelectors]
-            .filter(s => typeof s === 'string' && s !== '');
-        if (selectorList.length !== 0) {
-            let nodes;
+        candidateScanJobs.splice(0, candidateScanIndex);
+        candidateScanIndex = 0;
+    };
+
+    const scanRootIsDisconnected = root => {
+        if ( root instanceof Element ) { return root.isConnected === false; }
+        const host = root?.host;
+        return host instanceof Element && host.isConnected === false;
+    };
+
+    const collectCandidateNode = node => {
+        if ( node instanceof Element === false ) { return; }
+        if ( configuredCandidateSelector !== '' ) {
             try {
-                nodes = (root === document ? document : root).querySelectorAll(
-                    selectorList.join(',')
-                );
+                if ( node.matches(configuredCandidateSelector) && isVisible(node) ) {
+                    enqueueLabel(node);
+                }
             } catch {
-                nodes = [];
-            }
-            for (const node of nodes) {
-                if (isVisible(node) === false) { continue; }
-                enqueueLabel(node);
             }
         }
-
-        // Text label scan – capped for safety.
-        // Standard ad-size iframes (unlabeled) scan.
-        let frames;
-        try {
-            frames = (root === document ? document : root).querySelectorAll('iframe');
-        } catch {
-            frames = [];
+        if ( node instanceof HTMLIFrameElement && isAdIframeCandidate(node) ) {
+            iframeCandidates.add(node);
+            enqueueLabel(node);
+            return;
         }
-        let scannedFrames = 0;
-        const maxFrames = root === document ? 80 : 20;
-        for (const frame of frames) {
-            if (scannedFrames++ >= maxFrames) { break; }
-            if (isAdIframeCandidate(frame) === false) { continue; }
-            iframeCandidates.add(frame);
-            enqueueLabel(frame);
-        }
-
-        let textNodes;
         try {
-            textNodes = (root === document ? document.body : root).querySelectorAll(TEXT_LABEL_SELECTOR);
+            if ( node.matches(TEXT_LABEL_SELECTOR) === false ) { return; }
         } catch {
             return;
         }
-        let scanned = 0;
-        const maxScan = root === document ? 800 : 200;
-        for (const node of textNodes) {
-            if (scanned++ >= maxScan) { break; }
-            if (isVisible(node) === false) { continue; }
-            const text = node.textContent?.trim() || '';
-            if (text === '') { continue; }
-            if (text.length > (config.maxLabelTextLength || 40)) { continue; }
-            if (labelRegexes.some(re => re.test(text)) === false) { continue; }
-            enqueueLabel(node);
+        if ( isVisible(node) === false ) { return; }
+        const text = readBoundedText(node, config.maxLabelTextLength || 40);
+        if ( text === '' ) { return; }
+        if ( labelRegexes.some(re => re.test(text)) === false ) { return; }
+        enqueueLabel(node);
+    };
+
+    const createCandidateScanJob = root => {
+        const scanRoot = root === document
+            ? (document.body || document.documentElement)
+            : root;
+        if (
+            scanRoot instanceof Element === false &&
+            scanRoot instanceof DocumentFragment === false
+        ) {
+            return null;
         }
+        let walker;
+        try {
+            walker = document.createTreeWalker(
+                scanRoot,
+                self.NodeFilter?.SHOW_ELEMENT || 1
+            );
+        } catch {
+            return null;
+        }
+        return {
+            root: scanRoot,
+            walker,
+            includeRoot: scanRoot instanceof Element,
+            directOnly: false,
+        };
+    };
+
+    const createDirectCandidateScanJob = node => {
+        if ( node instanceof Element === false ) { return null; }
+        return {
+            root: node,
+            walker: null,
+            includeRoot: true,
+            directOnly: true,
+        };
+    };
+
+    const processCandidateScans = sharedDeadline => {
+        candidateScanTimer = undefined;
+        const deadline = cooperativeDeadline(sharedDeadline);
+        let scanned = 0;
+        const pendingBefore = pendingLabels.length;
+        while (
+            candidateScanIndex < candidateScanJobs.length &&
+            scanned < MAX_CANDIDATE_SCAN_NODES_PER_SLICE &&
+            self.performance.now() < deadline
+        ) {
+            const job = candidateScanJobs[candidateScanIndex];
+            if ( scanRootIsDisconnected(job.root) ) {
+                queuedScanRoots.delete(job.root);
+                candidateScanIndex += 1;
+                continue;
+            }
+            let node;
+            if ( job.includeRoot ) {
+                job.includeRoot = false;
+                node = job.root;
+                if ( job.directOnly ) {
+                    queuedScanRoots.delete(job.root);
+                    candidateScanIndex += 1;
+                }
+            } else if ( job.directOnly ) {
+                queuedScanRoots.delete(job.root);
+                candidateScanIndex += 1;
+                continue;
+            } else if ( job.walker.nextNode() ) {
+                node = job.walker.currentNode;
+            } else {
+                queuedScanRoots.delete(job.root);
+                candidateScanIndex += 1;
+                continue;
+            }
+            scanned += 1;
+            collectCandidateNode(node);
+        }
+        if ( pendingLabels.length !== pendingBefore ) { scheduleProcess(); }
+        if ( candidateScanIndex >= candidateScanJobs.length ) {
+            const needsFullScan = candidateScanOverflowed;
+            candidateScanJobs = [];
+            candidateScanIndex = 0;
+            queuedScanRoots = new WeakSet();
+            candidateScanOverflowed = false;
+            if ( needsFullScan ) { collectCandidates(document); }
+            return;
+        }
+        compactCandidateScanJobs();
+        candidateScanTimer = scheduleCooperativeTask(processCandidateScans);
+    };
+
+    const collectCandidates = (root, priority = false) => {
+        const job = createCandidateScanJob(root);
+        if ( job === null || queuedScanRoots.has(job.root) ) { return true; }
+        compactCandidateScanJobs();
+        if (
+            (candidateScanJobs.length - candidateScanIndex) >=
+            MAX_CANDIDATE_SCAN_JOBS
+        ) {
+            candidateScanOverflowed = true;
+            return false;
+        }
+        queuedScanRoots.add(job.root);
+        if ( priority ) {
+            candidateScanJobs.splice(candidateScanIndex, 0, job);
+        } else {
+            candidateScanJobs.push(job);
+        }
+        if ( candidateScanTimer !== undefined ) { return true; }
+        candidateScanTimer = scheduleCooperativeTask(processCandidateScans);
+        return true;
+    };
+
+    const collectDirectCandidate = (node, priority = false) => {
+        const job = createDirectCandidateScanJob(node);
+        if ( job === null || queuedScanRoots.has(job.root) ) { return true; }
+        compactCandidateScanJobs();
+        if (
+            (candidateScanJobs.length - candidateScanIndex) >=
+            MAX_CANDIDATE_SCAN_JOBS
+        ) {
+            return false;
+        }
+        queuedScanRoots.add(job.root);
+        if ( priority ) {
+            candidateScanJobs.splice(candidateScanIndex, 0, job);
+        } else {
+            candidateScanJobs.push(job);
+        }
+        if ( candidateScanTimer === undefined ) {
+            candidateScanTimer = scheduleCooperativeTask(processCandidateScans);
+        }
+        return true;
     };
 
     const hasOutboundLink = container => {
-        const links = container.querySelectorAll('a[href]');
-        for (const a of links) {
+        let walker;
+        try {
+            walker = document.createTreeWalker(
+                container,
+                self.NodeFilter?.SHOW_ELEMENT || 1
+            );
+        } catch {
+            return false;
+        }
+        let scanned = 0;
+        while ( walker.nextNode() && scanned++ < 128 ) {
+            const a = walker.currentNode;
+            if ( a?.tagName !== 'A' || a.hasAttribute?.('href') !== true ) { continue; }
             const href = a.getAttribute('href');
             if (typeof href !== 'string') { continue; }
             let u;
@@ -532,7 +903,7 @@
     };
 
     const isTextLabelCandidate = el => {
-        const text = el.textContent?.trim() || '';
+        const text = readBoundedText(el, config.maxLabelTextLength || 40);
         if (text === '') { return false; }
         return labelRegexes.some(re => re.test(text));
     };
@@ -626,7 +997,7 @@
         let strongLabel = false;
         if (labelHint) {
             score += 3;
-            const text = labelEl.textContent?.trim() || '';
+            const text = readBoundedText(labelEl, config.maxLabelTextLength || 40);
             if (text !== '' && STRONG_LABEL_RE.test(text)) {
                 strongLabel = true;
                 score += 1;
@@ -679,7 +1050,7 @@
             strongLabel ||
             adChoicesHint ||
             attrHint ||
-            sizeHint
+            recentBlockHint || recentNetworkHit
         );
         return { shouldHide, isStrong, score, needed, overlayHint };
     };
@@ -714,7 +1085,7 @@
 
         try {
             if (htmlOverflowHidden) {
-                html.style.setProperty('overflow', 'auto', 'important');
+                setOwnedStyle(html, 'overflow', 'auto');
             }
         } catch {
         }
@@ -733,11 +1104,11 @@
 
         try {
             if (body && bodyOverflowHidden) {
-                body.style.setProperty('overflow', 'auto', 'important');
+                setOwnedStyle(body, 'overflow', 'auto');
             }
             if (body && bodyFixed) {
-                body.style.setProperty('position', 'static', 'important');
-                body.style.setProperty('top', 'auto', 'important');
+                setOwnedStyle(body, 'position', 'static');
+                setOwnedStyle(body, 'top', 'auto');
             }
         } catch {
         }
@@ -758,16 +1129,15 @@
             return;
         }
         try {
-            if (container.dataset?.uBolNativeHidden) {
+            if (ownedStyles.has(container)) {
                 if (isVisible(container)) {
-                    container.style.setProperty('display', 'none', 'important');
-                    container.style.setProperty('visibility', 'hidden', 'important');
+                    setOwnedStyle(container, 'display', 'none');
+                    setOwnedStyle(container, 'visibility', 'hidden');
                 }
                 return;
             }
-            container.style.setProperty('display', 'none', 'important');
-            container.style.setProperty('visibility', 'hidden', 'important');
-            container.dataset.uBolNativeHidden = '1';
+            setOwnedStyle(container, 'display', 'none');
+            setOwnedStyle(container, 'visibility', 'hidden');
             blockHints?.noteElement?.(container, { ancestors: 1 });
             recordHeuristicHide(isStrong);
 
@@ -808,7 +1178,18 @@
     };
 
     let rehideObserved = new WeakSet();
-    let rehideObservers = new Set();
+    const rehideObservers = new Map();
+    const pruneDisconnectedRehideObservers = () => {
+        for ( const [ container, obs ] of rehideObservers ) {
+            if ( container.isConnected !== false ) { continue; }
+            try { obs.disconnect(); } catch {
+            }
+            rehideObservers.delete(container);
+            rehideObserved.delete(container);
+            hiddenContainers.delete(container);
+        }
+        pruneDisconnectedOwnedStyles();
+    };
     const ensureStaysHidden = container => {
         if (container instanceof Element === false) { return; }
         if (rehideObserved.has(container)) { return; }
@@ -817,7 +1198,10 @@
             const obs = new MutationObserver(() => {
                 if (container.isConnected === false) {
                     obs.disconnect();
-                    rehideObservers.delete(obs);
+                    rehideObservers.delete(container);
+                    rehideObserved.delete(container);
+                    hiddenContainers.delete(container);
+                    restoreOwnedStylesFor(container);
                     return;
                 }
                 if (isVisible(container)) {
@@ -829,7 +1213,7 @@
                 attributes: true,
                 attributeFilter: ['style', 'class', 'hidden', 'aria-hidden'],
             });
-            rehideObservers.add(obs);
+            rehideObservers.set(container, obs);
         } catch {
         }
     };
@@ -838,7 +1222,7 @@
         const parent = container.parentElement;
         if (parent === null) { return; }
         if (parent === document.body || parent === document.documentElement) { return; }
-        if (parent.dataset?.uBolNativeCollapsed) { return; }
+        if (ownedStyles.has(parent)) { return; }
         if (parent.closest('nav,header,footer')) { return; }
         if (guard?.canMutateElement?.(parent, {
             riskTier: guard?.RISK_TIERS?.medium || 2,
@@ -871,18 +1255,18 @@
             parent.getAttribute('data-ad') || '',
             parent.getAttribute('data-ad-unit') || '',
         ].join(' ');
-        if (
-            attrHintRe.test(hintParts) === false &&
-            adSized === false &&
-            blockHints?.hasRecentHint?.(parent, { includeSubtree: true }) !== true
-        ) {
+        const directAdHint = attrHintRe.test(hintParts);
+        const recentBlockHint = blockHints?.hasRecentHint?.(parent, {
+            includeSubtree: true,
+        }) === true;
+        const hiddenChildEvidence = ownedStyles.has(container);
+        if ( directAdHint === false && recentBlockHint === false && hiddenChildEvidence === false ) {
             return;
         }
 
         try {
-            parent.style.setProperty('display', 'none', 'important');
-            parent.style.setProperty('visibility', 'hidden', 'important');
-            parent.dataset.uBolNativeCollapsed = '1';
+            setOwnedStyle(parent, 'display', 'none');
+            setOwnedStyle(parent, 'visibility', 'hidden');
             blockHints?.noteElement?.(parent, { ancestors: 1 });
             ensureStaysHidden(parent);
             unlockScrollIfNeeded();
@@ -892,11 +1276,10 @@
     };
 
     let processTimer;
-    const MAX_TIME_SLICE_MS = 4;
 
-    const processPending = () => {
+    const processPending = sharedDeadline => {
         processTimer = undefined;
-        const deadline = self.performance.now() + MAX_TIME_SLICE_MS;
+        const deadline = cooperativeDeadline(sharedDeadline);
         for (; pendingIndex < pendingLabels.length; pendingIndex++) {
             if (self.performance.now() >= deadline) { break; }
             const labelEl = pendingLabels[pendingIndex];
@@ -916,45 +1299,111 @@
         if (pendingIndex >= pendingLabels.length) {
             pendingLabels.length = 0;
             pendingIndex = 0;
+            schedulePendingLabelRecovery();
             return;
         }
+        compactPendingLabels();
         scheduleProcess();
     };
 
     const scheduleProcess = () => {
         if (processTimer !== undefined) { return; }
-        processTimer = self.requestAnimationFrame(processPending);
+        processTimer = scheduleCooperativeTask(processPending);
     };
 
-    const collectKnownShadowRootCandidates = roots => {
+    const collectKnownShadowRootCandidates = (roots, priority = false) => {
         const knownRoots = Array.isArray(roots)
             ? roots
             : (shadowController?.enumerateRoots?.() || []);
         for ( const root of knownRoots ) {
-            collectCandidates(root);
+            if ( collectCandidates(root, priority) === false ) { break; }
         }
     };
 
+    const MAX_DIRECT_MUTATION_CANDIDATES = 128;
     const observer = new MutationObserver(mutations => {
+        let sawRemoval = false;
+        let overloaded = false;
+        const directCandidates = new Set();
+        const addDirectCandidate = node => {
+            if ( node instanceof Element === false ) { return; }
+            if ( directCandidates.size >= MAX_DIRECT_MUTATION_CANDIDATES ) {
+                overloaded = true;
+                return;
+            }
+            directCandidates.add(node);
+        };
         for (const m of mutations) {
+            if ( m.removedNodes?.length ) { sawRemoval = true; }
+            if ( m.type === 'attributes' && m.target instanceof Element ) {
+                seenLabels.delete(m.target);
+                addDirectCandidate(m.target);
+            } else if ( m.type === 'characterData' ) {
+                const parent = m.target?.parentElement;
+                const text = `${m.target?.textContent || ''}`.trim();
+                if (
+                    parent instanceof Element &&
+                    text !== '' && text.length <= 200
+                ) {
+                    seenLabels.delete(parent);
+                    addDirectCandidate(parent);
+                }
+            }
             for (const n of m.addedNodes) {
                 if (n.nodeType !== 1) { continue; }
-                collectCandidates(n);
+                if ( collectCandidates(n, true) === false ) {
+                    overloaded = true;
+                    break;
+                }
+            }
+            if ( overloaded ) { break; }
+        }
+        for ( const node of directCandidates ) {
+            if ( collectDirectCandidate(node) === false ) { overloaded = true; }
+            if ( collectDirectCandidate(node.parentElement) === false ) {
+                overloaded = true;
             }
         }
-        shadowController?.scheduleRescan?.();
-        scheduleProcess();
+        if ( sawRemoval || overloaded ) { pruneDisconnectedRehideObservers(); }
+        if ( sawRemoval ) { seenLabels = new WeakSet(); }
+        if ( overloaded ) { schedulePendingLabelRecovery(); }
     });
 
-    self.addEventListener?.(shadowRootsChangedEvent, event => {
-        const roots = Array.isArray(event?.detail?.roots)
-            ? event.detail.roots
-            : undefined;
-        collectKnownShadowRootCandidates(roots);
-        scheduleProcess();
-    });
+    const onShadowRootsChanged = event => {
+        const roots = Array.isArray(event?.detail?.addedRoots)
+            ? event.detail.addedRoots
+            : (Array.isArray(event?.detail?.roots) ? event.detail.roots : undefined);
+        collectKnownShadowRootCandidates(roots, true);
+        if ( event?.detail?.removedRoots?.length ) {
+            pruneDisconnectedRehideObservers();
+        }
+    };
+
+    const onShadowContentChanged = event => {
+        if ( event?.detail?.overflowed === true ) {
+            collectKnownShadowRootCandidates(undefined, true);
+            pruneDisconnectedRehideObservers();
+            return;
+        }
+        const addedNodes = Array.isArray(event?.detail?.addedNodes)
+            ? event.detail.addedNodes
+            : [];
+        for ( const node of addedNodes ) {
+            if ( collectCandidates(node, true) === false ) { break; }
+        }
+        if ( event?.detail?.removedNodes?.length ) {
+            pruneDisconnectedRehideObservers();
+        }
+    };
+
+    const onProtectionChanged = () => {
+        self.TalonNativeHeuristicsController?.refresh?.().catch(() => {});
+    };
 
     let observerConnected = false;
+    let shadowListenersConnected = false;
+    let protectionListenerConnected = false;
+    let lifecycleGeneration = 0;
 
     const resetState = () => {
         remoteConfigPromise = undefined;
@@ -963,14 +1412,16 @@
         seenLabels = new WeakSet();
         hiddenContainers = new WeakSet();
         iframeCandidates = new WeakSet();
+        candidateScanJobs = [];
+        candidateScanIndex = 0;
+        candidateScanOverflowed = false;
+        pendingLabelOverflowed = false;
+        queuedScanRoots = new WeakSet();
         rehideObserved = new WeakSet();
-        hideCount = 0;
         strongHideCount = 0;
         aggressionBoost = 0;
         persistedBoostState = null;
         strongHidesSincePersist = 0;
-        genericHighSent = false;
-        completeSent = false;
         hostProtection = guard?.getProtection?.() || {
             category: '',
             allowedRiskTier: 3,
@@ -978,36 +1429,68 @@
         };
     };
 
-    const stop = async () => {
+    const cleanup = () => {
         if (observerConnected) {
             observer.disconnect();
             observerConnected = false;
         }
-        for (const obs of rehideObservers) {
+        if ( shadowListenersConnected ) {
+            self.removeEventListener?.(shadowRootsChangedEvent, onShadowRootsChanged);
+            self.removeEventListener?.(shadowContentChangedEvent, onShadowContentChanged);
+            shadowListenersConnected = false;
+        }
+        if ( protectionListenerConnected ) {
+            self.removeEventListener?.(protectionChangedEvent, onProtectionChanged);
+            protectionListenerConnected = false;
+        }
+        for (const obs of rehideObservers.values()) {
             try { obs.disconnect(); } catch { }
         }
         rehideObservers.clear();
         if (processTimer !== undefined) {
-            try { self.cancelAnimationFrame(processTimer); } catch { }
+            try { cancelCooperativeTask(processTimer); } catch { }
             processTimer = undefined;
+        }
+        if (candidateScanTimer !== undefined) {
+            try { cancelCooperativeTask(candidateScanTimer); } catch { }
+            candidateScanTimer = undefined;
         }
         if (persistTimer !== undefined) {
             try { clearTimeout(persistTimer); } catch { }
             persistTimer = undefined;
         }
+        if ( pendingLabelRecoveryTimer !== undefined ) {
+            try { self.clearTimeout(pendingLabelRecoveryTimer); } catch { }
+            pendingLabelRecoveryTimer = undefined;
+        }
+        restoreOwnedStyles();
         resetState();
     };
 
+    const stop = async () => {
+        lifecycleGeneration += 1;
+        cleanup();
+    };
+
     const init = async () => {
+        const generation = ++lifecycleGeneration;
         await guard?.whenReady?.();
+        if ( generation !== lifecycleGeneration ) { return { applied: false }; }
         if (guard?.shouldRunSubsystem?.('nativeHeuristics') === false) {
-            await stop();
+            cleanup();
+            self.addEventListener?.(protectionChangedEvent, onProtectionChanged);
+            protectionListenerConnected = true;
             return { applied: false };
         }
-        await stop();
-        hostProtection = guard?.getProtection?.() || hostProtection;
-        config = await loadConfig();
+        let nextConfig = await loadConfig();
+        if ( generation !== lifecycleGeneration ) { return { applied: false }; }
         const remoteConfig = await loadRemoteConfig();
+        if ( generation !== lifecycleGeneration ) { return { applied: false }; }
+        cleanup();
+        self.addEventListener?.(protectionChangedEvent, onProtectionChanged);
+        protectionListenerConnected = true;
+        hostProtection = guard?.getProtection?.() || hostProtection;
+        config = nextConfig;
         if (remoteConfig instanceof Object) {
             const mergeStringArray = (base, extra) => {
                 const out = [];
@@ -1050,12 +1533,15 @@
         }
         if (Array.isArray(config.disableHosts)) {
             for (const p of config.disableHosts) {
-                if (patternMatchesHostname(p, hostname)) { return; }
+                if (patternMatchesHostname(p, hostname)) {
+                    return { applied: false };
+                }
             }
         }
 
         if (BOOST_STORAGE_KEY) {
             const storedBoost = await getLocalValue(BOOST_STORAGE_KEY);
+            if ( generation !== lifecycleGeneration ) { return { applied: false }; }
             if (storedBoost instanceof Object) {
                 const now = Date.now();
                 let count = Number(storedBoost.count) || 0;
@@ -1074,17 +1560,16 @@
         }
 
         labelRegexes = (Array.isArray(config.labelRegexes) ? config.labelRegexes : [])
-            .map(s => {
-                try { return new RegExp(s, 'i'); } catch { return null; }
-            })
+            .map(compileSafeLabelRegex)
             .filter(Boolean);
         if (labelRegexes.length === 0) {
-            labelRegexes = defaultConfig.labelRegexes.map(s => new RegExp(s, 'i'));
+            labelRegexes = defaultConfig.labelRegexes.map(compileSafeLabelRegex).filter(Boolean);
         }
 
-        labelSelectors = Array.isArray(config.labelSelectors) ? config.labelSelectors : [];
-        widgetSelectors = Array.isArray(config.widgetSelectors) ? config.widgetSelectors : [];
-        stopSelectorText = (Array.isArray(config.containerStopSelectors)
+        labelSelectors = normalizeSafeSelectors(config.labelSelectors);
+        widgetSelectors = normalizeSafeSelectors(config.widgetSelectors);
+        configuredCandidateSelector = [ ...labelSelectors, ...widgetSelectors ].join(',');
+        stopSelectorText = normalizeSafeSelectors(Array.isArray(config.containerStopSelectors)
             ? config.containerStopSelectors
             : defaultConfig.containerStopSelectors
         ).join(',');
@@ -1102,12 +1587,40 @@
         );
 
         collectCandidates(document);
-        shadowController?.rescanNow?.();
         collectKnownShadowRootCandidates();
-        scheduleProcess();
 
-        observer.observe(document, { childList: true, subtree: true });
+        observer.observe(document, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: [
+                'class',
+                'id',
+                'style',
+                'hidden',
+                'aria-hidden',
+                'aria-label',
+                'aria-labelledby',
+                'title',
+                'src',
+                'name',
+                'href',
+                'data-ad',
+                'data-ad-label-text',
+                'data-sponsored',
+                'data-ad-unit',
+                'data-ad-slot',
+                'data-ad-client',
+                'data-advertisement',
+                'data-testid',
+                'role',
+            ],
+            characterData: true,
+        });
         observerConnected = true;
+        self.addEventListener?.(shadowRootsChangedEvent, onShadowRootsChanged);
+        self.addEventListener?.(shadowContentChangedEvent, onShadowContentChanged);
+        shadowListenersConnected = true;
         return { applied: true };
     };
 
@@ -1117,8 +1630,10 @@
         stop,
     };
 
-    self.TalonNativeHeuristicsController.refresh().catch(() => {});
+    const readiness = self.TalonNativeHeuristicsController.refresh();
+    self.TalonNativeHeuristicsReady = readiness;
+    readiness.catch(() => {});
 
 })();
 
-void 0;
+self.TalonNativeHeuristicsReady;

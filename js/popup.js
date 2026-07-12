@@ -241,14 +241,11 @@ dom.on('#gotoDashboard', 'click', ev => {
 });
 
 dom.on('#gotoPicker', 'click', ( ) => {
-    if ( browser.scripting === undefined ) { return; }
-    browser.scripting.executeScript({
-        files: [
-            '/js/scripting/css-procedural-api.js',
-            '/js/scripting/tool-overlay.js',
-            '/js/scripting/picker.js',
-        ],
-        target: { tabId: currentTab.id },
+    sendMessage({
+        what: 'launchElementTool',
+        tool: 'picker',
+        tabId: currentTab.id,
+        url: currentTab.url || '',
     }).catch(ignoreRuntimeError);
     self.close();
 });
@@ -256,13 +253,11 @@ dom.on('#gotoPicker', 'click', ( ) => {
 /******************************************************************************/
 
 dom.on('#gotoUnpicker', 'click', ( ) => {
-    if ( browser.scripting === undefined ) { return; }
-    browser.scripting.executeScript({
-        files: [
-            '/js/scripting/tool-overlay.js',
-            '/js/scripting/unpicker.js',
-        ],
-        target: { tabId: currentTab.id },
+    sendMessage({
+        what: 'launchElementTool',
+        tool: 'unpicker',
+        tabId: currentTab.id,
+        url: currentTab.url || '',
     }).catch(ignoreRuntimeError);
     self.close();
 });

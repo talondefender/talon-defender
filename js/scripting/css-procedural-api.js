@@ -29,6 +29,60 @@ if ( self.ProceduralFiltererAPI !== undefined ) {
 
 /******************************************************************************/
 
+const runtimeMessageTimeoutMs = 5000;
+const sendRuntimeMessageBounded = payload => {
+    let raw;
+    try {
+        raw = Promise.resolve(chrome.runtime.sendMessage(payload));
+    } catch (reason) {
+        return Promise.reject(reason);
+    }
+    raw.catch(() => {});
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const timer = self.setTimeout(() => {
+            if ( settled ) { return; }
+            settled = true;
+            reject(new Error('procedural CSS runtime message timed out'));
+        }, runtimeMessageTimeoutMs);
+        raw.then(value => {
+            if ( settled ) { return; }
+            settled = true;
+            self.clearTimeout(timer);
+            resolve(value);
+        }, reason => {
+            if ( settled ) { return; }
+            settled = true;
+            self.clearTimeout(timer);
+            reject(reason);
+        });
+    });
+};
+const removeCssFallback = async css => {
+    const response = await sendRuntimeMessageBounded({
+        what: 'removeCSS',
+        css,
+    });
+    if ( response?.ok !== true ) {
+        throw new Error(response?.error || 'remove CSS failed');
+    }
+};
+const waitForCleanupBounded = promise => {
+    let timer;
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => {
+            timer = self.setTimeout(() => reject(
+                new Error('procedural CSS cleanup timed out')
+            ), runtimeMessageTimeoutMs);
+        }),
+    ]).finally(() => {
+        if ( timer !== undefined ) { self.clearTimeout(timer); }
+    });
+};
+
+/******************************************************************************/
+
 const nonVisualElements = {
     head: true,
     link: true,
@@ -586,15 +640,19 @@ class PSelectorRoot extends PSelector {
 /******************************************************************************/
 
 class ProceduralFilterer {
-    constructor() {
+    constructor(scope = 'core') {
         this.selectors = [];
         this.styleTokenMap = new Map();
         this.styledNodes = new Set();
         this.timer = undefined;
         this.hideStyle = 'display:none!important;';
+        this.scope = scope;
+        this.pendingStyleSheetOperations = new Set();
+        this.styleSheetFailure = undefined;
     }
 
     async reset() {
+        // Stop page mutation work before waiting on any runtime transport.
         if ( this.timer ) {
             self.cancelAnimationFrame(this.timer);
             this.timer = undefined;
@@ -603,26 +661,56 @@ class ProceduralFilterer {
             pselector.destructor();
         }
         this.selectors.length = 0;
+        if ( this.pendingStyleSheetOperations.size !== 0 ) {
+            await waitForCleanupBounded(
+                Promise.allSettled(Array.from(this.pendingStyleSheetOperations))
+            );
+        }
+        const entries = Array.from(this.styleTokenMap);
         const promises = [];
-        for ( const [ style, token ] of this.styleTokenMap ) {
+        for ( const [ style, token ] of entries ) {
             for ( const elem of this.styledNodes ) {
                 elem.removeAttribute(token);
             }
             const css = `[${token}]\n{${style}}\n`;
-            promises.push(
-                chrome.runtime.sendMessage({ what: 'removeCSS', css }).catch(( ) => { })
+            if ( typeof self.cssAPI?.remove === 'function' ) {
+                promises.push(self.cssAPI.remove(css, this.scope));
+            } else {
+                promises.push(removeCssFallback(css));
+            }
+        }
+        this.styledNodes.clear();
+        const results = await Promise.allSettled(promises);
+        const failures = [];
+        for ( let i = 0; i < results.length; i++ ) {
+            if ( results[i].status === 'fulfilled' ) {
+                this.styleTokenMap.delete(entries[i][0]);
+            } else {
+                failures.push(results[i].reason);
+            }
+        }
+        if ( failures.length !== 0 ) {
+            throw new AggregateError(
+                failures,
+                'procedural token CSS cleanup failed'
             );
         }
-        this.styleTokenMap.clear();
-        this.styledNodes.clear();
-        return Promise.all(promises);
+        this.styleSheetFailure = undefined;
     }
 
-    addSelectors(selectors) {
+    async addSelectors(selectors) {
         for ( const selector of selectors ) {
             const pselector = new PSelectorRoot(this, selector);
             this.primeProceduralSelector(pselector);
             this.selectors.push(pselector);
+        }
+        await this.ready();
+    }
+
+    async ready() {
+        await Promise.allSettled(Array.from(this.pendingStyleSheetOperations));
+        if ( this.styleSheetFailure !== undefined ) {
+            throw this.styleSheetFailure;
         }
     }
 
@@ -680,7 +768,21 @@ class ProceduralFilterer {
         if ( styleToken !== undefined ) { return styleToken; }
         styleToken = randomToken();
         this.styleTokenMap.set(style, styleToken);
-        self.cssAPI.insert(`[${styleToken}]\n{${style}}\n`);
+        const operation = self.cssAPI.insert(
+            `[${styleToken}]\n{${style}}\n`,
+            this.scope
+        ).catch(reason => {
+            this.styleTokenMap.delete(style);
+            for ( const node of this.styledNodes ) {
+                node.removeAttribute(styleToken);
+            }
+            this.styleSheetFailure ||= reason;
+            throw reason;
+        });
+        this.pendingStyleSheetOperations.add(operation);
+        operation.finally(() => {
+            this.pendingStyleSheetOperations.delete(operation);
+        }).catch(() => {});
         return styleToken;
     }
 
@@ -755,10 +857,11 @@ class ProceduralFilterer {
 /******************************************************************************/
 
 self.ProceduralFiltererAPI = class {
-    constructor() {
+    constructor(scope = 'core') {
         this.cssSheets = new Set();
         this.proceduralFilterer = null;
         this.domObserver = null;
+        this.scope = scope;
     }
 
     async reset() {
@@ -767,21 +870,81 @@ self.ProceduralFiltererAPI = class {
             this.domObserver.disconnect();
             this.domObserver = null;
         }
-        const promises = [];
-        if ( this.proceduralFilterer ) {
-            promises.push(this.proceduralFilterer.reset());
-            this.proceduralFilterer = null;
+        const jobs = [];
+        const proceduralFilterer = this.proceduralFilterer;
+        if ( proceduralFilterer ) {
+            jobs.push({
+                kind: 'procedural',
+                value: proceduralFilterer,
+                promise: proceduralFilterer.reset(),
+            });
         }
         for ( const css of this.cssSheets ) {
-            promises.push(
-                chrome.runtime.sendMessage({ what: 'removeCSS', css }).catch(( ) => { })
+            let promise;
+            if ( typeof self.cssAPI?.remove === 'function' ) {
+                promise = self.cssAPI.remove(css, this.scope);
+            } else {
+                promise = removeCssFallback(css);
+            }
+            jobs.push({ kind: 'sheet', value: css, promise });
+        }
+        const results = await Promise.allSettled(jobs.map(job => job.promise));
+        const failures = [];
+        for ( let i = 0; i < results.length; i++ ) {
+            const result = results[i];
+            const job = jobs[i];
+            if ( result.status === 'rejected' ) {
+                failures.push(result.reason);
+                continue;
+            }
+            if (
+                job.kind === 'procedural' &&
+                this.proceduralFilterer === job.value
+            ) {
+                this.proceduralFilterer = null;
+            } else if ( job.kind === 'sheet' ) {
+                this.cssSheets.delete(job.value);
+            }
+        }
+        if ( failures.length !== 0 ) {
+            throw new AggregateError(
+                failures,
+                'procedural selector cleanup failed'
             );
         }
-        this.cssSheets.clear();
-        await Promise.all(promises);
     }
 
-    addDeclaratives(selectors) {
+    async addSelectors(selectors) {
+        const declaratives = [];
+        const procedurals = [];
+        for ( const details of selectors || [] ) {
+            if ( details?.cssable ) {
+                declaratives.push(details);
+            } else {
+                procedurals.push(details);
+            }
+        }
+        try {
+            if ( declaratives.length !== 0 ) {
+                await this.addDeclaratives(declaratives);
+            }
+            if ( procedurals.length !== 0 ) {
+                await this.addProcedurals(procedurals);
+            }
+        } catch (reason) {
+            try {
+                await this.reset();
+            } catch (cleanupReason) {
+                throw new AggregateError(
+                    [ reason, cleanupReason ],
+                    'procedural selector rollback failed'
+                );
+            }
+            throw reason;
+        }
+    }
+
+    async addDeclaratives(selectors) {
         const cssRuleFromProcedural = details => {
             const { tasks, action } = details;
             let mq, selector;
@@ -819,12 +982,32 @@ self.ProceduralFiltererAPI = class {
         const cssSheet = sheetText.join('\n');
         if ( this.cssSheets.has(cssSheet) ) { return; }
         this.cssSheets.add(cssSheet);
-        self.cssAPI.insert(cssSheet);
+        try {
+            await self.cssAPI.insert(cssSheet, this.scope);
+        } catch (reason) {
+            this.cssSheets.delete(cssSheet);
+            throw reason;
+        }
     }
 
-    addProcedurals(selectors) {
+    async addProcedurals(selectors) {
         if ( this.proceduralFilterer === null ) {
-            this.proceduralFilterer = new ProceduralFilterer();
+            this.proceduralFilterer = new ProceduralFilterer(this.scope);
+        }
+        try {
+            await this.proceduralFilterer.addSelectors(selectors);
+        } catch (reason) {
+            try {
+                await this.proceduralFilterer.reset();
+            } catch (cleanupReason) {
+                this.proceduralFilterer = null;
+                throw new AggregateError(
+                    [ reason, cleanupReason ],
+                    'procedural token rollback failed'
+                );
+            }
+            this.proceduralFilterer = null;
+            throw reason;
         }
         if ( this.domObserver === null ) {
             this.domObserver = new MutationObserver(mutations => {
@@ -832,7 +1015,6 @@ self.ProceduralFiltererAPI = class {
             });
             this.domObserver.observe(document, { childList: true, subtree: true });
         }
-        this.proceduralFilterer.addSelectors(selectors);
         this.proceduralFilterer.uBOL_commit();
     }
 

@@ -1,6 +1,14 @@
 import { t, pluralSuffix } from "../shared/i18n.js";
 import { SUBSCRIBE_URL, TRIAL_EXPIRED_URL, SUPPORT_URL, PRIVACY_URL, RECOVER_LICENSE_URL } from "../shared/links.js";
 import { ignoreRuntimeError, ignoreRuntimeLastError, isIgnorableRuntimeError } from "../js/runtime-errors.js";
+import {
+  applyFilteringModeMutationWithRetry,
+  createSerializedActionQueue,
+  filteringModesEqual,
+  mergeFilteringModeChanges,
+  normalizeFilteringModeState,
+  normalizeFilteringModes,
+} from "../options/ruleset-toggle-state.js";
 
 const MODE_NONE = 0;
 const MODE_BASIC = 1;
@@ -69,8 +77,11 @@ let licenseEntryVisible = false;
 let expiredKeyEntryVisible = false;
 let currentReloadNeededReason = "";
 let toggleChangeInFlight = false;
+let pendingFilteringMutations = 0;
+const filteringMutationQueue = createSerializedActionQueue();
 
 const GLOBAL_PAUSE_SNAPSHOT_KEY = "globalPauseFilteringModesSnapshot";
+const GLOBAL_PAUSE_SNAPSHOT_VERSION = 1;
 const ENTITLEMENT_LOCAL_STORAGE_KEY = "talonEntitlement";
 const FILTERING_MODE_STORAGE_KEY = "filteringModeDetails";
 const PAUSED_FILTERING_MODES = {
@@ -135,7 +146,7 @@ function clearCurrentTabState() {
 }
 
 async function reloadCurrentTab(context, reloadProperties = null) {
-  if (!currentTabId) {
+  if (Number.isInteger(currentTabId) === false || currentTabId < 0) {
     return false;
   }
   try {
@@ -412,45 +423,103 @@ async function hydrateFromLocalCache() {
   }
 }
 
-function isValidFilteringModesSnapshot(value) {
-  if (!value || typeof value !== "object") {
-    return false;
+function createPauseSnapshotRecord(modes) {
+  const normalizedModes = normalizeFilteringModes(modes);
+  const pausedModes = normalizeFilteringModes(PAUSED_FILTERING_MODES);
+  if (normalizedModes === null || pausedModes === null) {
+    throw new TypeError("Invalid filtering mode snapshot");
   }
-  return ["none", "basic", "optimal", "complete"].every((key) => {
-    const entries = value[key];
-    return Array.isArray(entries) && entries.every((item) => typeof item === "string");
-  });
+  const randomPart = self.crypto.randomUUID();
+  return {
+    schemaVersion: GLOBAL_PAUSE_SNAPSHOT_VERSION,
+    revision: `${Date.now().toString(36)}-${randomPart}`,
+    modes: normalizedModes,
+    pausedModes,
+  };
+}
+
+function parsePauseSnapshotRecord(value) {
+  const legacyModes = normalizeFilteringModes(value);
+  if (legacyModes !== null) {
+    return {
+      schemaVersion: 0,
+      revision: "legacy",
+      modes: legacyModes,
+      pausedModes: normalizeFilteringModes(PAUSED_FILTERING_MODES),
+    };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  if (value.schemaVersion !== GLOBAL_PAUSE_SNAPSHOT_VERSION ||
+      typeof value.revision !== "string" || value.revision === "") {
+    return null;
+  }
+  const modes = normalizeFilteringModes(value.modes);
+  const pausedModes = normalizeFilteringModes(value.pausedModes);
+  if (modes === null || pausedModes === null) {
+    return null;
+  }
+  return {
+    schemaVersion: value.schemaVersion,
+    revision: value.revision,
+    modes,
+    pausedModes,
+  };
 }
 
 async function readGlobalPauseSnapshot() {
-  try {
-    const stored = await chrome.storage.local.get(GLOBAL_PAUSE_SNAPSHOT_KEY);
-    const snapshot = stored?.[GLOBAL_PAUSE_SNAPSHOT_KEY];
-    if (isValidFilteringModesSnapshot(snapshot)) {
-      return snapshot;
-    }
-  } catch (_error) {
-    // ignore
+  const stored = await chrome.storage.local.get(GLOBAL_PAUSE_SNAPSHOT_KEY);
+  const value = stored?.[GLOBAL_PAUSE_SNAPSHOT_KEY];
+  if (value === undefined) {
+    return null;
   }
-  return null;
+  const record = parsePauseSnapshotRecord(value);
+  if (record === null) {
+    throw new Error("Stored global pause snapshot is invalid");
+  }
+  return record;
 }
 
-async function writeGlobalPauseSnapshot(snapshot) {
-  try {
-    await chrome.storage.local.set({
-      [GLOBAL_PAUSE_SNAPSHOT_KEY]: snapshot
-    });
-  } catch (_error) {
-    // ignore
+async function writeGlobalPauseSnapshot(modes) {
+  const record = createPauseSnapshotRecord(modes);
+  await chrome.storage.local.set({
+    [GLOBAL_PAUSE_SNAPSHOT_KEY]: record
+  });
+  const stored = await chrome.storage.local.get(GLOBAL_PAUSE_SNAPSHOT_KEY);
+  const verified = parsePauseSnapshotRecord(stored?.[GLOBAL_PAUSE_SNAPSHOT_KEY]);
+  if (verified === null || verified.revision !== record.revision ||
+      filteringModesEqual(verified.modes, record.modes) === false ||
+      filteringModesEqual(verified.pausedModes, record.pausedModes) === false) {
+    throw new Error("Global pause snapshot could not be verified");
   }
+  return record;
 }
 
-async function clearGlobalPauseSnapshot() {
-  try {
-    await chrome.storage.local.remove(GLOBAL_PAUSE_SNAPSHOT_KEY);
-  } catch (_error) {
-    // ignore
+async function clearGlobalPauseSnapshot(expectedRevision = "") {
+  const before = await chrome.storage.local.get(GLOBAL_PAUSE_SNAPSHOT_KEY);
+  const beforeValue = before?.[GLOBAL_PAUSE_SNAPSHOT_KEY];
+  if (beforeValue === undefined) {
+    return true;
   }
+  const beforeRecord = parsePauseSnapshotRecord(beforeValue);
+  if (beforeRecord === null) {
+    throw new Error("Stored global pause snapshot is invalid");
+  }
+  if (expectedRevision && beforeRecord.revision !== expectedRevision) {
+    return false;
+  }
+  await chrome.storage.local.remove(GLOBAL_PAUSE_SNAPSHOT_KEY);
+  const after = await chrome.storage.local.get(GLOBAL_PAUSE_SNAPSHOT_KEY);
+  const afterValue = after?.[GLOBAL_PAUSE_SNAPSHOT_KEY];
+  if (afterValue === undefined) {
+    return true;
+  }
+  const afterRecord = parsePauseSnapshotRecord(afterValue);
+  if (expectedRevision && afterRecord?.revision !== expectedRevision) {
+    return false;
+  }
+  throw new Error("Global pause snapshot could not be cleared");
 }
 
 function normalizeExternalUrl(url) {
@@ -558,7 +627,9 @@ function wireEvents() {
         focusLicenseEntry();
         return;
       }
-      setSiteMode(getProtectionLevelForCurrentSite());
+      setSiteMode(getProtectionLevelForCurrentSite()).catch((error) => {
+        console.error("Failed to enable filtering for site", error);
+      });
     });
   }
 
@@ -568,7 +639,9 @@ function wireEvents() {
         focusLicenseEntry();
         return;
       }
-      setSiteMode(MODE_NONE);
+      setSiteMode(MODE_NONE).catch((error) => {
+        console.error("Failed to disable filtering for site", error);
+      });
     });
   }
 
@@ -741,19 +814,24 @@ function renderRuntimeNotice() {
   if (!runtimeNoticeEl || !runtimeNoticeTextEl || !runtimeNoticeReloadButton) {
     return;
   }
-  const hotfixVisible = Boolean(currentTabId) &&
+  const runtimeNoticeVisible = Number.isInteger(currentTabId) &&
+    currentTabId >= 0 &&
     !paywalled &&
-    currentReloadNeededReason === "remoteScriptletHotfix";
-  runtimeNoticeEl.hidden = !hotfixVisible;
-  if (!hotfixVisible) {
+    currentReloadNeededReason !== "";
+  runtimeNoticeEl.hidden = !runtimeNoticeVisible;
+  if (!runtimeNoticeVisible) {
     return;
   }
-  runtimeNoticeTextEl.textContent = "Reload this tab to apply the latest Talon Defender hotfix.";
-  runtimeNoticeReloadButton.textContent = "Reload tab";
+  runtimeNoticeTextEl.textContent = t(
+    currentReloadNeededReason === "remoteScriptletHotfix"
+      ? "popupRuntimeHotfixReloadNotice"
+      : "popupRuntimeReloadNotice"
+  );
+  runtimeNoticeReloadButton.textContent = t("popupRuntimeHotfixReloadButton");
 }
 
 async function refreshRuntimeNoticeState() {
-  if (!currentTabId) {
+  if (Number.isInteger(currentTabId) === false || currentTabId < 0) {
     currentReloadNeededReason = "";
     renderRuntimeNotice();
     return;
@@ -1282,12 +1360,12 @@ function renderAllowedSitesControls() {
 
   if (allowDomainButton) {
     allowDomainButton.hidden = isAllowed && canChangeSite;
-    allowDomainButton.disabled = !canChangeSite;
+    allowDomainButton.disabled = !canChangeSite || pendingFilteringMutations !== 0;
   }
 
   if (blockDomainButton) {
     blockDomainButton.hidden = !(isAllowed && canChangeSite);
-    blockDomainButton.disabled = !canChangeSite;
+    blockDomainButton.disabled = !canChangeSite || pendingFilteringMutations !== 0;
   }
 }
 
@@ -1333,66 +1411,121 @@ function applyOptimisticProtectionToggle(enabled) {
   renderAllowedSitesControls();
 }
 
+async function runFilteringMutation(action) {
+  pendingFilteringMutations += 1;
+  setToggleLoading(true);
+  renderAllowedSitesControls();
+  try {
+    return await filteringMutationQueue.enqueue(action);
+  } finally {
+    pendingFilteringMutations -= 1;
+    setToggleLoading(pendingFilteringMutations !== 0);
+    renderAllowedSitesControls();
+  }
+}
+
+async function getFilteringModeState() {
+  const response = await chrome.runtime.sendMessage({ what: "getFilteringModeDetails" });
+  const state = normalizeFilteringModeState(response);
+  if (state === null) {
+    throw new Error("Filtering mode state is invalid");
+  }
+  return state;
+}
+
+async function applyFilteringModeMutation(initialState, buildModes, onStale) {
+  return applyFilteringModeMutationWithRetry({
+    initialState: {
+      ...initialState.modes,
+      configRevision: initialState.configRevision,
+    },
+    buildModes,
+    onStale,
+    maxStaleRetries: 1,
+    apply: request => chrome.runtime.sendMessage({
+      what: "setFilteringModeDetails",
+      ...request,
+    }),
+  });
+}
+
 async function handleProtectionToggleClick() {
   if (paywalled) {
     focusLicenseEntry();
     return;
   }
-  if (toggleChangeInFlight) {
+  if (toggleChangeInFlight || pendingFilteringMutations !== 0) {
     return;
   }
+  return runFilteringMutation(async () => {
+    const previousState = captureProtectionToggleState();
+    const nextEnabled = !currentEnabledState;
+    toggleChangeInFlight = true;
+    applyOptimisticProtectionToggle(nextEnabled);
 
-  const previousState = captureProtectionToggleState();
-  const nextEnabled = !currentEnabledState;
-  toggleChangeInFlight = true;
-  applyOptimisticProtectionToggle(nextEnabled);
-  setToggleLoading(true);
-
-  try {
-    await commitSiteEnabled(nextEnabled);
-    await refreshFilteringState();
-    await refreshPopupPanelData().catch(() => {});
-    reloadCurrentTab(
-      "reload tab after protection change",
-      nextEnabled ? null : { bypassCache: true }
-    ).catch(() => {});
-  } catch (error) {
-    restoreProtectionToggleState(previousState);
-    await Promise.allSettled([
-      refreshFilteringState(),
-      refreshPopupPanelData()
-    ]);
-    throw error;
-  } finally {
-    toggleChangeInFlight = false;
-    setToggleLoading(false);
-  }
+    try {
+      await commitSiteEnabled(nextEnabled);
+      await refreshFilteringState();
+      await refreshPopupPanelData().catch(() => {});
+      reloadCurrentTab(
+        "reload tab after protection change",
+        nextEnabled ? null : { bypassCache: true }
+      ).catch(() => {});
+    } catch (error) {
+      restoreProtectionToggleState(previousState);
+      await Promise.allSettled([
+        refreshFilteringState(),
+        refreshPopupPanelData()
+      ]);
+      throw error;
+    } finally {
+      toggleChangeInFlight = false;
+    }
+  });
 }
 
 async function commitSiteEnabled(enabled) {
   if (enabled) {
-    const snapshot = await readGlobalPauseSnapshot();
-    if (snapshot) {
-      await chrome.runtime.sendMessage({ what: "setFilteringModeDetails", modes: snapshot });
-      await clearGlobalPauseSnapshot();
+    const record = await readGlobalPauseSnapshot();
+    if (record) {
+      const currentState = await getFilteringModeState();
+      const result = await applyFilteringModeMutation(
+        currentState,
+        currentModes => mergeFilteringModeChanges(
+          record.modes,
+          record.pausedModes,
+          currentModes
+        )
+      );
+      if (result.ok === false) {
+        throw new Error(result.error || "Paused filtering changes could not be restored");
+      }
+      const cleared = await clearGlobalPauseSnapshot(record.revision);
+      if (cleared === false) {
+        throw new Error("Global pause snapshot changed during resume");
+      }
     } else {
       const fallbackLevel = defaultFilteringMode === MODE_NONE ? MODE_OPTIMAL : defaultFilteringMode;
-      await chrome.runtime.sendMessage({ what: "setDefaultFilteringMode", level: fallbackLevel });
+      const afterLevel = Number(await chrome.runtime.sendMessage({
+        what: "setDefaultFilteringMode",
+        level: fallbackLevel
+      }));
+      if (!Number.isFinite(afterLevel) || afterLevel === MODE_NONE) {
+        throw new Error("Protection could not be enabled");
+      }
     }
   } else {
-    const currentModes = await chrome.runtime.sendMessage({ what: "getFilteringModeDetails" });
-    let snapshotWrittenForThisAttempt = false;
-    if (isValidFilteringModesSnapshot(currentModes)) {
-      await writeGlobalPauseSnapshot(currentModes);
-      snapshotWrittenForThisAttempt = true;
-    }
-    try {
-      await chrome.runtime.sendMessage({ what: "setFilteringModeDetails", modes: PAUSED_FILTERING_MODES });
-    } catch (error) {
-      if (snapshotWrittenForThisAttempt) {
-        await clearGlobalPauseSnapshot();
+    const currentState = await getFilteringModeState();
+    await writeGlobalPauseSnapshot(currentState.modes);
+    const result = await applyFilteringModeMutation(
+      currentState,
+      () => PAUSED_FILTERING_MODES,
+      async staleState => {
+        await writeGlobalPauseSnapshot(staleState.modes);
       }
-      throw error;
+    );
+    if (result.ok === false) {
+      throw new Error(result.error || "Protection could not be paused");
     }
   }
 }
@@ -1401,23 +1534,22 @@ async function setSiteMode(level) {
   if (!currentHost) {
     return;
   }
-  try {
+  const hostname = currentHost;
+  return runFilteringMutation(async () => {
     const afterLevel = await chrome.runtime.sendMessage({
       what: "setFilteringMode",
-      hostname: currentHost,
+      hostname,
       level
     });
     const normalizedAfterLevel = Number(afterLevel);
     currentSiteLevel = Number.isFinite(normalizedAfterLevel)
       ? normalizedAfterLevel
       : level;
-  } catch (error) {
-    console.error("Failed to set filtering mode", error);
-  }
-  await refreshFilteringState();
-  await refreshPopupPanelData().catch(() => {});
-  renderAllowedSitesControls();
-  await reloadCurrentTab("reload tab after site filtering change");
+    await refreshFilteringState();
+    await refreshPopupPanelData().catch(() => {});
+    renderAllowedSitesControls();
+    await reloadCurrentTab("reload tab after site filtering change");
+  });
 }
 
 

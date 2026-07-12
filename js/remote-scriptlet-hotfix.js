@@ -1,9 +1,29 @@
 const REMOTE_SCRIPTLET_ID_PREFIX = 'remote-scriptlet.';
+const PACKAGED_STATIC_SCRIPTLET_ID_RE =
+    /^[a-z0-9][a-z0-9._-]*\.(?:main|isolated)$/i;
+const PACKAGED_STATIC_SCRIPTLET_SPECIAL_IDS = new Set([
+    'talon-site-fixes-main',
+]);
 
+// These exported names and the storage key are retained for persisted-state
+// compatibility. The hint now also carries packaged static scriptlet
+// registration transitions, which have the same document-reload semantics.
 export const REMOTE_SCRIPTLET_RELOAD_REASON = 'remoteScriptletHotfix';
+export const PENDING_REMOTE_SCRIPTLET_RELOAD_HINT_KEY =
+    'pendingRemoteScriptletReloadHintV1';
 
 export const isRemoteScriptletDirectiveId = id =>
     typeof id === 'string' && id.startsWith(REMOTE_SCRIPTLET_ID_PREFIX);
+
+export const isPackagedStaticScriptletDirectiveId = id =>
+    typeof id === 'string' && (
+        PACKAGED_STATIC_SCRIPTLET_ID_RE.test(id) ||
+        PACKAGED_STATIC_SCRIPTLET_SPECIAL_IDS.has(id)
+    );
+
+export const isReloadTrackedScriptletDirectiveId = id =>
+    isRemoteScriptletDirectiveId(id) ||
+    isPackagedStaticScriptletDirectiveId(id);
 
 const normalizeStringArray = input => {
     if ( Array.isArray(input) === false ) { return []; }
@@ -22,7 +42,7 @@ const normalizeStringArray = input => {
 const normalizeDirective = input => {
     if ( input instanceof Object === false ) { return null; }
     const id = typeof input.id === 'string' ? input.id.trim() : '';
-    if ( isRemoteScriptletDirectiveId(id) === false ) { return null; }
+    if ( isReloadTrackedScriptletDirectiveId(id) === false ) { return null; }
     const matches = normalizeStringArray(input.matches);
     const excludeMatches = normalizeStringArray(input.excludeMatches);
     if ( matches.length === 0 ) { return null; }
@@ -54,6 +74,16 @@ export const normalizeRemoteScriptletReloadHint = input => {
     if ( before.length === 0 && after.length === 0 ) { return null; }
     return { before, after };
 };
+
+export const mergeRemoteScriptletReloadHints = (...inputs) =>
+    normalizeRemoteScriptletReloadHint({
+        before: inputs.flatMap(input => Array.isArray(input?.before)
+            ? input.before
+            : []),
+        after: inputs.flatMap(input => Array.isArray(input?.after)
+            ? input.after
+            : []),
+    });
 
 const parseUrl = value => {
     if ( typeof value !== 'string' || value.trim() === '' ) { return null; }

@@ -4,7 +4,10 @@
 (function uBOL_adShellStyles() {
 
 if ( self.TalonAdShellStylesController ) {
-    self.TalonAdShellStylesController.refresh?.();
+    const readiness = self.TalonAdShellStylesController.refresh?.() ||
+        Promise.resolve({ applied: false });
+    self.TalonAdShellStylesReady = readiness;
+    readiness.catch(( ) => {});
     return;
 }
 
@@ -67,43 +70,80 @@ const STYLE_TEXT =
     'padding:0!important;border:0!important;overflow:hidden!important;}';
 
 const STYLE_ID = 'ubol-ad-shell-styles';
+const STYLE_MARKER_ATTR = 'data-talon-owned-ad-shell-styles';
 const SUBSYSTEM_ID = 'adShellStyles';
+const MAX_MARKED_SHELLS = 96;
 const blockHints = self.TalonBlockHintsController;
+let ownedStyle;
+let runGeneration = 0;
+let protectionListenerConnected = false;
 
-const remove = () => {
+const removeStyle = () => {
+    runGeneration += 1;
     try {
-        document.getElementById(STYLE_ID)?.remove();
+        ownedStyle?.remove();
     } catch {
     }
+    ownedStyle = undefined;
+};
+
+const onProtectionChanged = () => {
+    self.TalonAdShellStylesController?.refresh?.().catch?.(() => {});
+};
+
+const connectProtectionListener = () => {
+    if ( protectionListenerConnected ) { return; }
+    const eventName = self.TalonBreakageGuard?.PROTECTION_CHANGED_EVENT ||
+        'talon-protection-changed';
+    self.addEventListener?.(eventName, onProtectionChanged);
+    protectionListenerConnected = true;
+};
+
+const stop = () => {
+    const eventName = self.TalonBreakageGuard?.PROTECTION_CHANGED_EVENT ||
+        'talon-protection-changed';
+    if ( protectionListenerConnected ) {
+        self.removeEventListener?.(eventName, onProtectionChanged);
+        protectionListenerConnected = false;
+    }
+    removeStyle();
 };
 
 const markMatchedShells = () => {
     if ( typeof blockHints?.noteElement !== 'function' ) { return 0; }
-    const seen = new Set();
+    let nodes = [];
+    try {
+        // A selector list lets the browser traverse the page once instead of
+        // repeating a full query for every ad vendor selector.
+        nodes = document.querySelectorAll?.(selectors.join(',')) || [];
+    } catch {
+        nodes = [];
+    }
     let count = 0;
-    for ( const selector of selectors ) {
-        let nodes = [];
-        try {
-            nodes = document.querySelectorAll?.(selector) || [];
-        } catch {
-            nodes = [];
-        }
-        for ( const node of nodes ) {
-            if ( node instanceof Element === false || seen.has(node) ) { continue; }
-            seen.add(node);
-            count += blockHints.noteElement(node, { ancestors: 1 });
-        }
+    let marked = 0;
+    for ( const node of nodes ) {
+        if ( node instanceof Element === false ) { continue; }
+        count += blockHints.noteElement(node, { ancestors: 1 });
+        marked += 1;
+        if ( marked >= MAX_MARKED_SHELLS ) { break; }
     }
     return count;
 };
 
 const applyPrepaint = () => {
     try {
-        if ( document.getElementById(STYLE_ID) === null ) {
+        if (
+            ownedStyle instanceof HTMLStyleElement === false ||
+            ownedStyle.isConnected === false
+        ) {
             const style = document.createElement('style');
-            style.id = STYLE_ID;
+            if ( document.getElementById(STYLE_ID) === null ) {
+                style.id = STYLE_ID;
+            }
+            style.setAttribute(STYLE_MARKER_ATTR, '1');
             style.textContent = STYLE_TEXT;
             (document.head || document.documentElement || document).append(style);
+            ownedStyle = style;
         }
         markMatchedShells();
         return true;
@@ -123,26 +163,35 @@ const shouldRun = async () => {
 };
 
 const inject = async () => {
+    const generation = ++runGeneration;
     if ( await shouldRun() === false ) {
-        remove();
+        if ( generation === runGeneration ) { removeStyle(); }
         return { applied: false };
     }
+    if ( generation !== runGeneration ) { return { applied: false }; }
     return { applied: applyPrepaint() };
 };
 
+const refresh = () => {
+    connectProtectionListener();
+    return inject();
+};
+
 self.TalonAdShellStylesController = {
-    refresh: inject,
-    stop: remove,
+    refresh,
+    stop,
+};
+
+const start = () => {
+    const readiness = refresh();
+    self.TalonAdShellStylesReady = readiness;
+    readiness.catch(() => {});
 };
 
 if ( document.documentElement ) {
-    applyPrepaint();
-    inject().catch(() => {});
+    start();
 } else {
-    document.addEventListener('readystatechange', () => {
-        applyPrepaint();
-        inject().catch(() => {});
-    }, { once: true });
+    document.addEventListener('readystatechange', start, { once: true });
 }
 
 })();

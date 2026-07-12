@@ -11,7 +11,8 @@ import {
 } from "../shared/links.js";
 import { readSourceCodeInfo } from "../shared/source-code.js";
 import {
-  applyRulesetToggleChange,
+  createRulesetToggleDelta,
+  createSerializedActionQueue,
   formatRulesetApplyError,
   getRulesetToggleState,
   normalizeEnabledRulesets,
@@ -55,9 +56,9 @@ const ATTRIBUTIONS_URL =
 const LICENSE_RUNTIME_MESSAGE_TIMEOUT_MS = 12000;
 
 const EXTRA_PROTECTION_RULESETS = [
+  // The overlay-annoyance pack is owned exclusively by the Pop-ups control below.
   "annoyances-ai",
   "annoyances-cookies",
-  "annoyances-overlays",
   "annoyances-social",
   "annoyances-widgets",
   "annoyances-others",
@@ -69,31 +70,31 @@ const FILTER_TOGGLES = [
     checkbox: document.getElementById("filterEasyList"),
     statusEl: document.getElementById("filterEasyListStatus"),
     rulesets: ["ublock-filters", "easylist"],
-    label: "Ads"
+    labelKey: "optionsFilterEasyListLabel"
   },
   {
     checkbox: document.getElementById("filterEasyPrivacy"),
     statusEl: document.getElementById("filterEasyPrivacyStatus"),
     rulesets: ["easyprivacy"],
-    label: "Privacy"
+    labelKey: "optionsFilterEasyPrivacyLabel"
   },
   {
     checkbox: document.getElementById("filterFanboyAnnoyance"),
     statusEl: document.getElementById("filterFanboyAnnoyanceStatus"),
     rulesets: ["annoyances-overlays"],
-    label: "Pop-ups"
+    labelKey: "optionsFilterAnnoyancesLabel"
   },
   {
     checkbox: document.getElementById("filterExtraProtection"),
     statusEl: document.getElementById("filterExtraProtectionStatus"),
     rulesets: EXTRA_PROTECTION_RULESETS,
-    label: "Extra protection"
+    labelKey: "optionsFilterExtraProtectionLabel"
   },
   {
     checkbox: document.getElementById("filterSecurity"),
     statusEl: document.getElementById("filterSecurityStatus"),
     rulesets: ["ublock-badware", "urlhaus-full"],
-    label: "Security"
+    labelKey: "optionsFilterSecurityLabel"
   }
 ];
 
@@ -106,7 +107,11 @@ let storedLicenseKey = "";
 let runtimeStateChannel = null;
 let rulesetsLoaded = false;
 let entitlementLoaded = false;
-let busyRulesetCheckboxId = "";
+let pendingRulesetMutations = 0;
+let pendingAllowlistMutations = 0;
+let rulesetConfigRevision = null;
+const rulesetMutationQueue = createSerializedActionQueue();
+const allowlistMutationQueue = createSerializedActionQueue();
 
 init().catch((error) => console.error("Options init failed", error));
 
@@ -170,7 +175,7 @@ async function init() {
   wireRuntimeStateUpdates();
   wireCoreFilters();
   wireAllowlist();
-  const rulesetsPromise = refreshRulesets({ bootstrap: true });
+  const rulesetsPromise = refreshRulesets();
   const allowlistPromise = refreshAllowlist();
   await refreshEntitlement();
   entitlementLoaded = true;
@@ -390,6 +395,7 @@ function setPaywalledUI(isPaywalled) {
   if (useThisDeviceButton) {
     useThisDeviceButton.disabled = false;
   }
+  renderAllowlistMutationState();
 }
 
 function setLicenseEntryVisible(visible, { focus = false } = {}) {
@@ -604,15 +610,17 @@ function wireCoreFilters() {
     if (!entry.checkbox) return;
     entry.checkbox.addEventListener("change", async (event) => {
       const enabled = Boolean(event.target.checked);
-      busyRulesetCheckboxId = entry.checkbox.id;
+      pendingRulesetMutations += 1;
       renderCoreFilterStatus();
       try {
-        await setRulesetsEnabled(entry.rulesets, enabled);
+        await rulesetMutationQueue.enqueue(() =>
+          setRulesetsEnabled(entry.rulesets, enabled)
+        );
       } catch (error) {
-        console.error(`Failed to toggle ${entry.label}`, error);
+        console.error(`Failed to toggle ${t(entry.labelKey)}`, error);
         await refreshRulesets();
       } finally {
-        busyRulesetCheckboxId = "";
+        pendingRulesetMutations -= 1;
         renderCoreFilterStatus();
       }
     });
@@ -633,6 +641,10 @@ function wireRuntimeStateUpdates() {
       if (Array.isArray(message.enabledRulesets)) {
         rulesetsLoaded = true;
         enabledRulesets = new Set(normalizeEnabledRulesets(message.enabledRulesets));
+        const nextRevision = normalizeConfigRevision(message.configRevision);
+        if (nextRevision !== null) {
+          rulesetConfigRevision = nextRevision;
+        }
         renderCoreFilterStatus();
       }
     };
@@ -656,30 +668,31 @@ function wireAllowlist() {
   }
 }
 
-async function refreshRulesets({ bootstrap = false } = {}) {
+async function refreshRulesets() {
   rulesetsLoaded = false;
   renderCoreFilterStatus();
   try {
     let enabled = null;
-    if (bootstrap) {
-      const snapshot = await sendRuntimeMessageWithTimeout(
-        { what: "getOptionsPageData" },
-        { timeoutMs: 4000 }
-      ).catch(() => null);
-      if (Array.isArray(snapshot?.enabledRulesets)) {
-        enabled = snapshot.enabledRulesets;
-      }
+    const snapshot = await sendRuntimeMessageWithTimeout(
+      { what: "getOptionsPageData" },
+      { timeoutMs: 4000 }
+    ).catch(() => null);
+    if (Array.isArray(snapshot?.enabledRulesets)) {
+      enabled = snapshot.enabledRulesets;
+      rulesetConfigRevision = normalizeConfigRevision(snapshot.configRevision);
     }
     if (Array.isArray(enabled) === false) {
       enabled = await sendRuntimeMessageWithTimeout(
         { what: "getEnabledRulesets" },
         { timeoutMs: 4000 }
       );
+      rulesetConfigRevision = null;
     }
     enabledRulesets = new Set(normalizeEnabledRulesets(enabled));
   } catch (error) {
     console.error("Failed to load ruleset state", error);
     enabledRulesets = new Set();
+    rulesetConfigRevision = null;
   } finally {
     rulesetsLoaded = true;
   }
@@ -709,7 +722,7 @@ function renderCoreFilterStatus() {
     entry.checkbox.disabled =
       entitlementLoaded === false ||
       paywalled ||
-      busyRulesetCheckboxId === entry.checkbox.id;
+      pendingRulesetMutations !== 0;
     if (entry.statusEl) {
       const stateText = partial
         ? t("uiPartial")
@@ -728,26 +741,48 @@ function renderCoreFilterStatus() {
 }
 
 async function setRulesetsEnabled(ids, enabled) {
-  const current = await sendRuntimeMessageWithTimeout(
-    { what: "getEnabledRulesets" },
-    { timeoutMs: 4000 }
-  );
-  const next = applyRulesetToggleChange(current, ids, enabled);
-  const result = await sendRuntimeMessageWithTimeout({
-    what: "applyRulesets",
-    enabledRulesets: next
-  }, {
-    timeoutMs: 4000
-  });
+  const delta = createRulesetToggleDelta(ids, enabled);
+  let result = await applyRulesetDelta(delta);
+  if (result?.error === "stale_ruleset_revision") {
+    updateRulesetStateFromResponse(result);
+    result = await applyRulesetDelta(delta);
+  }
+  updateRulesetStateFromResponse(result);
   if (result?.error) {
     throw new Error(formatRulesetApplyError(result));
   }
   if (Array.isArray(result?.enabledRulesets)) {
-    enabledRulesets = new Set(normalizeEnabledRulesets(result.enabledRulesets));
     renderCoreFilterStatus();
     return;
   }
   await refreshRulesets();
+}
+
+function normalizeConfigRevision(value) {
+  const revision = Number(value);
+  return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
+}
+
+function updateRulesetStateFromResponse(result) {
+  if (Array.isArray(result?.enabledRulesets)) {
+    enabledRulesets = new Set(normalizeEnabledRulesets(result.enabledRulesets));
+  }
+  const revision = normalizeConfigRevision(result?.configRevision);
+  if (revision !== null) {
+    rulesetConfigRevision = revision;
+  }
+}
+
+async function applyRulesetDelta(delta) {
+  const request = {
+    what: "applyRulesets",
+    enableRulesetIds: delta.enableRulesets,
+    disableRulesetIds: delta.disableRulesets,
+  };
+  if (rulesetConfigRevision !== null) {
+    request.expectedRevision = rulesetConfigRevision;
+  }
+  return sendRuntimeMessageWithTimeout(request, { timeoutMs: 4000 });
 }
 
 async function refreshAllowlist() {
@@ -773,6 +808,7 @@ function renderAllowlist(entries = []) {
   allowlistListEl.innerHTML = "";
   if (!entries.length) {
     allowlistEmptyEl.hidden = false;
+    renderAllowlistMutationState();
     return;
   }
   allowlistEmptyEl.hidden = true;
@@ -794,6 +830,33 @@ function renderAllowlist(entries = []) {
     item.appendChild(removeButton);
     allowlistListEl.appendChild(item);
   });
+  renderAllowlistMutationState();
+}
+
+function renderAllowlistMutationState() {
+  const disabled = paywalled || pendingAllowlistMutations !== 0;
+  if (allowlistInput) {
+    allowlistInput.disabled = disabled;
+  }
+  if (allowlistAddButton) {
+    allowlistAddButton.disabled = disabled;
+  }
+  if (allowlistListEl) {
+    allowlistListEl.querySelectorAll(".allowlist-remove").forEach((button) => {
+      button.disabled = disabled;
+    });
+  }
+}
+
+async function runAllowlistMutation(action) {
+  pendingAllowlistMutations += 1;
+  renderAllowlistMutationState();
+  try {
+    return await allowlistMutationQueue.enqueue(action);
+  } finally {
+    pendingAllowlistMutations -= 1;
+    renderAllowlistMutationState();
+  }
 }
 
 async function handleAllowlistSubmit(event) {
@@ -805,50 +868,45 @@ async function handleAllowlistSubmit(event) {
   if (!hostname) {
     return;
   }
-  if (allowlistAddButton) {
-    allowlistAddButton.disabled = true;
-  }
-  try {
-    await chrome.runtime.sendMessage({
-      what: "setFilteringMode",
-      hostname,
-      level: MODE_NONE
-    });
-    allowlistInput.value = "";
-    await refreshAllowlist();
-  } catch (error) {
-    console.error("Failed to add allowlisted site", error);
-  } finally {
-    if (allowlistAddButton) {
-      allowlistAddButton.disabled = false;
+  await runAllowlistMutation(async () => {
+    try {
+      await chrome.runtime.sendMessage({
+        what: "setFilteringMode",
+        hostname,
+        level: MODE_NONE
+      });
+      allowlistInput.value = "";
+      await refreshAllowlist();
+    } catch (error) {
+      console.error("Failed to add allowlisted site", error);
     }
-  }
+  });
 }
 
 async function handleAllowlistRemove(hostname, button) {
   if (!hostname) {
     return;
   }
-  if (button) {
-    button.disabled = true;
-    button.textContent = t("uiRemoving");
-  }
-  try {
-    const defaultMode = await chrome.runtime.sendMessage({ what: "getDefaultFilteringMode" });
-    await chrome.runtime.sendMessage({
-      what: "setFilteringMode",
-      hostname,
-      level: Number(defaultMode)
-    });
-    await refreshAllowlist();
-  } catch (error) {
-    console.error("Failed to remove allowlisted site", error);
-  } finally {
+  await runAllowlistMutation(async () => {
     if (button) {
-      button.disabled = false;
-      button.textContent = t("uiRemove");
+      button.textContent = t("uiRemoving");
     }
-  }
+    try {
+      const defaultMode = await chrome.runtime.sendMessage({ what: "getDefaultFilteringMode" });
+      await chrome.runtime.sendMessage({
+        what: "setFilteringMode",
+        hostname,
+        level: Number(defaultMode)
+      });
+      await refreshAllowlist();
+    } catch (error) {
+      console.error("Failed to remove allowlisted site", error);
+    } finally {
+      if (button) {
+        button.textContent = t("uiRemove");
+      }
+    }
+  });
 }
 
 function normalizeHostname(value) {

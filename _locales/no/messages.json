@@ -640,9 +640,18 @@
     "message": "Ekstra beskyttelse"
   },
   "optionsFilterExtraProtectionNote": {
-    "message": "Blokkerer flere informasjonskapselvarsler, nyhetsbrevpopuper, varslingsforesp?rsler, sosiale widgeter og andre forstyrrelser."
+    "message": "Blokkerer flere informasjonskapselvarsler, varslingsforespørsler, sosiale widgeter, KI-genererte forstyrrelser og andre distraksjoner."
   },
   "uiPartial": {
     "message": "Delvis aktiv"
+  },
+  "popupRuntimeHotfixReloadNotice": {
+    "message": "Last inn denne fanen på nytt for å ta i bruk den nyeste Talon Defender-hurtigrettingen."
+  },
+  "popupRuntimeReloadNotice": {
+    "message": "Last inn denne fanen på nytt for å fullføre de nyeste beskyttelsesendringene i Talon Defender."
+  },
+  "popupRuntimeHotfixReloadButton": {
+    "message": "Last inn fanen på nytt"
   }
 }

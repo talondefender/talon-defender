@@ -20,9 +20,10 @@
 */
 
 import {
-    localRead, localRemove, localWrite,
+    browser,
+    localRemove, localWrite,
     runtime,
-    sessionRead, sessionRemove, sessionWrite,
+    sessionRemove, sessionWrite,
     webextFlavor,
 } from './ext.js';
 
@@ -34,6 +35,8 @@ import {
 } from './default-rulesets.js';
 
 import {
+    getEffectiveStrictBlockMode,
+    isStrictBlockModeManaged,
     rulesetConfig,
     saveRulesetConfig,
 } from './config.js';
@@ -64,14 +67,37 @@ const USER_RULES_PRIORITY = 1000000;
 const TRUSTED_DIRECTIVE_BASE_RULE_ID = 8000000;
 const TRUSTED_DIRECTIVE_PRIORITY = USER_RULES_PRIORITY + 1000000;
 const TALON_SITE_FIXES_RULESET_ID = 'talon-site-fixes';
+export const DNR_RECONCILIATION_DIRTY_KEY = 'dnrReconciliationDirtyV1';
 const TALON_SITE_FIXES_RUNTIME_BASE_RULE_ID = 7000000;
 const TALON_SITE_FIXES_RUNTIME_RULES_RANGE = 1000;
+let enableRulesetsTail = Promise.resolve();
 const TALON_SITE_FIXES_RUNTIME_PRIORITY = 500000;
 const STRICTBLOCK_PRIORITY = 29;
 const COMMUNITY_RULES_BASE_RULE_ID = 6000000;
 const COMMUNITY_RULES_RANGE = 1000000; // 6,000,000–6,999,999
 const COMMUNITY_RULES_MAX = 3500;
 const COMMUNITY_RESERVED_HEADROOM = 250;
+
+const readStorageValueStrict = async (area, key, areaName) => {
+    if ( area instanceof Object === false || typeof area.get !== 'function' ) {
+        throw new Error(`${areaName} storage API unavailable`);
+    }
+    const bin = await area.get(key);
+    if (
+        bin === null ||
+        typeof bin !== 'object' ||
+        Array.isArray(bin)
+    ) {
+        throw new Error(`invalid ${areaName} storage response for ${key}`);
+    }
+    return Object.hasOwn(bin, key) ? bin[key] : undefined;
+};
+
+const readLocalStrict = key =>
+    readStorageValueStrict(browser.storage?.local, key, 'local');
+
+const readSessionStrict = key =>
+    readStorageValueStrict(browser.storage?.session, key, 'session');
 
 const countRegexRules = rules => {
     if ( Array.isArray(rules) === false ) { return 0; }
@@ -89,6 +115,51 @@ const getDynamicRegexRuleCount = async ( ) =>
 const logDynamicRegexUsage = regexCount => {
     if ( regexCount === 0 ) { return; }
     ubolLog(`Using ${regexCount}/${dnr.MAX_NUMBER_OF_REGEX_RULES} dynamic regex-based DNR rules`);
+};
+
+// https://github.com/uBlockOrigin/uBOL-home/issues/715
+const toSafeDynamicRules = rules => {
+    if ( Array.isArray(rules) === false ) { return []; }
+    if ( dnr.RuleConditionKeys?.TOP_DOMAINS ) { return rules; }
+    const safeRules = [];
+    for ( const rule of rules ) {
+        const { condition } = rule;
+        if ( condition?.topDomains !== undefined ) { continue; }
+        if ( condition?.excludedTopDomains === undefined ) {
+            safeRules.push(rule);
+            continue;
+        }
+        const safeRule = {
+            ...rule,
+            condition: { ...condition },
+        };
+        delete safeRule.condition.excludedTopDomains;
+        safeRules.push(safeRule);
+    }
+    return safeRules;
+};
+
+const stableRuleValue = value => {
+    if ( Array.isArray(value) ) {
+        return value.map(stableRuleValue);
+    }
+    if ( value instanceof Object ) {
+        const out = {};
+        for ( const key of Object.keys(value).sort() ) {
+            out[key] = stableRuleValue(value[key]);
+        }
+        return out;
+    }
+    return value;
+};
+
+const stableRulesKey = rules => JSON.stringify(
+    rules.slice().sort((a, b) => a.id - b.id).map(stableRuleValue)
+);
+
+const areSameRules = (left, right) => {
+    if ( left.length !== right.length ) { return false; }
+    return stableRulesKey(left) === stableRulesKey(right);
 };
 
 const isTalonSiteFixRuntimeRuleId = id =>
@@ -268,16 +339,20 @@ async function updateDynamicRules() {
         rule.id = ruleId++;
     }
 
+    const safeAddRules = toSafeDynamicRules(addRules);
     const response = {};
 
     try {
-        await dnr.updateDynamicRules({ addRules, removeRuleIds });
+        await dnr.updateDynamicRules({
+            addRules: safeAddRules,
+            removeRuleIds,
+        });
         logDynamicRegexUsage(await getDynamicRegexRuleCount());
         if ( removeRuleIds.length !== 0 ) {
             ubolLog(`Remove ${removeRuleIds.length} dynamic DNR rules`);
         }
-        if ( addRules.length !== 0 ) {
-            ubolLog(`Add ${addRules.length} dynamic DNR rules`);
+        if ( safeAddRules.length !== 0 ) {
+            ubolLog(`Add ${safeAddRules.length} dynamic DNR rules`);
         }
     } catch(reason) {
         ubolErr(`updateDynamicRules/${reason}`);
@@ -295,16 +370,18 @@ async function updateDynamicRules() {
 /******************************************************************************/
 
 async function updateTalonSiteFixRuntimeRules() {
-    const currentRules = await dnr.getDynamicRules();
+    const [ currentRules, enabledRulesets ] = await Promise.all([
+        dnr.getDynamicRules(),
+        dnr.getEnabledRulesets(),
+    ]);
+    const currentRuntimeRules = [];
     const removeRuleIds = [];
     for ( const rule of currentRules ) {
         if ( isTalonSiteFixRuntimeRuleId(rule.id) === false ) { continue; }
+        currentRuntimeRules.push(rule);
         removeRuleIds.push(rule.id);
     }
 
-    const enabledRulesets = Array.isArray(rulesetConfig.enabledRulesets)
-        ? rulesetConfig.enabledRulesets
-        : [];
     if ( enabledRulesets.includes(TALON_SITE_FIXES_RULESET_ID) === false ) {
         if ( removeRuleIds.length === 0 ) {
             return { added: 0, removed: 0 };
@@ -319,7 +396,7 @@ async function updateTalonSiteFixRuntimeRules() {
         }
     }
 
-    const rules = await fetchJSON(`/rulesets/main/${TALON_SITE_FIXES_RULESET_ID}.json`)
+    const rules = await fetchJSON(`/rulesets/main/${TALON_SITE_FIXES_RULESET_ID}`)
         .catch(reason => {
             ubolErr(`updateTalonSiteFixRuntimeRules/fetch/${reason}`);
             return undefined;
@@ -343,6 +420,10 @@ async function updateTalonSiteFixRuntimeRules() {
         addRules.push(copy);
     }
 
+    if ( areSameRules(currentRuntimeRules, addRules) ) {
+        return { added: 0, removed: 0 };
+    }
+
     if ( removeRuleIds.length === 0 && addRules.length === 0 ) {
         return { added: 0, removed: 0 };
     }
@@ -360,6 +441,75 @@ async function updateTalonSiteFixRuntimeRules() {
         ubolErr(`updateTalonSiteFixRuntimeRules/${reason}`);
         return { error: `${reason}` };
     }
+}
+
+async function repairDnrReconciliationNow({ force = false } = {}) {
+    const dirty = await readLocalStrict(DNR_RECONCILIATION_DIRTY_KEY);
+    const isDirty = dirty !== undefined && dirty !== false;
+    if ( force !== true && isDirty === false ) {
+        return { skipped: 'clean' };
+    }
+    const staticResult = await reconcileStaticRulesetsToDurableIntent();
+    if ( staticResult?.error ) { return staticResult; }
+    const [ dynamicResult, siteFixResult ] = await Promise.all([
+        updateDynamicRules(),
+        updateTalonSiteFixRuntimeRules(),
+    ]);
+    const error = dynamicResult?.error || siteFixResult?.error;
+    if ( error ) { return { error }; }
+    await localRemove(DNR_RECONCILIATION_DIRTY_KEY);
+    return { repaired: true };
+}
+
+async function reconcileStaticRulesetsToDurableIntent() {
+    try {
+        const [ beforeIds, adminIds, rulesetDetails ] = await Promise.all([
+            dnr.getEnabledRulesets().then(ids => new Set(ids)),
+            getAdminRulesets(),
+            getRulesetDetails(),
+        ]);
+        const desiredIds = new Set(
+            Array.isArray(rulesetConfig.enabledRulesets)
+                ? rulesetConfig.enabledRulesets
+                : []
+        );
+        for ( const token of adminIds ) {
+            const op = token.charAt(0);
+            const id = token.slice(1);
+            if ( op === '+' ) { desiredIds.add(id); }
+            if ( op === '-' ) { desiredIds.delete(id); }
+        }
+        for ( const id of Array.from(desiredIds) ) {
+            if ( rulesetDetails.has(id) === false ) { desiredIds.delete(id); }
+        }
+        const enableRulesetIds = Array.from(desiredIds).filter(
+            id => beforeIds.has(id) === false
+        );
+        const disableRulesetIds = Array.from(beforeIds).filter(
+            id => desiredIds.has(id) === false && rulesetDetails.has(id)
+        );
+        if ( enableRulesetIds.length === 0 && disableRulesetIds.length === 0 ) {
+            return { changed: false };
+        }
+        await dnr.updateEnabledRulesets({
+            enableRulesetIds,
+            disableRulesetIds,
+        });
+        return { changed: true };
+    } catch (reason) {
+        ubolErr(`reconcileStaticRulesetsToDurableIntent/${reason}`);
+        return { error: `${reason}` };
+    }
+}
+
+function repairDnrReconciliation(options) {
+    const run = enableRulesetsTail
+        .catch(reason => {
+            ubolErr(`repairDnrReconciliation/previous/${reason}`);
+        })
+        .then(() => repairDnrReconciliationNow(options));
+    enableRulesetsTail = run.catch(() => {});
+    return run;
 }
 
 /******************************************************************************/
@@ -393,7 +543,7 @@ async function updateStrictBlockRules(currentRules, addRules, removeRuleIds) {
         removeRuleIds.push(rule.id);
     }
 
-    if ( rulesetConfig.strictBlockMode === false ) { return; }
+    if ( getEffectiveStrictBlockMode() === false ) { return; }
 
     // Safari does not currently support this strict-block DNR path reliably.
     // https://bugs.webkit.org/show_bug.cgi?id=298199
@@ -408,14 +558,19 @@ async function updateStrictBlockRules(currentRules, addRules, removeRuleIds) {
     ] = await Promise.all([
         hasBroadHostPermissions(),
         getEnabledRulesetsDetails(),
-        localRead('excludedStrictBlockHostnames'),
-        sessionRead('excludedStrictBlockHostnames'),
+        readLocalStrict('excludedStrictBlockHostnames'),
+        readSessionStrict('excludedStrictBlockHostnames'),
     ]);
 
     // Strict-block rules can only be enforced with omnipotence
     if ( hasOmnipotence === false ) {
-        localRemove('excludedStrictBlockHostnames');
-        sessionRemove('excludedStrictBlockHostnames');
+        // These exclusions must not reappear if broad permission is restored.
+        // Keep the session-rule transaction open until both durable stores
+        // confirm cleanup so a worker eviction or write failure is retryable.
+        await Promise.all([
+            localRemove('excludedStrictBlockHostnames'),
+            sessionRemove('excludedStrictBlockHostnames'),
+        ]);
         return;
     }
 
@@ -460,7 +615,7 @@ async function updateStrictBlockRules(currentRules, addRules, removeRuleIds) {
 
 async function excludeFromStrictBlock(hostname, permanent) {
     if ( typeof hostname !== 'string' || hostname === '' ) { return; }
-    const readFn = permanent ? localRead : sessionRead;
+    const readFn = permanent ? readLocalStrict : readSessionStrict;
     const hostnames = new Set(await readFn('excludedStrictBlockHostnames'));
     hostnames.add(hostname);
     const writeFn = permanent ? localWrite : sessionWrite;
@@ -469,9 +624,14 @@ async function excludeFromStrictBlock(hostname, permanent) {
 }
 
 async function setStrictBlockMode(state, force = false) {
+    if ( isStrictBlockModeManaged() ) {
+        return getEffectiveStrictBlockMode();
+    }
     const newState = Boolean(state);
     if ( force === false ) {
-        if ( newState === rulesetConfig.strictBlockMode ) { return; }
+        if ( newState === rulesetConfig.strictBlockMode ) {
+            return getEffectiveStrictBlockMode();
+        }
     }
     rulesetConfig.strictBlockMode = newState;
     const promises = [ saveRulesetConfig() ];
@@ -482,7 +642,8 @@ async function setStrictBlockMode(state, force = false) {
         );
     }
     await Promise.all(promises);
-    return updateSessionRules();
+    await updateSessionRules();
+    return getEffectiveStrictBlockMode();
 }
 
 /******************************************************************************/
@@ -499,21 +660,35 @@ async function updateSessionRules() {
     ]);
     await updateStrictBlockRules(currentRules, addRulesUnfiltered, removeRuleIds);
     if ( addRulesUnfiltered.length === 0 && removeRuleIds.length === 0 ) { return; }
-    const maxRegexCount = dnr.MAX_NUMBER_OF_REGEX_RULES * 0.80;
+    const maxRegexRules = Number(dnr.MAX_NUMBER_OF_REGEX_RULES);
+    const maxRegexCount = Number.isFinite(maxRegexRules) && maxRegexRules > 0
+        ? maxRegexRules * 0.80
+        : Number.POSITIVE_INFINITY;
     const dynamicRegexCount = countRegexRules(currentDynamicRules);
     let regexCount = dynamicRegexCount;
+    const removeRuleIdSet = new Set(removeRuleIds);
+    const reservedRuleIds = new Set();
+    for ( const rule of currentRules ) {
+        if ( removeRuleIdSet.has(rule.id) ) { continue; }
+        reservedRuleIds.add(rule.id);
+    }
     let ruleId = 1;
+    const addRules = [];
+    let rejectedRuleCount = 0;
     for ( const rule of addRulesUnfiltered ) {
-        if ( Number.isInteger(rule.id) && rule.id > 0 ) {
-            if ( rule?.condition.regexFilter ) { regexCount += 1; }
+        const isRegex = rule?.condition?.regexFilter !== undefined;
+        if ( isRegex && regexCount + 1 >= maxRegexCount ) {
+            rejectedRuleCount += 1;
             continue;
         }
-        if ( rule?.condition.regexFilter ) { regexCount += 1; }
-        rule.id = regexCount < maxRegexCount ? ruleId++ : 0;
+        if ( isRegex ) { regexCount += 1; }
+        while ( reservedRuleIds.has(ruleId) ) {
+            ruleId += 1;
+        }
+        rule.id = ruleId++;
+        addRules.push(rule);
     }
     const sessionRegexCount = regexCount - dynamicRegexCount;
-    const addRules = addRulesUnfiltered.filter(a => a.id !== 0);
-    const rejectedRuleCount = addRulesUnfiltered.length - addRules.length;
     if ( rejectedRuleCount !== 0 ) {
         ubolLog(`Too many regex-based filters, ${rejectedRuleCount} session rules dropped`);
     }
@@ -597,7 +772,7 @@ async function patchDefaultRulesets() {
         oldDefaultIds = [],
         newDefaultIds,
     ] = await Promise.all([
-        localRead('defaultRulesetIds'),
+        readLocalStrict('defaultRulesetIds'),
         getDefaultRulesetsFromEnv(),
     ]);
     const patched = reconcileDefaultRulesetPatch({
@@ -620,7 +795,7 @@ async function patchDefaultRulesets() {
 
 /******************************************************************************/
 
-async function enableRulesets(ids) {
+async function enableRulesetsNow(ids) {
     const afterIds = new Set(ids);
     const [
         beforeIds,
@@ -664,7 +839,18 @@ async function enableRulesets(ids) {
         disableRulesetSet.delete(id);
     }
 
-    if ( enableRulesetSet.size === 0 && disableRulesetSet.size === 0 ) { return; }
+    if ( enableRulesetSet.size === 0 && disableRulesetSet.size === 0 ) {
+        const repairResult = await repairDnrReconciliationNow();
+        if ( repairResult?.error ) {
+            return {
+                error: repairResult.error,
+                enabledRulesets: Array.from(beforeIds),
+                staticUpdateSucceeded: true,
+                dynamicUpdateSucceeded: false,
+            };
+        }
+        return;
+    }
 
     const enableRulesetIds = Array.from(enableRulesetSet);
     const disableRulesetIds = Array.from(disableRulesetSet);
@@ -704,17 +890,35 @@ async function enableRulesets(ids) {
         }
     }
 
-    await dnr.updateEnabledRulesets({
-        enableRulesetIds,
-        disableRulesetIds,
-    }).catch(reason => {
+    await localWrite(DNR_RECONCILIATION_DIRTY_KEY, true);
+    try {
+        await dnr.updateEnabledRulesets({
+            enableRulesetIds,
+            disableRulesetIds,
+        });
+        response.staticUpdateSucceeded = true;
+    } catch (reason) {
         ubolErr(`updateEnabledRulesets/${reason}`);
         response.error = `${reason}`;
-    });
+        response.staticUpdateSucceeded = false;
+    }
 
-    const result = await updateDynamicRules();
-    if ( result?.error ) {
-        response.error ||= result.error;
+    if ( response.staticUpdateSucceeded ) {
+        const [ dynamicResult, siteFixResult ] = await Promise.all([
+            updateDynamicRules(),
+            updateTalonSiteFixRuntimeRules(),
+        ]);
+        if ( dynamicResult?.error ) {
+            response.error ||= dynamicResult.error;
+        }
+        if ( siteFixResult?.error ) {
+            response.error ||= siteFixResult.error;
+        }
+        response.dynamicUpdateSucceeded = dynamicResult?.error === undefined &&
+            siteFixResult?.error === undefined;
+        // The caller persists user intent after this API succeeds. Keep the
+        // transaction dirty until a subsequent repair verifies static,
+        // dynamic, and site-fix state against that durable config.
     }
 
     await dnr.getEnabledRulesets().then(enabledRulesets => {
@@ -729,6 +933,17 @@ async function enableRulesets(ids) {
     });
 
     return response;
+}
+
+function enableRulesets(ids) {
+    const requestedIds = Array.isArray(ids) ? ids.slice() : [];
+    const run = enableRulesetsTail
+        .catch(reason => {
+            ubolErr(`enableRulesets/previous/${reason}`);
+        })
+        .then(() => enableRulesetsNow(requestedIds));
+    enableRulesetsTail = run.catch(() => {});
+    return run;
 }
 
 /******************************************************************************/
@@ -776,8 +991,8 @@ async function updateUserRules() {
         sandboxRules,
     ] = await Promise.all([
         dnr.getDynamicRules(),
-        localRead('userDnrRules'),
-        localRead('sandboxFilters.dnrRules'),
+        readLocalStrict('userDnrRules'),
+        readLocalStrict('sandboxFilters.dnrRules'),
     ]);
     const userRules = [];
     const nonUserRules = [];
@@ -800,7 +1015,7 @@ async function updateUserRules() {
     }
     const rejectedRegexes = [];
     let addRules = await pruneInvalidRegexRules('user', rules, rejectedRegexes);
-    const out = { added: 0, removed: 0, errors: [] };
+    const out = { added: 0, removed: 0, errors: [], applyFailed: false };
     const beforeUserRegexCount = countRegexRules(userRules);
 
     if ( rejectedRegexes.length !== 0 ) {
@@ -863,13 +1078,12 @@ async function updateUserRules() {
         rule.priority = (rule.priority || 1) + USER_RULES_PRIORITY;
     }
 
-    // Rules are first removed separately to ensure registered rules match
-    // user rules text. A bad rule in user rules text would prevent the
-    // rules from being removed if the removal was done at the same time as
-    // adding rules.
     try {
-        await dnr.updateDynamicRules({ removeRuleIds });
-        await dnr.updateDynamicRules({ addRules });
+        // Chrome applies a single updateDynamicRules request atomically. Keep
+        // the last-known-good user rules installed when any replacement rule
+        // is rejected instead of removing them in a successful first call and
+        // failing during a separate add call.
+        await dnr.updateDynamicRules({ removeRuleIds, addRules });
         if ( removeRuleIds.length !== 0 ) {
             ubolLog(`updateUserRules() / Removed ${removeRuleIds.length} dynamic DNR rules`);
         }
@@ -880,6 +1094,7 @@ async function updateUserRules() {
         out.removed = removeRuleIds.length;
     } catch(reason) {
         ubolErr(`updateUserRules/${reason}`);
+        out.applyFailed = true;
         out.errors.push(`${reason}`);
     } finally {
         const effectiveUserRules = await getEffectiveUserRules();
@@ -891,6 +1106,7 @@ async function updateUserRules() {
         if ( beforeUserRegexCount !== countRegexRules(effectiveUserRules) ) {
             const sessionResult = await updateSessionRules();
             if ( sessionResult?.error ) {
+                out.applyFailed = true;
                 out.errors.push(`session rules: ${sessionResult.error}`);
             }
         }
@@ -1096,6 +1312,7 @@ export {
     getEnabledRulesetsDetails,
     getRulesetDetails,
     patchDefaultRulesets,
+    repairDnrReconciliation,
     setStrictBlockMode,
     updateDynamicRules,
     updateCommunityRules,

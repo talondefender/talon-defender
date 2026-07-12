@@ -21,12 +21,80 @@
 
 // Important!
 // Isolate from global scope
-(function uBOL_cssProcedural() {
+self.TalonCssProceduralReady = (async function uBOL_cssProcedural() {
 
 /******************************************************************************/
 
 const proceduralImports = self.proceduralImports || [];
 self.proceduralImports = undefined;
+const runtimeGeneration = Number(self.TalonCoreCssRuntimeGeneration) || 0;
+const runtimeWasTerminated = () =>
+    (Number(self.TalonCoreCssTerminationDepth) || 0) !== 0 ||
+    (Number(self.TalonCoreCssRuntimeGeneration) || 0) !== runtimeGeneration;
+if ( runtimeWasTerminated() ) { return; }
+
+const proceduralApiMessageTimeoutMs = 5000;
+const sendRuntimeMessageBounded = payload => {
+    let raw;
+    try {
+        raw = Promise.resolve(chrome.runtime.sendMessage(payload));
+    } catch (reason) {
+        return Promise.reject(reason);
+    }
+    raw.catch(() => {});
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const timer = self.setTimeout(() => {
+            if ( settled ) { return; }
+            settled = true;
+            reject(new Error('compiled procedural CSS API request timed out'));
+        }, proceduralApiMessageTimeoutMs);
+        raw.then(value => {
+            if ( settled ) { return; }
+            settled = true;
+            self.clearTimeout(timer);
+            resolve(value);
+        }, reason => {
+            if ( settled ) { return; }
+            settled = true;
+            self.clearTimeout(timer);
+            reject(reason);
+        });
+    });
+};
+const ensureProceduralFiltererAPI = async () => {
+    if ( typeof self.ProceduralFiltererAPI === 'function' ) { return; }
+    if ( self.ProceduralFiltererAPI === undefined ) {
+        self.ProceduralFiltererAPI = sendRuntimeMessageBounded({
+            what: 'injectCSSProceduralAPI',
+        });
+    }
+    const pending = self.ProceduralFiltererAPI;
+    if ( pending instanceof Promise ) {
+        try {
+            const response = await pending;
+            if (
+                typeof self.ProceduralFiltererAPI !== 'function' &&
+                response?.ok !== true
+            ) {
+                throw new Error(
+                    response?.error || 'compiled procedural CSS API request failed'
+                );
+            }
+        } catch (reason) {
+            if ( typeof self.ProceduralFiltererAPI === 'function' ) { return; }
+            if ( self.ProceduralFiltererAPI === pending ) {
+                self.ProceduralFiltererAPI = undefined;
+            }
+            throw reason;
+        }
+    }
+    if ( typeof self.ProceduralFiltererAPI === 'function' ) { return; }
+    if ( self.ProceduralFiltererAPI === pending ) {
+        self.ProceduralFiltererAPI = undefined;
+    }
+    throw new Error('compiled procedural CSS API unavailable');
+};
 
 /******************************************************************************/
 
@@ -66,96 +134,67 @@ const exceptedSelectors = exceptions.length !== 0
     ? selectors.filter(a => exceptions.includes(JSON.stringify(a)) === false)
     : selectors;
 if ( exceptedSelectors.length === 0 ) { return; }
+const coreProceduralScope = 'core-procedural';
+const cleanupCompiledProceduralCosmetics = async () => {
+    const jobs = [];
+    if ( self.listsCompiledProceduralFiltererAPI instanceof Object ) {
+        jobs.push(Promise.resolve(
+            self.listsCompiledProceduralFiltererAPI.reset()
+        ));
+    }
+    if ( self.cssAPI instanceof Object ) {
+        jobs.push(Promise.resolve(self.cssAPI.removeAll(coreProceduralScope)));
+    }
+    const results = await Promise.allSettled(jobs);
+    self.listsCompiledProceduralFiltererAPI = undefined;
+    const failures = results
+        .filter(result => result.status === 'rejected')
+        .map(result => result.reason);
+    if ( failures.length !== 0 ) {
+        throw new AggregateError(failures, 'compiled procedural rollback failed');
+    }
+};
 
-const declaratives = exceptedSelectors.filter(a => a.cssable);
-if ( declaratives.length !== 0 ) {
-    const cssRuleFromProcedural = details => {
-        const { tasks, action } = details;
-        let mq, selector;
-        if ( Array.isArray(tasks) ) {
-            if ( tasks[0][0] !== 'matches-media' ) { return; }
-            mq = tasks[0][1];
-            if ( tasks.length > 2 ) { return; }
-            if ( tasks.length === 2 ) {
-                if ( tasks[1][0] !== 'spath' ) { return; }
-                selector = tasks[1][1];
-            }
-        }
-        let style;
-        if ( Array.isArray(action) ) {
-            if ( action[0] !== 'style' ) { return; }
-            selector = selector || details.selector;
-            style = action[1];
-        }
-        if ( mq === undefined && style === undefined && selector === undefined ) { return; }
-        if ( mq === undefined ) {
-            return `${selector}\n{${style}}`;
-        }
-        if ( style === undefined ) {
-            return `@media ${mq} {\n${selector}\n{display:none!important;}\n}`;
-        }
-        return `@media ${mq} {\n${selector}\n{${style}}\n}`;
-    };
-    const sheetText = [];
-    for ( const details of declaratives ) {
-        const ruleText = cssRuleFromProcedural(details);
-        if ( ruleText === undefined ) { continue; }
-        sheetText.push(ruleText);
+try {
+    await ensureProceduralFiltererAPI();
+    if ( runtimeWasTerminated() ) {
+        await cleanupCompiledProceduralCosmetics();
+        return;
     }
-    if ( sheetText.length !== 0 ) {
-        self.cssAPI.insert(sheetText.join('\n'));
+    if ( typeof self.ProceduralFiltererAPI !== 'function' ) {
+        self.ProceduralFiltererAPI = undefined;
+        throw new Error('compiled procedural CSS API unavailable');
     }
-}
-
-const procedurals = exceptedSelectors.filter(a => a.cssable === undefined);
-if ( procedurals.length !== 0 ) {
-    const addSelectors = selectors => {
-        if ( self.listsProceduralFiltererAPI instanceof Object === false ) { return; }
-        self.listsProceduralFiltererAPI.addSelectors(selectors);
-    };
-    if ( self.ProceduralFiltererAPI === undefined ) {
-        self.ProceduralFiltererAPI = chrome.runtime.sendMessage({
-            what: 'injectCSSProceduralAPI'
-        }).catch(( ) => {
-        });
+    if ( self.listsCompiledProceduralFiltererAPI instanceof Object === false ) {
+        self.listsCompiledProceduralFiltererAPI =
+            new self.ProceduralFiltererAPI(coreProceduralScope);
     }
-    if ( self.ProceduralFiltererAPI instanceof Promise ) {
-        self.ProceduralFiltererAPI.then(( ) => {
-            if ( typeof self.ProceduralFiltererAPI !== 'function' ) {
-                self.ProceduralFiltererAPI = undefined;
-                return;
-            }
-            if ( self.listsProceduralFiltererAPI instanceof Object === false ) {
-                try {
-                    self.listsProceduralFiltererAPI = new self.ProceduralFiltererAPI();
-                } catch {
-                    self.listsProceduralFiltererAPI = undefined;
-                    return;
-                }
-            }
-            addSelectors(procedurals);
-        }).catch(( ) => {
-            self.ProceduralFiltererAPI = undefined;
-        });
-    } else {
-        if ( self.listsProceduralFiltererAPI instanceof Object === false ) {
-            if ( typeof self.ProceduralFiltererAPI !== 'function' ) {
-                self.ProceduralFiltererAPI = undefined;
-                return;
-            }
-            try {
-                self.listsProceduralFiltererAPI = new self.ProceduralFiltererAPI();
-            } catch {
-                self.listsProceduralFiltererAPI = undefined;
-                return;
-            }
-        }
-        addSelectors(procedurals);
+    if ( runtimeWasTerminated() ) {
+        await cleanupCompiledProceduralCosmetics();
+        return;
     }
+    await self.listsCompiledProceduralFiltererAPI.addSelectors(exceptedSelectors);
+} catch (reason) {
+    try {
+        await cleanupCompiledProceduralCosmetics();
+    } catch (cleanupReason) {
+        throw new AggregateError(
+            [ reason, cleanupReason ],
+            'compiled procedural initialization rollback failed'
+        );
+    }
+    throw reason;
 }
 
 /******************************************************************************/
 
 })();
 
-void 0;
+((ready, pending) => {
+    pending.add(ready);
+    ready.finally(() => pending.delete(ready)).catch(() => {});
+    return ready;
+})(
+    self.TalonCssProceduralReady,
+    self.TalonCssProceduralReadySet ||= new Set()
+);

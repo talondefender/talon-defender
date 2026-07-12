@@ -640,9 +640,18 @@
     "message": "Extra skydd"
   },
   "optionsFilterExtraProtectionNote": {
-    "message": "Blockerar fler cookie-meddelanden, registreringsrutor, notisf?rfr?gningar, sociala widgetar och andra st?rningar."
+    "message": "Blockerar fler cookiemeddelanden, aviseringsförfrågningar, sociala widgetar, AI-genererade störningsmoment och andra distraktioner."
   },
   "uiPartial": {
     "message": "Delvis aktiv"
+  },
+  "popupRuntimeHotfixReloadNotice": {
+    "message": "Läs in fliken igen för att använda den senaste snabbkorrigeringen för Talon Defender."
+  },
+  "popupRuntimeReloadNotice": {
+    "message": "Läs in den här fliken igen för att slutföra de senaste skyddsändringarna i Talon Defender."
+  },
+  "popupRuntimeHotfixReloadButton": {
+    "message": "Läs in fliken igen"
   }
 }

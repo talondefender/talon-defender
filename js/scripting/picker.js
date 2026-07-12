@@ -237,10 +237,19 @@ const excludedSelectors = [
 
 /******************************************************************************/
 
-async function previewSelector(selector) {
-    if ( selector === previewedSelector ) { return; }
-    if ( previewedSelector !== '' ) {
-        if ( previewedSelector.startsWith('{') ) {
+function previewSelector(selector) {
+    const nextSelector = typeof selector === 'string' ? selector : '';
+    const run = previewSelector.promise
+        .catch(( ) => {})
+        .then(( ) => previewSelector.commit(nextSelector));
+    previewSelector.promise = run.catch(( ) => {});
+    return run;
+}
+
+previewSelector.commit = async selector => {
+    if ( selector === previewSelector.selector ) { return; }
+    if ( previewSelector.selector !== '' ) {
+        if ( previewSelector.selector.startsWith('{') ) {
             if ( self.pickerProceduralFilteringAPI ) {
                 try {
                     await self.pickerProceduralFilteringAPI.reset();
@@ -248,12 +257,15 @@ async function previewSelector(selector) {
                 }
             }
         }
-        if ( previewedCSS !== '' ) {
-            await ubolOverlay.sendMessage({ what: 'removeCSS', css: previewedCSS });
-            previewedCSS = '';
+        if ( previewSelector.css !== '' ) {
+            await ubolOverlay.sendMessage({
+                what: 'removeCSS',
+                css: previewSelector.css,
+            });
+            previewSelector.css = '';
         }
     }
-    previewedSelector = selector || '';
+    previewSelector.selector = '';
     if ( selector === '' ) { return; }
     if ( selector.startsWith('{') ) {
         if ( self.pickerProceduralFilteringAPI === undefined ) {
@@ -261,24 +273,31 @@ async function previewSelector(selector) {
         }
         if ( self.pickerProceduralFilteringAPI === undefined ) { return; }
         try {
-            self.pickerProceduralFilteringAPI.addSelectors([ JSON.parse(selector) ]);
+            await self.pickerProceduralFilteringAPI.addSelectors([
+                JSON.parse(selector)
+            ]);
         } catch {
+            return;
         }
+        previewSelector.selector = selector;
         return;
     }
-    previewedCSS = `${selector}{display:none!important;}`;
-    await ubolOverlay.sendMessage({ what: 'insertCSS', css: previewedCSS });
-}
+    const css = `${selector}{display:none!important;}`;
+    await ubolOverlay.sendMessage({ what: 'insertCSS', css });
+    previewSelector.css = css;
+    previewSelector.selector = selector;
+};
 
-let previewedSelector = '';
-let previewedCSS = '';
+previewSelector.promise = Promise.resolve();
+previewSelector.selector = '';
+previewSelector.css = '';
 
 /******************************************************************************/
 
 const createProceduralFilterer = ( ) => {
     if ( typeof self.ProceduralFiltererAPI !== 'function' ) { return; }
     try {
-        return new self.ProceduralFiltererAPI();
+        return new self.ProceduralFiltererAPI('picker');
     } catch {
     }
 };
@@ -290,11 +309,12 @@ const previewProceduralFiltererAPI = createProceduralFilterer();
 function onMessage(msg) {
     switch ( msg.what ) {
     case 'quitTool':
-        try {
-            previewProceduralFiltererAPI?.reset();
-        } catch {
-        }
-        break;
+        return previewSelector('').catch(( ) => {}).then(( ) => {
+            try {
+                previewProceduralFiltererAPI?.reset();
+            } catch {
+            }
+        });
     case 'startCustomFilters':
         return ubolOverlay.sendMessage({ what: 'startCustomFilters' });
     case 'terminateCustomFilters':

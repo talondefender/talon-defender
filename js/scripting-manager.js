@@ -23,45 +23,57 @@ import * as ut from './utils.js';
 
 import {
     browser,
-    localKeys,
     localRead,
     localRemove,
     localWrite,
-    sessionKeys,
-    sessionRemove,
 } from './ext.js';
 import { ubolErr, ubolLog } from './debug.js';
 
 import {
     INTERNAL_UNFILTERED_DOMAINS,
+    getRemoteAutomationRegistrationMatches,
     isInternalUnfilteredHostname,
 } from './breakage-policy.js';
 import { canonicalizeCommunityScriptlets } from './community-sync.js';
 import { fetchJSON } from './fetch.js';
 import {
     isRemoteScriptletDirectiveId,
+    mergeRemoteScriptletReloadHints,
     normalizeRemoteScriptletReloadHint,
+    PENDING_REMOTE_SCRIPTLET_RELOAD_HINT_KEY,
 } from './remote-scriptlet-hotfix.js';
 import { getEnabledRulesetsDetails } from './ruleset-manager.js';
 import { getFilteringModeDetails } from './mode-manager.js';
 import { registerCustomFilters } from './filter-manager.js';
 import { registerPreventPopup } from './prevent-popup.js';
-import { runInjectableRegistrationFlow } from './injectable-registration.js';
+import {
+    contentScriptRegistrationsEqual,
+    recordPackagedStaticScriptletReloadTransition,
+    runInjectableRegistrationFlow,
+    waitForTimedOutRegistrationOperations,
+} from './injectable-registration.js';
 import { registerToolbarIconToggler } from './action.js';
 import { createSingleFlightRunner } from './single-flight.js';
 
 /******************************************************************************/
 
 const resourceDetailPromises = new Map();
+let uncertainReconcileScheduled = false;
+let injectableRegistrationSuspended = false;
 const PUBLIC_REMOTE_COSMETICS_KEY = 'communityBundleCosmetics';
 const PUBLIC_REMOTE_SCRIPTLETS_KEY = 'communityBundlePublicScriptlets';
 const PRIVATE_REMOTE_SCRIPTLETS_KEY = 'communityBundlePrivateScriptlets';
 const LEGACY_REMOTE_SCRIPTLETS_KEY = 'communityBundleScriptlets';
-const AUTO_GENERIC_HIGH_KEY = 'autoGenericHighHosts';
-const AUTO_PROMOTION_STATE_KEY = 'autoPromotionStateV2';
+const PUBLIC_REMOTE_DIRECTIVES_KEY = 'communityBundlePublicDirectives';
+const PRIVATE_REMOTE_DIRECTIVES_KEY = 'communityBundlePrivateDirectives';
+const LEGACY_REMOTE_DIRECTIVES_KEY = 'communityBundleDirectives';
 const AUTO_BACKOFF_SUBSYSTEMS_KEY = 'autoBackoffSubsystemsV1';
-const AUTO_PROMOTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const CSS_SPECIFIC_DATA_STATE_KEY = 'cssSpecificDataStateV1';
+const CSS_SPECIFIC_DATA_SCHEMA = 1;
+const CSS_CACHE_DIRTY_KEY = 'injectableCssCacheDirtyV1';
 const INJECTABLE_SYNC_DIAGNOSTICS_KEY = 'injectableSyncDiagnosticsV1';
+const CONTENT_SCRIPT_REGISTRATION_MUTATION_JOURNAL_KEY =
+    'contentScriptRegistrationMutationJournalV1';
 const INJECTABLE_REGISTRATION_OPERATION_TIMEOUT_MS = 5000;
 const SUPPRESSIBLE_SUBSYSTEMS = Object.freeze([
     'adShellStyles',
@@ -78,8 +90,20 @@ const SCRIPTLET_PATH_ALIASES = new Map([
     ],
 ]);
 const TALON_PUBLIC_SUFFIX_DATA_PATH = '/shared/public-suffix-data.js';
+const TALON_COOPERATIVE_SCHEDULER_PATH =
+    '/js/scripting/cooperative-scheduler.js';
 const TALON_SHADOW_DOM_HELPER_PATH = '/js/scripting/shadow-dom-helper.js';
 const TALON_BLOCK_HINTS_PATH = '/js/scripting/block-hints.js';
+const TALON_SITE_FIXES_MAIN_ID = 'talon-site-fixes-main';
+const TALON_SITE_FIXES_MAIN_PATH =
+    '/rulesets/scripting/scriptlet/main/talon-site-fixes.js';
+const TALON_SITE_FIX_HOSTNAMES = Object.freeze([
+    'french-stream.one',
+    'fsvid.lol',
+    'kakaflix.lol',
+    'uqload.is',
+    'vidzy.cc',
+]);
 const TALON_YOUTUBE_AD_SKIP_PATH = '/js/scripting/youtube-ad-skip.js';
 const TALON_YOUTUBE_AD_SKIP_ID = 'talon-youtube-ad-skip';
 const TALON_YOUTUBE_PLAYER_GUARD_PATH = '/js/scripting/youtube-player-guard.js';
@@ -92,64 +116,70 @@ const YOUTUBE_AD_SKIP_HOSTNAMES = Object.freeze([
 const getScriptletExcludedHostnames = ( ) => YOUTUBE_AD_SKIP_HOSTNAMES;
 
 const readOptionalLocalValue = async (key, fallbackValue, context) => {
-    if ( browser.storage?.local?.get === undefined ) { return fallbackValue; }
-    try {
-        const bin = await browser.storage.local.get(key);
-        if ( bin instanceof Object === false ) { return fallbackValue; }
-        return bin[key] ?? fallbackValue;
-    } catch(reason) {
-        ubolErr(`${context}/${reason}`);
+    if ( browser.storage?.local?.get === undefined ) {
+        throw new Error(`${context}/local storage API unavailable`);
     }
-    return fallbackValue;
+    const bin = await browser.storage.local.get(key);
+    if ( bin === null || typeof bin !== 'object' || Array.isArray(bin) ) {
+        throw new Error(`${context}/invalid local storage response`);
+    }
+    return Object.hasOwn(bin, key) ? bin[key] : fallbackValue;
 };
 
 const readMergedLocalArrays = async (keys, context) => {
-    if ( browser.storage?.local?.get === undefined ) { return []; }
-    try {
-        const bin = await browser.storage.local.get(keys);
-        if ( bin instanceof Object === false ) { return []; }
-        const out = [];
-        for ( const key of keys ) {
-            const value = bin[key];
-            if ( Array.isArray(value) === false ) { continue; }
-            out.push(...value);
-        }
-        return out;
-    } catch(reason) {
-        ubolErr(`${context}/${reason}`);
+    if ( browser.storage?.local?.get === undefined ) {
+        throw new Error(`${context}/local storage API unavailable`);
     }
-    return [];
+    const bin = await browser.storage.local.get(keys);
+    if ( bin === null || typeof bin !== 'object' || Array.isArray(bin) ) {
+        throw new Error(`${context}/invalid local storage response`);
+    }
+    const out = [];
+    for ( const key of keys ) {
+        const value = bin[key];
+        if ( value === undefined || value === null ) { continue; }
+        if ( Array.isArray(value) === false ) {
+            throw new TypeError(`${context}/${key} must be an array`);
+        }
+        out.push(...value);
+    }
+    return out;
 };
 
-function getScriptletDetails() {
-    let promise = resourceDetailPromises.get('scriptlet');
+const getResourceDetailMap = (key, path) => {
+    let promise = resourceDetailPromises.get(key);
     if ( promise !== undefined ) { return promise; }
-    promise = fetchJSON('/rulesets/scriptlet-details').then(
-        entries => new Map(entries)
-    );
-    resourceDetailPromises.set('scriptlet', promise);
+    promise = fetchJSON(path).then(entries => {
+        if ( Array.isArray(entries) === false ) {
+            throw new TypeError(`Invalid packaged resource details: ${path}`);
+        }
+        return new Map(entries);
+    });
+    resourceDetailPromises.set(key, promise);
+    // A transient packaged-resource read must not poison this service worker
+    // for its remaining lifetime. A later reconciliation can retry the read.
+    promise.catch(() => {
+        if ( resourceDetailPromises.get(key) === promise ) {
+            resourceDetailPromises.delete(key);
+        }
+    });
     return promise;
-}
+};
 
-function getScriptletTokenDetails() {
-    let promise = resourceDetailPromises.get('scriptlet-token');
-    if ( promise !== undefined ) { return promise; }
-    promise = fetchJSON('/js/scripting/scriptlet-token-details').then(
-        entries => new Map(entries)
-    );
-    resourceDetailPromises.set('scriptlet-token', promise);
-    return promise;
-}
+const getScriptletDetails = () => getResourceDetailMap(
+    'scriptlet',
+    '/rulesets/scriptlet-details'
+);
 
-function getGenericDetails() {
-    let promise = resourceDetailPromises.get('generic');
-    if ( promise !== undefined ) { return promise; }
-    promise = fetchJSON('/rulesets/generic-details').then(
-        entries => new Map(entries)
-    );
-    resourceDetailPromises.set('generic', promise);
-    return promise;
-}
+const getScriptletTokenDetails = () => getResourceDetailMap(
+    'scriptlet-token',
+    '/js/scripting/scriptlet-token-details'
+);
+
+const getGenericDetails = () => getResourceDetailMap(
+    'generic',
+    '/rulesets/generic-details'
+);
 
 /******************************************************************************/
 
@@ -181,9 +211,96 @@ const getScriptletPath = id =>
     SCRIPTLET_PATH_ALIASES.get(id) || `/js/scripting/scriptlet-token/${id}.js`;
 
 async function resetCSSCache() {
-    const keys = await sessionKeys() || [];
-    return sessionRemove(keys.filter(a => a.startsWith('cache.css.')));
+    const area = browser.storage?.session;
+    if ( typeof area?.get !== 'function' || typeof area?.remove !== 'function' ) {
+        throw new Error('session storage API unavailable');
+    }
+    const bin = await area.get(null);
+    if ( bin === null || typeof bin !== 'object' || Array.isArray(bin) ) {
+        throw new Error('invalid session storage response');
+    }
+    const keys = Object.keys(bin).filter(key => key.startsWith('cache.css.'));
+    if ( keys.length !== 0 ) { await area.remove(keys); }
 }
+
+const specificCosmeticDataKey = id => `css.specific.${id}`;
+
+const sameJSONValue = (before, after) => {
+    if ( before === after ) { return true; }
+    try {
+        return JSON.stringify(before) === JSON.stringify(after);
+    } catch {
+    }
+    return false;
+};
+
+const isValidSpecificCosmeticData = data =>
+    data instanceof Object &&
+    Array.isArray(data.selectors) &&
+    Array.isArray(data.selectorLists) &&
+    Array.isArray(data.selectorListRefs) &&
+    Array.isArray(data.hostnames) &&
+    typeof data.hasEntities === 'boolean' &&
+    Array.isArray(data.regexes);
+
+const prepareSpecificCosmeticData = async rulesetIds => {
+    const keepKeys = rulesetIds.map(specificCosmeticDataKey);
+    if ( keepKeys.length === 0 ) {
+        return { keepKeys, changed: false };
+    }
+    const state = {
+        schema: CSS_SPECIFIC_DATA_SCHEMA,
+        extensionVersion: browser.runtime?.getManifest?.()?.version || '',
+        rulesetIds: rulesetIds.slice(),
+    };
+    // The state marker is written in the same storage transaction as every
+    // generated payload. On the unchanged fast path, reading all payloads only
+    // to prove their keys exist needlessly deserializes close to a megabyte (or
+    // more with annoyance lists) on each worker wake.
+    const stored = await browser.storage.local.get(CSS_SPECIFIC_DATA_STATE_KEY);
+    const storedState = stored?.[CSS_SPECIFIC_DATA_STATE_KEY];
+    if ( sameJSONValue(storedState, state) ) {
+        return { keepKeys, changed: false };
+    }
+
+    const dataEntries = await Promise.all(rulesetIds.map(async id => {
+        const data = await fetchJSON(`/rulesets/scripting/specific/${id}`);
+        if ( isValidSpecificCosmeticData(data) === false ) {
+            throw new TypeError(`Invalid specific cosmetic data: ${id}`);
+        }
+        return [ specificCosmeticDataKey(id), data ];
+    }));
+    const toWrite = { [CSS_SPECIFIC_DATA_STATE_KEY]: state };
+    for ( const [ key, data ] of dataEntries ) {
+        toWrite[key] = data;
+    }
+    // The payload affects live selector resolution. Persist a durable dirty
+    // marker before changing it so a worker eviction or cache-reset failure
+    // cannot acknowledge stale session CSS as current.
+    await browser.storage.local.set({ [CSS_CACHE_DIRTY_KEY]: true });
+    await browser.storage.local.set(toWrite);
+    return { keepKeys, changed: true };
+};
+
+const cleanupSpecificCosmeticData = async keepKeys => {
+    const keep = new Set(keepKeys);
+    const area = browser.storage?.local;
+    if ( typeof area?.get !== 'function' || typeof area?.remove !== 'function' ) {
+        throw new Error('local storage API unavailable');
+    }
+    const bin = await area.get(null);
+    if ( bin === null || typeof bin !== 'object' || Array.isArray(bin) ) {
+        throw new Error('invalid local storage response');
+    }
+    const keys = Object.keys(bin);
+    const obsolete = keys.filter(key =>
+        (key.startsWith('css.specific.') && keep.has(key) === false) ||
+        key.startsWith('css.procedural.')
+    );
+    if ( obsolete.length === 0 ) { return false; }
+    await area.remove(obsolete);
+    return true;
+};
 
 const exactMatchesFromHostnames = hostnames => {
     const out = [];
@@ -246,38 +363,6 @@ const getYouTubeAdSkipExcludeMatches = filteringModeDetails => {
         disabledModes.some(modeSet => modeSetCoversHostname(modeSet, hostname))
     );
     return ut.matchesFromHostnames(hostnames);
-};
-
-const readActiveAutoGenericHighHosts = async () => {
-    const now = Date.now();
-    const state = await readOptionalLocalValue(
-        AUTO_PROMOTION_STATE_KEY,
-        null,
-        `registerInjectables/${AUTO_PROMOTION_STATE_KEY}`
-    );
-    if ( state?.genericHigh instanceof Object ) {
-        const out = new Set();
-        for ( const [ hostname, entry ] of Object.entries(state.genericHigh) ) {
-            if ( typeof hostname !== 'string' || hostname.trim() === '' ) { continue; }
-            const lastHitAt = Number(entry?.lastHitAt ?? entry?.ts ?? entry);
-            if ( Number.isFinite(lastHitAt) === false || lastHitAt <= 0 ) { continue; }
-            if ( (now - lastHitAt) > AUTO_PROMOTION_TTL_MS ) { continue; }
-            out.add(hostname.trim().toLowerCase());
-        }
-        return out;
-    }
-    const legacyHosts = await readOptionalLocalValue(
-        AUTO_GENERIC_HIGH_KEY,
-        [],
-        `registerInjectables/${AUTO_GENERIC_HIGH_KEY}`
-    );
-    return Array.isArray(legacyHosts)
-        ? new Set(
-            legacyHosts
-                .filter(v => typeof v === 'string' && v.trim() !== '')
-                .map(v => v.trim().toLowerCase())
-        )
-        : new Set();
 };
 
 const readActiveSubsystemSuppressionHostnames = async () => {
@@ -392,97 +477,27 @@ const normalizeRegisteredContentScripts = registered => {
     return registered;
 };
 
-/******************************************************************************/
-
-function registerHighGeneric(context, genericDetails) {
-    const { before, filteringModeDetails, rulesetsDetails, autoGenericHighHosts } = context;
-
-    const excludeHostnames = [];
-    const includeHostnames = [];
-    const css = [];
-    for ( const details of rulesetsDetails ) {
-        const hostnames = genericDetails.get(details.id);
-        if ( hostnames ) {
-            if ( hostnames.unhide ) {
-                excludeHostnames.push(...hostnames.unhide);
-            }
-            if ( hostnames.hide ) {
-                includeHostnames.push(...hostnames.hide);
-            }
-        }
-        const count = details.css?.generichigh || 0;
-        if ( count === 0 ) { continue; }
-        css.push(`/rulesets/scripting/generichigh/${details.id}.css`);
-    }
-
-    if ( css.length === 0 ) { return; }
-
-    const { none, basic, optimal, complete } = filteringModeDetails;
-    const extendedComplete = new Set(complete);
-    if ( autoGenericHighHosts instanceof Set ) {
-        for ( const hn of autoGenericHighHosts ) {
-            if ( typeof hn !== 'string' || hn === '' ) { continue; }
-            extendedComplete.add(hn);
-        }
-    }
-    const matches = [];
-    const excludeMatches = [];
-    if ( extendedComplete.has('all-urls') ) {
-        excludeMatches.push(...ut.matchesFromHostnames(none));
-        excludeMatches.push(...ut.matchesFromHostnames(basic));
-        excludeMatches.push(...ut.matchesFromHostnames(optimal));
-        excludeMatches.push(...ut.matchesFromHostnames(excludeHostnames));
-        matches.push('<all_urls>');
-    } else {
-        const excludedByMode = [ ...none, ...basic, ...optimal ];
-        matches.push(
-            ...ut.matchesFromHostnames(
-                ut.subtractHostnameIters(
-                    ut.subtractHostnameIters(
-                        Array.from(extendedComplete),
-                        excludeHostnames
-                    ),
-                    excludedByMode
-                )
-            )
-        );
-    }
-
-    if ( matches.length === 0 ) { return; }
-
-    const registered = before.get('css-generichigh');
-    before.delete('css-generichigh'); // Important!
-
-    // https://github.com/w3c/webextensions/issues/414#issuecomment-1623992885
-    // Once supported, add:
-    // cssOrigin: 'USER',
-    const directive = {
-        id: 'css-generichigh',
-        css,
-        matches,
-        allFrames: true,
-        runAt: 'document_end',
-    };
-    if ( excludeMatches.length !== 0 ) {
-        directive.excludeMatches = excludeMatches;
-    }
-
-    // register
+const reconcileContentScript = (context, directive) => {
+    const registered = context.before.get(directive.id);
+    context.before.delete(directive.id);
     if ( registered === undefined ) {
         context.toAdd.push(directive);
+        recordPackagedStaticScriptletReloadTransition(
+            context.remoteScriptletReloadHint,
+            undefined,
+            directive
+        );
         return;
     }
-
-    // update
-    if (
-        ut.strArrayEq(registered.css, css, false) === false ||
-        ut.strArrayEq(registered.matches, matches) === false ||
-        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false
-    ) {
-        context.toRemove.push('css-generichigh');
-        context.toAdd.push(directive);
-    }
-}
+    if ( contentScriptRegistrationsEqual(registered, directive) ) { return; }
+    context.toRemove.push(directive.id);
+    context.toAdd.push(directive);
+    recordPackagedStaticScriptletReloadTransition(
+        context.remoteScriptletReloadHint,
+        registered,
+        directive
+    );
+};
 
 /******************************************************************************/
 
@@ -526,24 +541,15 @@ function registerGeneric(context, genericDetails) {
             ),
         ];
         if ( matches.length === 0 ) { return; }
-        const registered = before.get('css-generic-some');
-        before.delete('css-generic-some'); // Important!
         const directive = {
             id: 'css-generic-some',
             js,
             allFrames: true,
+            matchOriginAsFallback: true,
             matches,
             runAt: 'document_idle',
         };
-        if ( registered === undefined ) { // register
-            context.toAdd.push(directive);
-        } else if ( // update
-            ut.strArrayEq(registered.js, js, false) === false ||
-            ut.strArrayEq(registered.matches, directive.matches) === false
-        ) {
-            context.toRemove.push('css-generic-some');
-            context.toAdd.push(directive);
-        }
+        reconcileContentScript(context, directive);
         return;
     }
 
@@ -551,12 +557,11 @@ function registerGeneric(context, genericDetails) {
         ...ut.matchesFromHostnames(excludedByMode),
         ...ut.matchesFromHostnames(excludedByFilter),
     ];
-    const registeredAll = before.get('css-generic-all');
-    before.delete('css-generic-all'); // Important!
     const directiveAll = {
         id: 'css-generic-all',
         js,
         allFrames: true,
+        matchOriginAsFallback: true,
         matches: [ '<all_urls>' ],
         runAt: 'document_start',
     };
@@ -564,39 +569,22 @@ function registerGeneric(context, genericDetails) {
         directiveAll.excludeMatches = excludeMatches;
     }
 
-    if ( registeredAll === undefined ) { // register
-        context.toAdd.push(directiveAll);
-    } else if ( // update
-        ut.strArrayEq(registeredAll.js, js, false) === false ||
-        ut.strArrayEq(registeredAll.excludeMatches, directiveAll.excludeMatches) === false
-    ) {
-        context.toRemove.push('css-generic-all');
-        context.toAdd.push(directiveAll);
-    }
+    reconcileContentScript(context, directiveAll);
     const matches = [
         ...ut.matchesFromHostnames(
             ut.subtractHostnameIters(includedByFilter, excludedByMode)
         ),
     ];
     if ( matches.length === 0 ) { return; }
-    const registeredSome = before.get('css-generic-some');
-    before.delete('css-generic-some'); // Important!
     const directiveSome = {
         id: 'css-generic-some',
         js,
         allFrames: true,
+        matchOriginAsFallback: true,
         matches,
         runAt: 'document_idle',
     };
-    if ( registeredSome === undefined ) { // register
-        context.toAdd.push(directiveSome);
-    } else if ( // update
-        ut.strArrayEq(registeredSome.js, js, false) === false ||
-        ut.strArrayEq(registeredSome.matches, directiveSome.matches) === false
-    ) {
-        context.toRemove.push('css-generic-some');
-        context.toAdd.push(directiveSome);
-    }
+    reconcileContentScript(context, directiveSome);
 }
 
 /******************************************************************************/
@@ -639,49 +627,25 @@ function registerProcedural(context) {
         }
     }
 
-    const registered = before.get('css-procedural');
-    before.delete('css-procedural'); // Important!
-
     const directive = {
         id: 'css-procedural',
         js,
         matches,
         allFrames: true,
+        matchOriginAsFallback: true,
         runAt: 'document_start',
     };
     if ( excludeMatches.length !== 0 ) {
         directive.excludeMatches = excludeMatches;
     }
 
-    // register
-    if ( registered === undefined ) {
-        context.toAdd.push(directive);
-        return;
-    }
-
-    // update
-    if (
-        ut.strArrayEq(registered.js, js, false) === false ||
-        ut.strArrayEq(registered.matches, matches) === false ||
-        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false
-    ) {
-        context.toRemove.push('css-procedural');
-        context.toAdd.push(directive);
-    }
+    reconcileContentScript(context, directive);
 }
 
 /******************************************************************************/
 
 async function registerSpecific(context) {
-    const { before, filteringModeDetails, rulesetsDetails } = context;
-
-    {
-        const keys = await localKeys() || [];
-        await Promise.all([
-            localRemove(keys.filter(a => a.startsWith('css.specific.'))),
-            localRemove(keys.filter(a => a.startsWith('css.procedural.'))),
-        ]);
-    }
+    const { filteringModeDetails, rulesetsDetails } = context;
 
     const rulesetIds = [];
     for ( const rulesetDetails of rulesetsDetails ) {
@@ -689,26 +653,19 @@ async function registerSpecific(context) {
         if ( count === 0 ) { continue; }
         rulesetIds.push(rulesetDetails.id);
     }
-    if ( rulesetIds.length === 0 ) { return; }
-
     const { none, basic, optimal, complete } = filteringModeDetails;
     const matches = [
         ...ut.matchesFromHostnames(optimal),
         ...ut.matchesFromHostnames(complete),
     ];
-    if ( matches.length === 0 ) { return; }
-
-    {
-        const promises = [];
-        for ( const id of rulesetIds ) {
-            promises.push(
-                fetchJSON(`/rulesets/scripting/specific/${id}`).then(data => {
-                    return localWrite(`css.specific.${id}`, data);
-                })
-            );
-        }
-        await Promise.all(promises);
+    if ( rulesetIds.length === 0 || matches.length === 0 ) {
+        context.specificCosmeticKeepKeys = [];
+        return;
     }
+
+    const prepared = await prepareSpecificCosmeticData(rulesetIds);
+    context.specificCosmeticKeepKeys = prepared.keepKeys;
+    context.cosmeticDataChanged ||= prepared.changed;
 
     normalizeMatches(matches);
 
@@ -728,35 +685,19 @@ async function registerSpecific(context) {
         excludeMatches.push(...ut.matchesFromHostnames(basic));
     }
 
-    const registered = before.get('css-specific');
-    before.delete('css-specific'); // Important!
-
     const directive = {
         id: 'css-specific',
         js,
         matches,
         allFrames: true,
+        matchOriginAsFallback: true,
         runAt: 'document_start',
     };
     if ( excludeMatches.length !== 0 ) {
         directive.excludeMatches = excludeMatches;
     }
 
-    // register
-    if ( registered === undefined ) {
-        context.toAdd.push(directive);
-        return;
-    }
-
-    // update
-    if (
-        ut.strArrayEq(registered.js, js, false) === false ||
-        ut.strArrayEq(registered.matches, matches) === false ||
-        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false
-    ) {
-        context.toRemove.push('css-specific');
-        context.toAdd.push(directive);
-    }
+    reconcileContentScript(context, directive);
 }
 
 /******************************************************************************/
@@ -779,13 +720,13 @@ function registerScriptlet(context, scriptletDetails) {
     ];
 
     for ( const rulesetId of rulesetsDetails.map(v => v.id) ) {
+        if ( rulesetId === 'talon-site-fixes' ) { continue; }
         const worlds = scriptletDetails.get(rulesetId);
         if ( worlds instanceof Object === false ) { continue; }
 
         for ( const world of Object.keys(worlds) ) {
             if ( world !== 'MAIN' && world !== 'ISOLATED' ) { continue; }
             const id = `${rulesetId}.${world.toLowerCase()}`;
-            const registered = before.get(id);
             const hostnames = Array.isArray(worlds[world]) ? worlds[world] : [];
 
             const matches = [];
@@ -813,8 +754,6 @@ function registerScriptlet(context, scriptletDetails) {
             matches.push(...ut.matchesFromHostnames(targetHostnames));
             normalizeMatches(matches);
 
-            before.delete(id); // Important!
-
             const directive = {
                 id,
                 js: [ `/rulesets/scripting/scriptlet/${world.toLowerCase()}/${rulesetId}.js` ],
@@ -828,25 +767,27 @@ function registerScriptlet(context, scriptletDetails) {
                 directive.excludeMatches = excludeMatches;
             }
 
-            // register
+            const registered = before.get(id);
+            before.delete(id);
             if ( registered === undefined ) {
                 context.toAdd.push(directive);
+                recordPackagedStaticScriptletReloadTransition(
+                    context.remoteScriptletReloadHint,
+                    undefined,
+                    directive
+                );
                 continue;
             }
-
-            // update
-            if (
-                ut.strArrayEq(registered.matches, matches) === false ||
-                ut.strArrayEq(registered.excludeMatches, excludeMatches) === false ||
-                ut.strArrayEq(registered.js, directive.js, false) === false ||
-                registered.allFrames !== directive.allFrames ||
-                registered.world !== directive.world ||
-                Boolean(registered.matchOriginAsFallback) !==
-                    Boolean(directive.matchOriginAsFallback)
-            ) {
-                context.toRemove.push(id);
-                context.toAdd.push(directive);
+            if ( contentScriptRegistrationsEqual(registered, directive) ) {
+                continue;
             }
+            context.toRemove.push(id);
+            context.toAdd.push(directive);
+            recordPackagedStaticScriptletReloadTransition(
+                context.remoteScriptletReloadHint,
+                registered,
+                directive
+            );
         }
     }
 }
@@ -926,8 +867,6 @@ function registerRemoteScriptlets(context, scriptletDetails) {
         if ( matches.length === 0 ) { continue; }
         normalizeMatches(matches);
 
-        before.delete(id); // Important!
-
         const directive = {
             id,
             js: [ getScriptletPath(baseId) ],
@@ -941,27 +880,52 @@ function registerRemoteScriptlets(context, scriptletDetails) {
             directive.excludeMatches = excludeMatches;
         }
 
+        before.delete(id);
         if ( registered === undefined ) {
             context.toAdd.push(directive);
             context.remoteScriptletReloadHint.after.push(directive);
             continue;
         }
 
-        if (
-            ut.strArrayEq(registered.matches, matches) === false ||
-            ut.strArrayEq(registered.excludeMatches, excludeMatches) === false ||
-            ut.strArrayEq(registered.js, directive.js, false) === false ||
-            registered.allFrames !== directive.allFrames ||
-            registered.world !== directive.world ||
-            Boolean(registered.matchOriginAsFallback) !==
-                Boolean(directive.matchOriginAsFallback)
-        ) {
+        if ( contentScriptRegistrationsEqual(registered, directive) === false ) {
             context.toRemove.push(id);
             context.toAdd.push(directive);
             context.remoteScriptletReloadHint.before.push(registered);
             context.remoteScriptletReloadHint.after.push(directive);
         }
     }
+}
+
+/******************************************************************************/
+
+function registerTalonSiteFixesMain(context) {
+    const enabled = context.rulesetsDetails.some(
+        details => details.id === 'talon-site-fixes'
+    );
+    if ( enabled === false ) { return; }
+
+    const { none } = context.filteringModeDetails;
+    // Player-host registrations are meaningful only when embedded by the
+    // French Stream top-level site. If that source site is allowlisted, omit
+    // the entire lane so cross-origin player frames cannot bypass the choice.
+    if ( modeSetCoversHostname(none, 'french-stream.one') ) { return; }
+    const targetHostnames = TALON_SITE_FIX_HOSTNAMES.filter(
+        hostname => modeSetCoversHostname(none, hostname) === false
+    );
+    if ( targetHostnames.length === 0 ) { return; }
+
+    const directive = {
+        id: TALON_SITE_FIXES_MAIN_ID,
+        js: [ TALON_SITE_FIXES_MAIN_PATH ],
+        matches: ut.matchesFromHostnames(targetHostnames),
+        allFrames: true,
+        runAt: 'document_start',
+        world: 'MAIN',
+    };
+    if ( none.size !== 0 ) {
+        directive.excludeMatches = ut.matchesFromHostnames(none);
+    }
+    reconcileContentScript(context, directive);
 }
 
 /******************************************************************************/
@@ -973,6 +937,7 @@ function registerNativeHeuristics(context) {
         TALON_PUBLIC_SUFFIX_DATA_PATH,
         '/shared/site-key-resolver.js',
         '/js/scripting/breakage-guard.js',
+        TALON_COOPERATIVE_SCHEDULER_PATH,
         TALON_SHADOW_DOM_HELPER_PATH,
         TALON_BLOCK_HINTS_PATH,
         '/js/scripting/native-heuristics.js',
@@ -999,14 +964,10 @@ function registerNativeHeuristics(context) {
         subsystemSuppressionHostnames?.nativeHeuristics
     );
 
-    const registered = before.get('native-heuristics');
-    before.delete('native-heuristics'); // Important!
-
     const directive = {
         id: 'native-heuristics',
         js,
-        allFrames: true,
-        matchOriginAsFallback: true,
+        allFrames: false,
         matches,
         runAt: 'document_idle',
     };
@@ -1014,40 +975,49 @@ function registerNativeHeuristics(context) {
         directive.excludeMatches = excludeMatches;
     }
 
-    if ( registered === undefined ) {
-        context.toAdd.push(directive);
-        return;
-    }
-
-    if (
-        ut.strArrayEq(registered.js, js, false) === false ||
-        ut.strArrayEq(registered.matches, matches) === false ||
-        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false ||
-        Boolean(registered.matchOriginAsFallback) !==
-            Boolean(directive.matchOriginAsFallback)
-    ) {
-        context.toRemove.push('native-heuristics');
-        context.toAdd.push(directive);
-    }
+    reconcileContentScript(context, directive);
 }
 
 /******************************************************************************/
 
 function registerAutomation(context) {
-    const { before, filteringModeDetails, subsystemSuppressionHostnames } = context;
+    const {
+        filteringModeDetails,
+        subsystemSuppressionHostnames,
+        rulesetsDetails,
+        remoteAutomationDirectives,
+    } = context;
+
+    const enabledRulesetIds = new Set(
+        rulesetsDetails.map(details => details?.id).filter(Boolean)
+    );
+    const packagedAutomationActive =
+        enabledRulesetIds.has('annoyances-overlays');
+    const remoteAutomationMatches = getRemoteAutomationRegistrationMatches(
+        remoteAutomationDirectives,
+        enabledRulesetIds,
+        filteringModeDetails
+    );
+    if (
+        packagedAutomationActive === false &&
+        remoteAutomationMatches.length === 0
+    ) { return; }
 
     const js = [
         '/js/scripting/breakage-guard.js',
+        TALON_COOPERATIVE_SCHEDULER_PATH,
         TALON_SHADOW_DOM_HELPER_PATH,
         TALON_BLOCK_HINTS_PATH,
         '/js/scripting/automation.js',
     ];
 
     const { none, basic, optimal, complete } = filteringModeDetails;
-    const matches = [
-        ...ut.matchesFromHostnames(optimal),
-        ...ut.matchesFromHostnames(complete),
-    ];
+    const matches = packagedAutomationActive
+        ? [
+            ...ut.matchesFromHostnames(optimal),
+            ...ut.matchesFromHostnames(complete),
+        ]
+        : remoteAutomationMatches;
     if ( matches.length === 0 ) { return; }
 
     normalizeMatches(matches);
@@ -1064,14 +1034,10 @@ function registerAutomation(context) {
         subsystemSuppressionHostnames?.automation
     );
 
-    const registered = before.get('automation');
-    before.delete('automation'); // Important!
-
     const directive = {
         id: 'automation',
         js,
-        allFrames: true,
-        matchOriginAsFallback: true,
+        allFrames: false,
         matches,
         runAt: 'document_idle',
     };
@@ -1079,21 +1045,7 @@ function registerAutomation(context) {
         directive.excludeMatches = excludeMatches;
     }
 
-    if ( registered === undefined ) {
-        context.toAdd.push(directive);
-        return;
-    }
-
-    if (
-        ut.strArrayEq(registered.js, js, false) === false ||
-        ut.strArrayEq(registered.matches, matches) === false ||
-        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false ||
-        Boolean(registered.matchOriginAsFallback) !==
-            Boolean(directive.matchOriginAsFallback)
-    ) {
-        context.toRemove.push('automation');
-        context.toAdd.push(directive);
-    }
+    reconcileContentScript(context, directive);
 }
 
 /******************************************************************************/
@@ -1225,13 +1177,10 @@ function registerAdShellStyles(context) {
         subsystemSuppressionHostnames?.adShellStyles
     );
 
-    const registered = before.get('ad-shell-styles');
-    before.delete('ad-shell-styles'); // Important!
-
     const directive = {
         id: 'ad-shell-styles',
         js,
-        allFrames: true,
+        allFrames: false,
         matches,
         runAt: 'document_start',
     };
@@ -1239,19 +1188,7 @@ function registerAdShellStyles(context) {
         directive.excludeMatches = excludeMatches;
     }
 
-    if ( registered === undefined ) {
-        context.toAdd.push(directive);
-        return;
-    }
-
-    if (
-        ut.strArrayEq(registered.js, js, false) === false ||
-        ut.strArrayEq(registered.matches, matches) === false ||
-        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false
-    ) {
-        context.toRemove.push('ad-shell-styles');
-        context.toAdd.push(directive);
-    }
+    reconcileContentScript(context, directive);
 }
 
 /******************************************************************************/
@@ -1268,6 +1205,7 @@ function registerRemoteCosmetics(context) {
         TALON_PUBLIC_SUFFIX_DATA_PATH,
         '/shared/site-key-resolver.js',
         '/js/scripting/breakage-guard.js',
+        TALON_COOPERATIVE_SCHEDULER_PATH,
         TALON_SHADOW_DOM_HELPER_PATH,
         TALON_BLOCK_HINTS_PATH,
         '/js/scripting/remote-cosmetics.js',
@@ -1320,13 +1258,10 @@ function registerRemoteCosmetics(context) {
         }
         if ( registeredGlobal === undefined ) {
             context.toAdd.push(globalDirective);
-        } else if (
-            ut.strArrayEq(registeredGlobal.js, globalDirective.js, false) === false ||
-            ut.strArrayEq(registeredGlobal.matches, broadMatches) === false ||
-            ut.strArrayEq(registeredGlobal.excludeMatches, excludeMatches) === false ||
-            Boolean(registeredGlobal.matchOriginAsFallback) !==
-                Boolean(globalDirective.matchOriginAsFallback)
-        ) {
+        } else if ( contentScriptRegistrationsEqual(
+            registeredGlobal,
+            globalDirective
+        ) === false ) {
             context.toRemove.push('remote-cosmetics-global');
             context.toAdd.push(globalDirective);
         }
@@ -1357,13 +1292,10 @@ function registerRemoteCosmetics(context) {
         }
         if ( registeredHost === undefined ) {
             context.toAdd.push(hostDirective);
-        } else if (
-            ut.strArrayEq(registeredHost.js, hostDirective.js, false) === false ||
-            ut.strArrayEq(registeredHost.matches, hostMatches) === false ||
-            ut.strArrayEq(registeredHost.excludeMatches, excludeMatches) === false ||
-            Boolean(registeredHost.matchOriginAsFallback) !==
-                Boolean(hostDirective.matchOriginAsFallback)
-        ) {
+        } else if ( contentScriptRegistrationsEqual(
+            registeredHost,
+            hostDirective
+        ) === false ) {
             context.toRemove.push('remote-cosmetics-host');
             context.toAdd.push(hostDirective);
         }
@@ -1379,6 +1311,7 @@ function registerPostHideCleanup(context) {
 
     const js = [
         '/js/scripting/breakage-guard.js',
+        TALON_COOPERATIVE_SCHEDULER_PATH,
         TALON_SHADOW_DOM_HELPER_PATH,
         TALON_BLOCK_HINTS_PATH,
         '/js/scripting/post-hide-cleanup.js',
@@ -1405,14 +1338,10 @@ function registerPostHideCleanup(context) {
         subsystemSuppressionHostnames?.postHideCleanup
     );
 
-    const registered = before.get('post-hide-cleanup');
-    before.delete('post-hide-cleanup'); // Important!
-
     const directive = {
         id: 'post-hide-cleanup',
         js,
-        allFrames: true,
-        matchOriginAsFallback: true,
+        allFrames: false,
         matches,
         runAt: 'document_start',
     };
@@ -1420,21 +1349,7 @@ function registerPostHideCleanup(context) {
         directive.excludeMatches = excludeMatches;
     }
 
-    if ( registered === undefined ) {
-        context.toAdd.push(directive);
-        return;
-    }
-
-    if (
-        ut.strArrayEq(registered.js, js, false) === false ||
-        ut.strArrayEq(registered.matches, matches) === false ||
-        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false ||
-        Boolean(registered.matchOriginAsFallback) !==
-            Boolean(directive.matchOriginAsFallback)
-    ) {
-        context.toRemove.push('post-hide-cleanup');
-        context.toAdd.push(directive);
-    }
+    reconcileContentScript(context, directive);
 }
 
 /******************************************************************************/
@@ -1460,7 +1375,9 @@ const writeInjectableSyncDiagnostics = async result => {
             : '',
         recoveryResetCount: Math.max(0, Number(result.recoveryResetCount) || 0),
         toAddCount: Math.max(0, Number(result.toAddCount) || 0),
+        toUpdateCount: Math.max(0, Number(result.toUpdateCount) || 0),
         toRemoveCount: Math.max(0, Number(result.toRemoveCount) || 0),
+        uncertain: result.uncertain === true,
         registeredTacticsHostCount: Math.max(
             0,
             Number(result.registeredTacticsHostCount) || 0
@@ -1511,7 +1428,7 @@ const buildInjectablesRegistrationPlan = async () => {
         genericDetails,
         remoteCosmetics,
         remoteScriptlets,
-        autoGenericHighHosts,
+        remoteAutomationDirectives,
         subsystemSuppressionHostnames,
         registered,
     ] = await Promise.all([
@@ -1533,7 +1450,14 @@ const buildInjectablesRegistrationPlan = async () => {
             ],
             'registerInjectables/remote-scriptlets'
         ),
-        readActiveAutoGenericHighHosts(),
+        readMergedLocalArrays(
+            [
+                PUBLIC_REMOTE_DIRECTIVES_KEY,
+                PRIVATE_REMOTE_DIRECTIVES_KEY,
+                LEGACY_REMOTE_DIRECTIVES_KEY,
+            ],
+            'registerInjectables/remote-directives'
+        ),
         readActiveSubsystemSuppressionHostnames(),
         browser.scripting.getRegisteredContentScripts(),
     ]);
@@ -1552,22 +1476,22 @@ const buildInjectablesRegistrationPlan = async () => {
         toRemove,
         remoteCosmetics: remoteCosmetics instanceof Object ? remoteCosmetics : null,
         remoteScriptlets,
-        autoGenericHighHosts:
-            autoGenericHighHosts instanceof Set
-                ? autoGenericHighHosts
-                : new Set(),
+        remoteAutomationDirectives,
         subsystemSuppressionHostnames,
         remoteScriptletReloadHint: {
             before: [],
             after: [],
         },
         registeredTacticsHostCount: 0,
+        specificCosmeticKeepKeys: [],
+        cosmeticDataChanged: false,
     };
 
     await Promise.all([
         registerProcedural(context),
         registerScriptlet(context, scriptletDetails),
         registerRemoteScriptlets(context, scriptletTokenDetails),
+        registerTalonSiteFixesMain(context),
         registerPreventPopup(context),
         registerSpecific(context),
         registerNativeHeuristics(context),
@@ -1578,14 +1502,20 @@ const buildInjectablesRegistrationPlan = async () => {
         registerRemoteCosmetics(context),
         registerPostHideCleanup(context),
         registerGeneric(context, genericDetails),
-        registerHighGeneric(context, genericDetails),
         registerCustomFilters(context),
         registerToolbarIconToggler(context),
     ]);
 
     for ( const [id, entry] of before ) {
-        if ( isRemoteScriptletDirectiveId(id) === false ) { continue; }
-        context.remoteScriptletReloadHint.before.push(entry);
+        if ( isRemoteScriptletDirectiveId(id) ) {
+            context.remoteScriptletReloadHint.before.push(entry);
+            continue;
+        }
+        recordPackagedStaticScriptletReloadTransition(
+            context.remoteScriptletReloadHint,
+            entry,
+            undefined
+        );
     }
     toRemove.push(...Array.from(before.keys()));
     return {
@@ -1595,10 +1525,122 @@ const buildInjectablesRegistrationPlan = async () => {
         remoteScriptletReloadHint: normalizeRemoteScriptletReloadHint(
             context.remoteScriptletReloadHint
         ),
+        specificCosmeticKeepKeys: context.specificCosmeticKeepKeys,
+        cosmeticDataChanged: context.cosmeticDataChanged,
+    };
+};
+
+const registrationPlanHasMutations = plan =>
+    Array.isArray(plan?.toAdd) && plan.toAdd.length !== 0 ||
+    Array.isArray(plan?.toUpdate) && plan.toUpdate.length !== 0 ||
+    Array.isArray(plan?.toRemove) && plan.toRemove.length !== 0;
+
+const buildInjectablesRegistrationPlanWithCacheMarker = async () => {
+    const plan = await buildInjectablesRegistrationPlan();
+    if (
+        registrationPlanHasMutations(plan) ||
+        plan?.cosmeticDataChanged === true
+    ) {
+        // This runs after the authoritative plan has been built but before any
+        // Chrome registration mutation is attempted.
+        if ( typeof browser.storage?.local?.set !== 'function' ) {
+            throw new Error('local storage API unavailable');
+        }
+        const markerPatch = { [CSS_CACHE_DIRTY_KEY]: true };
+        if ( plan.remoteScriptletReloadHint instanceof Object ) {
+            if ( typeof browser.storage.local.get !== 'function' ) {
+                throw new Error('local storage read API unavailable');
+            }
+            const pendingBin = await browser.storage.local.get(
+                PENDING_REMOTE_SCRIPTLET_RELOAD_HINT_KEY
+            );
+            markerPatch[PENDING_REMOTE_SCRIPTLET_RELOAD_HINT_KEY] =
+                mergeRemoteScriptletReloadHints(
+                    pendingBin?.[PENDING_REMOTE_SCRIPTLET_RELOAD_HINT_KEY],
+                    plan.remoteScriptletReloadHint
+                );
+        }
+        await browser.storage.local.set(markerPatch);
+    }
+    return plan;
+};
+
+const createContentScriptRegistrationMutationJournal = () => {
+    let active = false;
+    return {
+        async recover() {
+            const marker = await readOptionalLocalValue(
+                CONTENT_SCRIPT_REGISTRATION_MUTATION_JOURNAL_KEY,
+                false,
+                `registerInjectables/${CONTENT_SCRIPT_REGISTRATION_MUTATION_JOURNAL_KEY}`
+            );
+            if ( marker === false || marker === undefined ) { return false; }
+            active = true;
+            if (
+                typeof browser.scripting?.unregisterContentScripts !==
+                    'function'
+            ) {
+                throw new Error('content-script unregister API unavailable');
+            }
+            // Chrome's listing API omits IDs which are still being validated.
+            // The no-argument form cancels both loaded and pending dynamic IDs.
+            await browser.scripting.unregisterContentScripts();
+            return true;
+        },
+        async mark(details = {}) {
+            if ( typeof browser.storage?.local?.set !== 'function' ) {
+                throw new Error('local storage API unavailable');
+            }
+            await browser.storage.local.set({
+                [CONTENT_SCRIPT_REGISTRATION_MUTATION_JOURNAL_KEY]: {
+                    schema: 1,
+                    updatedAt: Date.now(),
+                    phase: typeof details.phase === 'string'
+                        ? details.phase
+                        : '',
+                    toAddCount: Math.max(0, Number(details.toAddCount) || 0),
+                    toUpdateCount:
+                        Math.max(0, Number(details.toUpdateCount) || 0),
+                    toRemoveCount:
+                        Math.max(0, Number(details.toRemoveCount) || 0),
+                },
+            });
+            active = true;
+        },
+        async verify() {
+            if ( active === false ) { return true; }
+            const plan = await buildInjectablesRegistrationPlan();
+            return registrationPlanHasMutations(plan) === false;
+        },
+        async clear() {
+            if ( typeof browser.storage?.local?.remove !== 'function' ) {
+                throw new Error('local storage API unavailable');
+            }
+            await browser.storage.local.remove(
+                CONTENT_SCRIPT_REGISTRATION_MUTATION_JOURNAL_KEY
+            );
+            active = false;
+        },
     };
 };
 
 const registerInjectablesImpl = async () => {
+    if ( injectableRegistrationSuspended ) {
+        return {
+            ok: false,
+            skipped: 'suspended',
+            updatedAt: Date.now(),
+            attemptedRecovery: false,
+            recovered: false,
+            initialError: '',
+            lastError: '',
+            recoveryResetError: '',
+            recoveryResetCount: 0,
+            toAddCount: 0,
+            toUpdateCount: 0,
+            toRemoveCount: 0,
+        };
+    }
     if ( browser.scripting === undefined ) {
         const unsupported = {
             ok: false,
@@ -1610,15 +1652,23 @@ const registerInjectablesImpl = async () => {
             recoveryResetError: '',
             recoveryResetCount: 0,
             toAddCount: 0,
+            toUpdateCount: 0,
             toRemoveCount: 0,
         };
         await writeInjectableSyncDiagnostics(unsupported);
         return unsupported;
     }
 
-    const result = await runInjectableRegistrationFlow({
-        buildPlan: buildInjectablesRegistrationPlan,
+    const registrationMutationJournal =
+        createContentScriptRegistrationMutationJournal();
+    let result = await runInjectableRegistrationFlow({
+        buildPlan: buildInjectablesRegistrationPlanWithCacheMarker,
         listRegistered: () => browser.scripting.getRegisteredContentScripts(),
+        updateContentScripts: async entries => {
+            if ( entries.length === 0 ) { return; }
+            ubolLog(`Updated ${entries.map(entry => entry.id)} content (css/js)`);
+            await browser.scripting.updateContentScripts(entries);
+        },
         unregisterContentScripts: async ids => {
             if ( ids.length === 0 ) { return; }
             ubolLog(`Unregistered ${ids} content (css/js)`);
@@ -1629,23 +1679,71 @@ const registerInjectablesImpl = async () => {
             ubolLog(`Registered ${entries.map(entry => entry.id)} content (css/js)`);
             await browser.scripting.registerContentScripts(entries);
         },
+        registrationMutationJournal,
         operationTimeoutMs: INJECTABLE_REGISTRATION_OPERATION_TIMEOUT_MS,
     });
     if ( result.ok === true ) {
-        await Promise.all([
-            localRemove('$scripting.unregisterContentScripts').catch(() => {}),
-            localRemove('$scripting.registerContentScripts').catch(() => {}),
-            resetCSSCache().catch(() => {}),
-        ]);
+        uncertainReconcileScheduled = false;
+        const registrationsChanged =
+            result.toAddCount !== 0 ||
+            result.toUpdateCount !== 0 ||
+            result.toRemoveCount !== 0;
+        try {
+            const cssCacheDirtyValue = await readOptionalLocalValue(
+                CSS_CACHE_DIRTY_KEY,
+                false,
+                `registerInjectables/${CSS_CACHE_DIRTY_KEY}`
+            );
+            const cssCacheDirty =
+                cssCacheDirtyValue !== undefined && cssCacheDirtyValue !== false;
+            if ( cssCacheDirty || registrationsChanged || result.cosmeticDataChanged ) {
+                await cleanupSpecificCosmeticData(
+                    result.specificCosmeticKeepKeys
+                );
+                await resetCSSCache();
+                if ( typeof browser.storage?.local?.remove !== 'function' ) {
+                    throw new Error('local storage API unavailable');
+                }
+                await browser.storage.local.remove(CSS_CACHE_DIRTY_KEY);
+            }
+            await Promise.all([
+                localRemove('$scripting.unregisterContentScripts').catch(() => {}),
+                localRemove('$scripting.registerContentScripts').catch(() => {}),
+                localRemove('$scripting.updateContentScripts').catch(() => {}),
+            ]);
+        } catch (reason) {
+            result = {
+                ...result,
+                ok: false,
+                lastError: `post-registration cosmetic cleanup: ${reason}`,
+            };
+        }
+    } else if ( result.uncertain && uncertainReconcileScheduled === false ) {
+        uncertainReconcileScheduled = true;
+        waitForTimedOutRegistrationOperations().then(() => {
+            // The deferred call owns a fresh timeout/reconciliation cycle. A
+            // second timeout must be allowed to schedule its own waiter.
+            uncertainReconcileScheduled = false;
+            return registerInjectables();
+        }).catch(reason => {
+            uncertainReconcileScheduled = false;
+            ubolErr(`deferred injectable reconciliation/${reason}`);
+        });
     }
     await writeInjectableSyncDiagnostics(result);
     logInjectableSyncResult(result);
     return result;
 };
 
-const registerInjectablesRunner = createSingleFlightRunner(registerInjectablesImpl);
+const registerInjectablesRunner = createSingleFlightRunner(
+    registerInjectablesImpl,
+    { trailing: true }
+);
 
 async function registerInjectables() {
+    if ( injectableRegistrationSuspended ) {
+        return registerInjectablesImpl();
+    }
     if ( browser.scripting === undefined ) {
         return {
             ok: false,
@@ -1657,16 +1755,27 @@ async function registerInjectables() {
             recoveryResetError: '',
             recoveryResetCount: 0,
             toAddCount: 0,
+            toUpdateCount: 0,
             toRemoveCount: 0,
         };
     }
     return registerInjectablesRunner();
 }
 
+const setInjectableRegistrationSuspended = value => {
+    injectableRegistrationSuspended = value === true;
+};
+
+const waitForInjectableRegistrationIdle = () =>
+    registerInjectablesRunner.waitForIdle();
+
 /******************************************************************************/
 
 export {
+    CONTENT_SCRIPT_REGISTRATION_MUTATION_JOURNAL_KEY,
     INJECTABLE_SYNC_DIAGNOSTICS_KEY,
     readInjectableSyncDiagnostics,
-    registerInjectables
+    registerInjectables,
+    setInjectableRegistrationSuspended,
+    waitForInjectableRegistrationIdle,
 };

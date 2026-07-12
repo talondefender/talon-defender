@@ -38,17 +38,30 @@ const hostnameFromUrl = url => {
 
 const hostname = document.location.hostname;
 const referrerHostname = hostnameFromUrl(document.referrer);
-const isFrenchStreamPage = frenchStreamHostnames.has(hostname);
+const matchesHostname = (candidate, root) =>
+    candidate === root || candidate.endsWith(`.${root}`);
+const isFrenchStreamPlayerHostname = candidate =>
+    Array.from(frenchStreamPlayerHostnames).some(
+        root => matchesHostname(candidate, root)
+    );
+const isFrenchStreamPage = Array.from(frenchStreamHostnames).some(
+    root => matchesHostname(hostname, root)
+);
 const isFrenchStreamPlayerFrame =
-    frenchStreamPlayerHostnames.has(hostname) &&
-    frenchStreamHostnames.has(referrerHostname);
+    isFrenchStreamPlayerHostname(hostname) &&
+    Array.from(frenchStreamHostnames).some(root => matchesHostname(referrerHostname, root));
 
 if ( isFrenchStreamPage === false && isFrenchStreamPlayerFrame === false ) {
+    return;
+}
+if ( self.TalonFrenchStreamSiteFixController?.refresh instanceof Function ) {
+    self.TalonFrenchStreamSiteFixController.refresh();
     return;
 }
 if ( self.__talonFrenchStreamPopupGuard === true ) { return; }
 Object.defineProperty(self, '__talonFrenchStreamPopupGuard', {
     value: true,
+    configurable: true,
 });
 
 const nativeOpen = self.open;
@@ -62,6 +75,34 @@ const nativeElementRequestFullscreen = Element.prototype.requestFullscreen;
 const nativeElementWebkitRequestFullscreen = Element.prototype.webkitRequestFullscreen;
 const nativeElementMozRequestFullScreen = Element.prototype.mozRequestFullScreen;
 const nativeElementMsRequestFullscreen = Element.prototype.msRequestFullscreen;
+const patchedProperties = [
+    [ Window.prototype, 'open' ],
+    [ self, 'open' ],
+    [ HTMLAnchorElement.prototype, 'target' ],
+    [ HTMLFormElement.prototype, 'target' ],
+    [ HTMLBaseElement.prototype, 'target' ],
+    [ HTMLAnchorElement.prototype, 'setAttribute' ],
+    [ HTMLFormElement.prototype, 'setAttribute' ],
+    [ HTMLBaseElement.prototype, 'setAttribute' ],
+    [ HTMLAnchorElement.prototype, 'click' ],
+    [ HTMLFormElement.prototype, 'submit' ],
+    [ HTMLFormElement.prototype, 'requestSubmit' ],
+    [ Window.prototype, 'postMessage' ],
+    [ Element.prototype, 'requestFullscreen' ],
+    [ Element.prototype, 'webkitRequestFullscreen' ],
+    [ Element.prototype, 'mozRequestFullScreen' ],
+    [ Element.prototype, 'msRequestFullscreen' ],
+];
+const originalPropertyDescriptors = patchedProperties.map(([ target, property ]) => ({
+    target,
+    property,
+    descriptor: Object.getOwnPropertyDescriptor(target, property),
+}));
+const ownedListeners = [];
+const listen = (target, type, handler, options) => {
+    target.addEventListener(type, handler, options);
+    ownedListeners.push({ target, type, handler, options });
+};
 const noopWindow = {
     closed: false,
     close() { this.closed = true; },
@@ -393,7 +434,7 @@ const preventUnsolicitedFullscreenMessage = ev => {
     const data = parseMessageData(ev.data);
     if (
         data?.__talonFrenchStreamFullscreenIntent === true &&
-        frenchStreamPlayerHostnames.has(originHostnameFromEvent(ev))
+        isFrenchStreamPlayerHostname(originHostnameFromEvent(ev))
     ) {
         recordFullscreenIntent();
         ev.stopImmediatePropagation();
@@ -401,7 +442,7 @@ const preventUnsolicitedFullscreenMessage = ev => {
     }
     if (
         isFrenchStreamPage &&
-        frenchStreamPlayerHostnames.has(originHostnameFromEvent(ev)) &&
+        isFrenchStreamPlayerHostname(originHostnameFromEvent(ev)) &&
         data?.action === 'enter_fullscreen' &&
         hasRecentFullscreenIntent() === false
     ) {
@@ -415,7 +456,7 @@ const shouldBlockFullscreenRequest = element => {
     if ( element instanceof HTMLIFrameElement === false ) { return false; }
     if ( element.id !== 'video-iframe' ) { return false; }
     const frameHostname = hostnameFromUrl(element.getAttribute('src') || element.src || '');
-    if ( frenchStreamPlayerHostnames.has(frameHostname) === false ) { return false; }
+    if ( isFrenchStreamPlayerHostname(frameHostname) === false ) { return false; }
     return hasRecentFullscreenIntent() === false;
 };
 
@@ -451,12 +492,17 @@ const removeStartupFlickerFrames = ( ) => {
 };
 
 const hidePopupOverlays = ( ) => {
+    const styleMarker = 'data-talon-owned-french-stream-popup-style';
+    const existingStyle = document.querySelector(`style[${styleMarker}="1"]`);
     if (
         document.documentElement instanceof Element &&
-        document.getElementById('talon-french-stream-popup-style') === null
+        existingStyle === null
     ) {
         const style = document.createElement('style');
-        style.id = 'talon-french-stream-popup-style';
+        if ( document.getElementById('talon-french-stream-popup-style') === null ) {
+            style.id = 'talon-french-stream-popup-style';
+        }
+        style.setAttribute(styleMarker, '1');
         style.textContent = [
             '#dontfoid{',
             'display:none!important;',
@@ -485,14 +531,22 @@ const hidePopupOverlays = ( ) => {
     removeStartupFlickerFrames();
 };
 
+let overlayObserver;
+let overlayScanTimer;
 const startOverlayObserver = ( ) => {
     hidePopupOverlays();
-    if ( self.__talonFrenchStreamOverlayObserver instanceof MutationObserver ) {
-        return;
-    }
-    const observer = new MutationObserver(hidePopupOverlays);
+    const scheduleOverlayScan = ( ) => {
+        if ( overlayScanTimer !== undefined ) { return; }
+        overlayScanTimer = self.setTimeout(() => {
+            overlayScanTimer = undefined;
+            hidePopupOverlays();
+        }, 50);
+    };
+    const observer = new MutationObserver(scheduleOverlayScan);
+    overlayObserver = observer;
     Object.defineProperty(self, '__talonFrenchStreamOverlayObserver', {
         value: observer,
+        configurable: true,
     });
     const target = document.documentElement instanceof Element
         ? document.documentElement
@@ -502,7 +556,7 @@ const startOverlayObserver = ( ) => {
         subtree: true,
     });
     if ( target === document ) {
-        document.addEventListener('DOMContentLoaded', ( ) => {
+        const onDOMContentLoaded = ( ) => {
             try {
                 observer.disconnect();
                 observer.observe(document.documentElement, {
@@ -512,7 +566,8 @@ const startOverlayObserver = ( ) => {
             } catch {
             }
             hidePopupOverlays();
-        }, { once: true });
+        };
+        listen(document, 'DOMContentLoaded', onDOMContentLoaded, { once: true });
     }
 };
 
@@ -641,33 +696,32 @@ if ( typeof nativeWindowPostMessage === 'function' ) {
 }
 
 for ( const eventName of [ 'pointerdown', 'mousedown', 'touchstart', 'click', 'auxclick' ] ) {
-    document.addEventListener(eventName, preventPopupNavigation, {
+    listen(document, eventName, preventPopupNavigation, {
         capture: true,
         passive: false,
     });
 }
-window.addEventListener('message', preventUnsolicitedFullscreenMessage, true);
+listen(window, 'message', preventUnsolicitedFullscreenMessage, true);
+
+const recordTrustedPlayerGesture = ev => {
+    if ( ev.isTrusted === true ) { recordPlayerGesture(); }
+};
+const recordFrenchStreamFullscreenIntent = ev => {
+    if ( isTrustedFullscreenControlEvent(ev) ) { recordFullscreenIntent(); }
+};
 
 if ( isFrenchStreamPlayerFrame ) {
     for ( const eventName of [ 'pointerdown', 'mousedown', 'touchstart', 'click', 'auxclick' ] ) {
-        window.addEventListener(eventName, ev => {
-            if ( ev.isTrusted === true ) { recordPlayerGesture(); }
-        }, true);
-        document.addEventListener(eventName, ev => {
-            if ( ev.isTrusted === true ) { recordPlayerGesture(); }
-        }, true);
+        listen(window, eventName, recordTrustedPlayerGesture, true);
+        listen(document, eventName, recordTrustedPlayerGesture, true);
     }
-    document.addEventListener('pointerdown', recordPlayerFullscreenIntent, true);
-    document.addEventListener('click', recordPlayerFullscreenIntent, true);
+    listen(document, 'pointerdown', recordPlayerFullscreenIntent, true);
+    listen(document, 'click', recordPlayerFullscreenIntent, true);
 }
 
 if ( isFrenchStreamPage ) {
-    document.addEventListener('pointerdown', ev => {
-        if ( isTrustedFullscreenControlEvent(ev) ) { recordFullscreenIntent(); }
-    }, true);
-    document.addEventListener('click', ev => {
-        if ( isTrustedFullscreenControlEvent(ev) ) { recordFullscreenIntent(); }
-    }, true);
+    listen(document, 'pointerdown', recordFrenchStreamFullscreenIntent, true);
+    listen(document, 'click', recordFrenchStreamFullscreenIntent, true);
     wrapFullscreenRequest(nativeElementRequestFullscreen, 'requestFullscreen');
     wrapFullscreenRequest(nativeElementWebkitRequestFullscreen, 'webkitRequestFullscreen');
     wrapFullscreenRequest(nativeElementMozRequestFullScreen, 'mozRequestFullScreen');
@@ -681,7 +735,75 @@ const preventFormPopup = ev => {
     ev.stopImmediatePropagation();
 };
 
-document.addEventListener('submit', preventFormPopup, true);
+listen(document, 'submit', preventFormPopup, true);
+
+const installedPropertyDescriptors = originalPropertyDescriptors.map(entry => ({
+    ...entry,
+    installedDescriptor: Object.getOwnPropertyDescriptor(entry.target, entry.property),
+}));
+const descriptorsEqual = (left, right) => {
+    if ( left === undefined || right === undefined ) { return left === right; }
+    return left.configurable === right.configurable &&
+        left.enumerable === right.enumerable &&
+        left.writable === right.writable &&
+        left.value === right.value &&
+        left.get === right.get &&
+        left.set === right.set;
+};
+const stop = ( ) => {
+    try { overlayObserver?.disconnect(); } catch {
+    }
+    overlayObserver = undefined;
+    if ( overlayScanTimer !== undefined ) {
+        try { self.clearTimeout(overlayScanTimer); } catch {
+        }
+        overlayScanTimer = undefined;
+    }
+    for ( const { target, type, handler, options } of ownedListeners.splice(0) ) {
+        try { target.removeEventListener(type, handler, options); } catch {
+        }
+    }
+    for ( const {
+        target,
+        property,
+        descriptor,
+        installedDescriptor,
+    } of installedPropertyDescriptors ) {
+        let current;
+        try { current = Object.getOwnPropertyDescriptor(target, property); } catch {
+            continue;
+        }
+        if ( descriptorsEqual(current, installedDescriptor) === false ) { continue; }
+        try {
+            if ( descriptor === undefined ) {
+                delete target[property];
+            } else {
+                Object.defineProperty(target, property, descriptor);
+            }
+        } catch {
+        }
+    }
+    for ( const style of document.querySelectorAll(
+        'style[data-talon-owned-french-stream-popup-style="1"]'
+    ) ) {
+        try { style.remove(); } catch {
+        }
+    }
+    try { delete self.__talonFrenchStreamOverlayObserver; } catch {
+    }
+    try { delete self.__talonFrenchStreamPopupGuard; } catch {
+    }
+    try { delete self.TalonFrenchStreamSiteFixController; } catch {
+    }
+};
+
+Object.defineProperty(self, 'TalonFrenchStreamSiteFixController', {
+    configurable: true,
+    value: {
+        refresh: hidePopupOverlays,
+        stop,
+    },
+});
 
 /******************************************************************************/
 

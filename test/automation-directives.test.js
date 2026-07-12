@@ -18,6 +18,14 @@ const postHideCleanupSource = await fs.readFile(
   new URL('../js/scripting/post-hide-cleanup.js', import.meta.url),
   'utf8'
 );
+const remoteCosmeticsSource = await fs.readFile(
+  new URL('../js/scripting/remote-cosmetics.js', import.meta.url),
+  'utf8'
+);
+const remoteCosmeticsGlobalSource = await fs.readFile(
+  new URL('../js/scripting/remote-cosmetics-global.js', import.meta.url),
+  'utf8'
+);
 
 const readDirectives = async () => JSON.parse(await fs.readFile(directivesPath, 'utf8'));
 
@@ -59,19 +67,36 @@ class FakeCustomEvent {
 class FakeStyleDeclaration {
   constructor() {
     this.values = new Map();
+    this.priorities = new Map();
   }
 
-  setProperty(name, value) {
+  setProperty(name, value, priority = '') {
     const normalized = String(name || '').trim().toLowerCase();
     const camel = normalized.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
     const stringValue = String(value);
     this.values.set(normalized, stringValue);
+    this.priorities.set(normalized, String(priority || '').toLowerCase());
     this[normalized] = stringValue;
     this[camel] = stringValue;
   }
 
   getPropertyValue(name) {
     return this.values.get(String(name || '').trim().toLowerCase()) || '';
+  }
+
+  getPropertyPriority(name) {
+    return this.priorities.get(String(name || '').trim().toLowerCase()) || '';
+  }
+
+  removeProperty(name) {
+    const normalized = String(name || '').trim().toLowerCase();
+    const camel = normalized.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+    const oldValue = this.values.get(normalized) || '';
+    this.values.delete(normalized);
+    this.priorities.delete(normalized);
+    this[normalized] = '';
+    this[camel] = '';
+    return oldValue;
   }
 }
 
@@ -114,6 +139,14 @@ class FakeNode extends FakeEventTarget {
       siblings.splice(index, 1);
     }
     this.parentNode = null;
+  }
+
+  getRootNode() {
+    let current = this;
+    while (current?.parentNode) {
+      current = current.parentNode;
+    }
+    return current;
   }
 }
 
@@ -170,6 +203,10 @@ class FakeElement extends FakeNode {
     this.attributes.delete(normalized);
   }
 
+  hasAttribute(name) {
+    return this.getAttribute(name) !== null;
+  }
+
   querySelectorAll(selector) {
     return querySelectorAllWithin(this, selector);
   }
@@ -205,7 +242,9 @@ class FakeElement extends FakeNode {
     let current = this;
     while (current) {
       if (current instanceof FakeDocument) { return true; }
-      current = current.parentNode;
+      current = current.parentNode || (
+        current instanceof FakeDocumentFragment ? current.host : null
+      );
     }
     return false;
   }
@@ -219,6 +258,12 @@ class FakeElement extends FakeNode {
 
   click() {
     this.clickCount = (this.clickCount || 0) + 1;
+  }
+}
+
+class FakeHTMLIFrameElement extends FakeElement {
+  constructor(ownerDocument = null) {
+    super('iframe', ownerDocument);
   }
 }
 
@@ -261,7 +306,24 @@ class FakeDocument extends FakeNode {
     if (String(tagName || '').toLowerCase() === 'style') {
       return new FakeHTMLStyleElement(this);
     }
+    if (String(tagName || '').toLowerCase() === 'iframe') {
+      return new FakeHTMLIFrameElement(this);
+    }
     return new FakeElement(tagName, this);
+  }
+
+  createTreeWalker(root) {
+    const nodes = collectDescendants(root);
+    let index = -1;
+    return {
+      currentNode: null,
+      nextNode() {
+        index += 1;
+        if (index >= nodes.length) { return false; }
+        this.currentNode = nodes[index];
+        return true;
+      },
+    };
   }
 
   querySelectorAll(selector) {
@@ -456,6 +518,7 @@ const createAutomationHarness = ({
   directives,
   hostname = 'example.com',
   storageData = {},
+  guardOverrides = {},
 } = {}) => {
   let currentTime = 0;
   let nextTimerId = 1;
@@ -473,6 +536,7 @@ const createAutomationHarness = ({
     auditAfterMutation: source => {
       auditTrail.push(source);
     },
+    ...guardOverrides,
   };
   const shadowController = {
     ROOTS_CHANGED_EVENT: 'talon-shadow-roots-changed',
@@ -555,10 +619,10 @@ const createAutomationHarness = ({
     await settle();
   };
 
-  const triggerMutations = async () => {
+  const triggerMutations = async (records = []) => {
     for (const observer of mutationObservers) {
       if (observer.connected !== true) { continue; }
-      observer.callback([]);
+      observer.callback(records);
     }
     await settle();
   };
@@ -567,6 +631,14 @@ const createAutomationHarness = ({
     selfTarget.dispatchEvent(
       new FakeCustomEvent(shadowController.ROOTS_CHANGED_EVENT)
     );
+    await settle();
+  };
+
+  const dispatchShadowContentChanged = async detail => {
+    selfTarget.dispatchEvent(new FakeCustomEvent(
+      shadowController.CONTENT_CHANGED_EVENT || 'talon-shadow-content-changed',
+      { detail }
+    ));
     await settle();
   };
 
@@ -608,6 +680,7 @@ const createAutomationHarness = ({
 
   const localStorageData = structuredClone(storageData);
   const storageChangeListeners = [];
+  let storageGetFailure = null;
   const runtime = {
     getURL: input => input,
   };
@@ -636,7 +709,10 @@ const createAutomationHarness = ({
       },
     },
     local: {
-      get: async key => readStorage(key),
+      get: async key => {
+        if (storageGetFailure !== null) { throw storageGetFailure; }
+        return readStorage(key);
+      },
     },
   };
   const browser = { runtime, storage };
@@ -647,7 +723,7 @@ const createAutomationHarness = ({
     browser,
     chrome,
     document,
-    location: { hostname },
+    location: { hostname, href: 'https://example.com/' },
     getComputedStyle,
     TalonBreakageGuard: guard,
     TalonShadowRootController: shadowController,
@@ -675,6 +751,7 @@ const createAutomationHarness = ({
     Date: FakeDate,
     Element: FakeElement,
     HTMLStyleElement: FakeHTMLStyleElement,
+    HTMLIFrameElement: FakeHTMLIFrameElement,
     DocumentFragment: FakeDocumentFragment,
     MutationObserver: class extends FakeMutationObserver {
       constructor(callback) {
@@ -690,6 +767,7 @@ const createAutomationHarness = ({
   return {
     auditTrail,
     document,
+    guard,
     shadowController,
     createElement,
     createShadowHost,
@@ -698,14 +776,29 @@ const createAutomationHarness = ({
       await settle();
       return selfTarget.TalonAutomationController;
     },
+    reinject() {
+      return vm.runInNewContext(automationSource, context, {
+        filename: 'automation.js',
+      });
+    },
+    setStorageGetFailure(reason = null) {
+      storageGetFailure = reason;
+    },
     async advanceTime(ms) {
       await advanceTime(ms);
     },
-    async triggerMutations() {
-      await triggerMutations();
+    async triggerMutations(records) {
+      await triggerMutations(records);
     },
     async dispatchShadowRootsChanged() {
       await dispatchShadowRootsChanged();
+    },
+    async dispatchShadowContentChanged(detail) {
+      await dispatchShadowContentChanged(detail);
+    },
+    async dispatchProtectionChanged() {
+      selfTarget.dispatchEvent(new FakeCustomEvent('talon-protection-changed'));
+      await settle();
     },
     async settle() {
       await settle();
@@ -911,6 +1004,82 @@ test('direct-style hide directives apply selector-based CSS without waiting for 
   assert.match(String(style.textContent || ''), /#banner\{display:none!important;visibility:hidden!important;\}/);
 });
 
+test('automation repairs a detached document hide style without a selector sweep', async () => {
+  const harness = createAutomationHarness({
+    directives: [
+      {
+        id: 'repair-document-hide',
+        hosts: ['*'],
+        action: 'hide',
+        directStyle: true,
+        selectors: ['#document-popup'],
+      },
+    ],
+  });
+  const popup = harness.createElement({ id: 'document-popup' });
+  await harness.load();
+
+  const styleId = 'ubol-automation-style-repair-document-hide';
+  const before = harness.readStyle(harness.document, styleId);
+  assert.ok(before);
+  const foreignShadow = harness.createShadowHost();
+  foreignShadow.root.append(before);
+  assert.equal(before.isConnected, true);
+  assert.equal(before.getRootNode(), foreignShadow.root);
+  assert.equal(harness.isHidden(popup), false);
+
+  await harness.triggerMutations([{
+    type: 'childList',
+    target: harness.document.head,
+    addedNodes: [],
+    removedNodes: [before],
+  }]);
+
+  const after = harness.readStyle(harness.document, styleId);
+  assert.ok(after);
+  assert.notEqual(after, before);
+  assert.equal(harness.isHidden(popup), true);
+});
+
+test('automation repairs a detached shadow-root hide style', async () => {
+  const harness = createAutomationHarness({
+    directives: [
+      {
+        id: 'repair-shadow-hide',
+        hosts: ['*'],
+        action: 'hide',
+        directStyle: true,
+        selectors: ['.shadow-popup'],
+      },
+    ],
+  });
+  const shadow = harness.createShadowHost();
+  const popup = harness.createElement({
+    className: 'shadow-popup',
+    parent: shadow.root,
+  });
+  harness.shadowController.registerRoot(shadow.root);
+  await harness.load();
+
+  const styleId = 'ubol-automation-style-repair-shadow-hide';
+  const before = harness.readStyle(shadow.root, styleId);
+  assert.ok(before);
+  before.remove();
+  assert.equal(harness.isHidden(popup), false);
+
+  await harness.dispatchShadowContentChanged({
+    roots: [shadow.root],
+    addedNodes: [],
+    removedNodes: [before],
+    overflowed: false,
+  });
+
+  const after = harness.readStyle(shadow.root, styleId);
+  assert.ok(after);
+  assert.notEqual(after, before);
+  assert.equal(harness.isHidden(popup), true);
+});
+
 test('automation stop removes document and shadow-root hide styles', async () => {
   const harness = createAutomationHarness({
     directives: [
@@ -934,6 +1103,7 @@ test('automation stop removes document and shadow-root hide styles', async () =>
 
   assert.equal(harness.isHidden(documentBanner), true);
   assert.equal(harness.isHidden(shadowBanner), true);
+  assert.equal(documentBanner.getAttribute('data-ubol-automation'), 'stop-hide');
   assert.ok(harness.document.getElementById('ubol-automation-style-stop-hide'));
   assert.ok(
     harness.readStyle(shadow.root, 'ubol-automation-style-stop-hide')
@@ -949,6 +1119,123 @@ test('automation stop removes document and shadow-root hide styles', async () =>
   );
   assert.equal(harness.isHidden(documentBanner), false);
   assert.equal(harness.isHidden(shadowBanner), false);
+  assert.equal(documentBanner.getAttribute('data-ubol-automation'), null);
+
+  await harness.setStorageLocal({
+    rulesetConfig: { enabledRulesets: ['annoyances-overlays'] },
+  });
+  assert.equal(
+    harness.isHidden(documentBanner),
+    false,
+    'an explicitly stopped controller must not restart from a storage event'
+  );
+});
+
+test('automation releases owned markers when hidden targets detach', async () => {
+  const harness = createAutomationHarness({
+    directives: [
+      {
+        id: 'detach-hide',
+        hosts: ['*'],
+        action: 'hide',
+        selectors: ['.detaching-banner'],
+      },
+    ],
+  });
+  const banner = harness.createElement({ className: 'detaching-banner' });
+
+  await harness.load();
+  assert.equal(banner.getAttribute('data-ubol-automation'), 'detach-hide');
+
+  banner.remove();
+  await harness.triggerMutations([{
+    type: 'childList',
+    target: harness.document.body,
+    addedNodes: [],
+    removedNodes: [banner],
+  }]);
+  await harness.advanceTime(50);
+
+  assert.equal(
+    banner.getAttribute('data-ubol-automation'),
+    null,
+    'detached targets must not remain strongly retained by the owned-marker map'
+  );
+});
+
+test('automation stop restores scroll styles changed by post-actions', async () => {
+  const harness = createAutomationHarness({
+    directives: [
+      {
+        id: 'unlock-scroll',
+        hosts: ['*'],
+        action: 'hide',
+        selectors: ['.modal-ad'],
+        postActions: ['unlockScroll'],
+      },
+    ],
+  });
+  harness.document.body.style.setProperty('overflow', 'hidden', 'important');
+  harness.createElement({ className: 'modal-ad' });
+
+  const controller = await harness.load();
+  assert.equal(harness.document.body.style.getPropertyValue('overflow'), 'auto');
+
+  await controller.stop();
+  await harness.settle();
+
+  assert.equal(harness.document.body.style.getPropertyValue('overflow'), 'hidden');
+});
+
+test('automation stop preserves a site-owned style update with Talon\'s last value', async () => {
+  const harness = createAutomationHarness({
+    directives: [
+      {
+        id: 'unlock-scroll-ownership',
+        hosts: ['*'],
+        action: 'hide',
+        selectors: ['.modal-ad'],
+        postActions: ['unlockScroll'],
+      },
+    ],
+  });
+  harness.document.body.style.setProperty('overflow', 'hidden', 'important');
+  harness.createElement({ className: 'modal-ad' });
+
+  const controller = await harness.load();
+  harness.document.body.style.setProperty('overflow', 'auto');
+
+  await controller.stop();
+  await harness.settle();
+
+  assert.equal(harness.document.body.style.getPropertyValue('overflow'), 'auto');
+  assert.equal(harness.document.body.style.getPropertyPriority('overflow'), '');
+});
+
+test('automation resumes after SPA protection changes even when no directive was initially allowed', async () => {
+  let directivesAllowed = false;
+  const harness = createAutomationHarness({
+    directives: [
+      {
+        id: 'spa-protection-hide',
+        hosts: ['*'],
+        action: 'hide',
+        selectors: ['.route-popup'],
+      },
+    ],
+    guardOverrides: {
+      shouldAllowDirective: () => directivesAllowed,
+    },
+  });
+  const popup = harness.createElement({ className: 'route-popup' });
+
+  await harness.load();
+  assert.equal(harness.isHidden(popup), false);
+
+  directivesAllowed = true;
+  await harness.dispatchProtectionChanged();
+
+  assert.equal(harness.isHidden(popup), true);
 });
 
 test('automation directives honor required rulesets after the stored ruleset config changes and automation refreshes', async () => {
@@ -1012,6 +1299,34 @@ test('automation directives stay gated until rulesetConfig has been initialized'
     harness.isHidden(banner),
     false,
     'missing rulesetConfig should not guess that optional rulesets are enabled'
+  );
+});
+
+test('automation preserves last-good directives and rejects live readiness on storage failure', async () => {
+  const harness = createAutomationHarness({
+    directives: [
+      {
+        id: 'last-good-hide',
+        hosts: ['*'],
+        action: 'hide',
+        selectors: ['.last-good-banner'],
+      },
+    ],
+  });
+  const banner = harness.createElement({ className: 'last-good-banner' });
+
+  await harness.load();
+  assert.equal(harness.isHidden(banner), true);
+
+  harness.setStorageGetFailure(new Error('transient automation storage failure'));
+  const readiness = harness.reinject();
+  await assert.rejects(readiness, /transient automation storage failure/);
+  await harness.settle();
+
+  assert.equal(
+    harness.isHidden(banner),
+    true,
+    'a failed authoritative refresh must retain the active directive state'
   );
 });
 
@@ -1104,6 +1419,69 @@ test('explicit maxApplies still hard-stops a directive after the configured limi
     false,
     'explicit maxApplies should still stop the directive permanently'
   );
+});
+
+test('automation routes unrelated mutation churn without four-hertz full sweeps', async () => {
+  const harness = createAutomationHarness({
+    directives: [
+      {
+        id: 'missing-overlay',
+        hosts: ['*'],
+        action: 'hide',
+        selectors: ['.never-present'],
+      },
+    ],
+  });
+  await harness.load();
+
+  const originalQuerySelectorAll = harness.document.querySelectorAll.bind(harness.document);
+  let fullQueries = 0;
+  harness.document.querySelectorAll = selector => {
+    fullQueries += 1;
+    return originalQuerySelectorAll(selector);
+  };
+  const noise = harness.createElement({ className: 'unrelated' });
+  for (let i = 0; i < 40; i += 1) {
+    await harness.triggerMutations([
+      { type: 'childList', addedNodes: [noise], target: harness.document.body },
+    ]);
+    await harness.advanceTime(250);
+  }
+
+  assert.ok(
+    fullQueries <= 8,
+    `negative backoff should bound full selector sweeps (observed ${fullQueries})`
+  );
+});
+
+test('automation mutation overflow wakes a late matching target without losing it', async () => {
+  const harness = createAutomationHarness({
+    directives: [
+      {
+        id: 'late-overflow-target',
+        hosts: ['*'],
+        action: 'hide',
+        selectors: ['.late-overflow-target'],
+      },
+    ],
+  });
+  await harness.load();
+
+  const addedNodes = [];
+  for (let i = 0; i < 40; i += 1) {
+    addedNodes.push(harness.createElement({ className: 'unrelated' }));
+  }
+  const target = harness.createElement({ className: 'late-overflow-target' });
+  addedNodes.push(target);
+  await harness.triggerMutations([{
+    type: 'childList',
+    addedNodes,
+    removedNodes: [],
+    target: harness.document.body,
+  }]);
+  await harness.advanceTime(50);
+
+  assert.equal(harness.isHidden(target), true);
 });
 
 const createContentScriptHarness = ({
@@ -1230,6 +1608,7 @@ const createContentScriptHarness = ({
   };
 
   const localStorageData = structuredClone(storageData);
+  let storageGetFailure = null;
   const readStorage = key => {
     if (key === null || key === undefined) {
       return { ...localStorageData };
@@ -1245,7 +1624,10 @@ const createContentScriptHarness = ({
 
   const storage = {
     local: {
-      get: async key => readStorage(key),
+      get: async key => {
+        if (storageGetFailure !== null) { throw storageGetFailure; }
+        return readStorage(key);
+      },
       set: async updates => {
         Object.assign(localStorageData, updates || {});
       },
@@ -1323,7 +1705,7 @@ const createContentScriptHarness = ({
     browser: { runtime, storage },
     chrome: { runtime, storage },
     document,
-    location: { hostname },
+    location: { hostname, href: 'https://example.com/' },
     getComputedStyle,
     requestAnimationFrame: requestAnimationFrameFn,
     cancelAnimationFrame: cancelAnimationFrameFn,
@@ -1338,6 +1720,8 @@ const createContentScriptHarness = ({
       }
     },
     Element: FakeElement,
+    HTMLStyleElement: FakeHTMLStyleElement,
+    HTMLIFrameElement: FakeHTMLIFrameElement,
     DocumentFragment: FakeDocumentFragment,
     MutationObserver: class extends FakeMutationObserver {
       constructor(callback) {
@@ -1370,7 +1754,11 @@ const createContentScriptHarness = ({
     cancelAnimationFrame: cancelAnimationFrameFn,
     performance: selfTarget.performance,
     Date: selfTarget.Date,
+    URL,
+    Object,
     Element: FakeElement,
+    HTMLStyleElement: FakeHTMLStyleElement,
+    HTMLIFrameElement: FakeHTMLIFrameElement,
     DocumentFragment: FakeDocumentFragment,
     MutationObserver: selfTarget.MutationObserver,
     CustomEvent: FakeCustomEvent,
@@ -1418,10 +1806,28 @@ const createContentScriptHarness = ({
       await settle();
       return (
         selfTarget.TalonNativeHeuristicsController ||
-        selfTarget.TalonPostHideCleanupController
+        selfTarget.TalonPostHideCleanupController ||
+        selfTarget.TalonRemoteCosmeticsController
       );
     },
+    runScript(script) {
+      return vm.runInNewContext(script, context, {
+        filename: 'content-script.js',
+      });
+    },
+    reinject() {
+      return vm.runInNewContext(source, context, {
+        filename: 'content-script.js',
+      });
+    },
+    setStorageGetFailure(reason = null) {
+      storageGetFailure = reason;
+    },
     async settle() {
+      await settle();
+    },
+    async advanceTime(ms) {
+      currentTime += Math.max(0, Number(ms) || 0);
       await settle();
     },
     triggerObserver(index, records) {
@@ -1458,7 +1864,7 @@ const createContentScriptHarness = ({
   };
 };
 
-test('native heuristics keeps added-node scans incremental and batches mutation bursts into one frame', async () => {
+test('native heuristics keeps added-node scans incremental and pipelines mutation bursts in bounded frames', async () => {
   const harness = createContentScriptHarness({
     source: nativeHeuristicsSource,
     fetchJson: {
@@ -1512,17 +1918,137 @@ test('native heuristics keeps added-node scans incremental and batches mutation 
     'native heuristics should not fall back to a full body text scan for added-node mutations'
   );
   assert.ok(documentQueries.count - baselineDocumentQueries <= 2);
-  assert.ok(articleQueries.count - baselineArticleQueries >= 3);
-  assert.equal(
-    harness.getScheduledAnimationFrameCount() - beforeFrames,
-    1,
-    'native heuristics should batch a mutation burst into one animation frame'
+  assert.ok(articleQueries.count - baselineArticleQueries <= 2);
+  assert.ok(
+    harness.getScheduledAnimationFrameCount() - beforeFrames <= 2,
+    'native heuristics should pipeline a mutation burst through bounded scan and apply frames'
   );
   assert.equal(harness.isHidden(article), true);
 
   documentQueries.restore();
   bodyQueries.restore();
   articleQueries.restore();
+});
+
+test('native heuristics preserves last-good state and rejects live readiness on storage failure', async () => {
+  const harness = createContentScriptHarness({
+    source: nativeHeuristicsSource,
+    fetchJson: {
+      disableHosts: [],
+      labelRegexes: ['sponsored'],
+      labelSelectors: ['.sponsored-label'],
+      widgetSelectors: [],
+      containerStopSelectors: ['article'],
+      maxLabelTextLength: 40,
+      minContainerHeight: 60,
+      minContainerWidth: 120,
+      minScore: 1,
+      minScoreLowConfidence: 1,
+    },
+  });
+
+  await harness.load();
+  const connectedBefore = harness.countConnectedObservers();
+  assert.ok(connectedBefore > 0, 'native controller should be active before refresh');
+
+  harness.setStorageGetFailure(new Error('transient native storage failure'));
+  const readiness = harness.reinject();
+  await assert.rejects(readiness, /transient native storage failure/);
+  await harness.settle();
+
+  assert.equal(
+    harness.countConnectedObservers(),
+    connectedBefore,
+    'a failed authoritative refresh must not tear down the active observer state'
+  );
+});
+
+test('remote cosmetics retains last-good CSS and rejects wrapper readiness on storage failure', async () => {
+  const harness = createContentScriptHarness({
+    source: remoteCosmeticsSource,
+    storageData: {
+      communityBundleCosmetics: {
+        all: ['.remote-last-good-ad'],
+        hosts: {},
+      },
+    },
+  });
+
+  const controller = await harness.load();
+  assert.ok(controller, 'remote cosmetics controller should initialize');
+  await harness.runScript(remoteCosmeticsGlobalSource);
+  const styleId = 'talon-remote-cosmetics-global-style';
+  const style = harness.document.getElementById(styleId);
+  assert.ok(style, 'initial remote cosmetic CSS should be applied');
+  const lastGoodCss = style.textContent;
+  assert.match(lastGoodCss, /\.remote-last-good-ad/);
+
+  harness.setStorageGetFailure(new Error('transient remote cosmetics storage failure'));
+  const readiness = harness.runScript(remoteCosmeticsGlobalSource);
+  await assert.rejects(readiness, /transient remote cosmetics storage failure/);
+  await harness.settle();
+
+  const preservedStyle = harness.document.getElementById(styleId);
+  assert.ok(preservedStyle, 'failed refresh must not remove last-good remote CSS');
+  assert.equal(preservedStyle.textContent, lastGoodCss);
+});
+
+test('native heuristic mutation backpressure coalesces overload into one bounded full scan', async () => {
+  const harness = createContentScriptHarness({
+    source: nativeHeuristicsSource,
+    fetchJson: {
+      disableHosts: [],
+      labelRegexes: ['sponsored'],
+      labelSelectors: ['.sponsored-label'],
+      widgetSelectors: [],
+      containerStopSelectors: ['article'],
+      maxLabelTextLength: 40,
+      minContainerHeight: 60,
+      minContainerWidth: 120,
+      minScore: 1,
+      minScoreLowConfidence: 1,
+    },
+  });
+  await harness.load();
+
+  const addedNodes = [];
+  for (let i = 0; i < 700; i += 1) {
+    addedNodes.push(harness.createElement({ className: `noise-${i}` }));
+  }
+  const article = harness.createElement({
+    tagName: 'article',
+    className: 'ad-slot',
+    width: 300,
+    height: 250,
+  });
+  harness.createElement({
+    tagName: 'span',
+    className: 'sponsored-label',
+    textContent: 'Sponsored',
+    parent: article,
+    width: 20,
+    height: 10,
+  });
+  addedNodes.push(article);
+  const framesBefore = harness.getScheduledAnimationFrameCount();
+
+  harness.triggerObserver(0, [{
+    type: 'childList',
+    target: harness.document.body,
+    addedNodes,
+    removedNodes: [],
+  }]);
+  await harness.settle();
+
+  assert.equal(
+    harness.isHidden(article),
+    true,
+    'the coalesced scan should still find a late ad candidate after overload'
+  );
+  assert.ok(
+    harness.getScheduledAnimationFrameCount() - framesBefore <= 16,
+    'overload recovery must remain bounded across animation frames'
+  );
 });
 
 test('native heuristics stop disconnects keep-hidden observers created for hidden containers', async () => {
@@ -1577,6 +2103,114 @@ test('native heuristics stop disconnects keep-hidden observers created for hidde
     0,
     'native heuristics stop should disconnect both the main observer and keep-hidden observers'
   );
+  assert.equal(
+    harness.isHidden(article),
+    false,
+    'native heuristics stop should restore styles it owns'
+  );
+});
+
+test('native heuristics releases observers and owned styles when containers detach', async () => {
+  const harness = createContentScriptHarness({
+    source: nativeHeuristicsSource,
+    fetchJson: {
+      disableHosts: [],
+      labelRegexes: ['sponsored'],
+      labelSelectors: ['.sponsored-label'],
+      widgetSelectors: [],
+      containerStopSelectors: ['article'],
+      maxLabelTextLength: 40,
+      minContainerHeight: 60,
+      minContainerWidth: 120,
+      minScore: 1,
+      minScoreLowConfidence: 1,
+    },
+  });
+
+  await harness.load();
+  const article = harness.createElement({
+    tagName: 'article',
+    className: 'ad-slot',
+    width: 300,
+    height: 250,
+  });
+  harness.createElement({
+    tagName: 'span',
+    className: 'sponsored-label',
+    textContent: 'Sponsored',
+    parent: article,
+    width: 20,
+    height: 10,
+  });
+  harness.triggerObserver(0, [{
+    type: 'childList',
+    target: harness.document.body,
+    addedNodes: [article],
+    removedNodes: [],
+  }]);
+  await harness.settle();
+  assert.equal(harness.countConnectedObservers(), 2);
+
+  article.remove();
+  harness.triggerObserver(0, [{
+    type: 'childList',
+    target: harness.document.body,
+    addedNodes: [],
+    removedNodes: [article],
+  }]);
+  await harness.settle();
+
+  assert.equal(
+    harness.countConnectedObservers(),
+    1,
+    'detaching a hidden container should leave only the document observer connected'
+  );
+  assert.equal(
+    harness.isHidden(article),
+    false,
+    'detached containers must not retain Talon-owned inline hiding styles'
+  );
+});
+
+test('native heuristics does not hide standard-size third-party or payment frames without ad evidence', async () => {
+  const harness = createContentScriptHarness({
+    source: nativeHeuristicsSource,
+    hostname: 'page.example',
+    fetchJson: {
+      disableHosts: [],
+      labelRegexes: ['sponsored'],
+      labelSelectors: [],
+      widgetSelectors: [],
+      containerStopSelectors: ['section'],
+      maxLabelTextLength: 40,
+      minContainerHeight: 60,
+      minContainerWidth: 120,
+      minScore: 4,
+      minScoreLowConfidence: 5,
+    },
+  });
+
+  const ordinary = harness.createElement({
+    tagName: 'iframe',
+    attrs: { src: 'https://example.com/widgets/chart' },
+    width: 300,
+    height: 250,
+  });
+  const payment = harness.createElement({
+    tagName: 'iframe',
+    attrs: {
+      src: 'https://example.com/payments/checkout',
+      title: 'Secure payment checkout',
+      allow: 'payment',
+    },
+    width: 300,
+    height: 250,
+  });
+
+  await harness.load();
+
+  assert.equal(harness.isHidden(ordinary), false);
+  assert.equal(harness.isHidden(payment), false);
 });
 
 test('post-hide cleanup collects ad-shell candidates before DOMContentLoaded', async () => {
@@ -1599,13 +2233,20 @@ test('post-hide cleanup collects ad-shell candidates before DOMContentLoaded', a
   });
   shell.style.setProperty('display', 'none', 'important');
 
-  await harness.load();
+  const controller = await harness.load();
 
   assert.equal(harness.document.readyState, 'loading');
   assert.equal(
     harness.isHidden(wrapper),
     true,
     'early hidden ad shell evidence should collapse its reserved wrapper'
+  );
+
+  await controller.stop();
+  assert.equal(
+    harness.isHidden(wrapper),
+    false,
+    'stopping cleanup should restore collapsed wrappers owned by Talon'
   );
 });
 
@@ -1674,6 +2315,92 @@ test('post-hide cleanup preserves protected page surfaces', async () => {
   await guardedHarness.load();
 
   assert.equal(guardedHarness.isHidden(checkout), false);
+});
+
+test('post-hide cleanup preserves interactive standard-size content', async () => {
+  const harness = createContentScriptHarness({
+    source: postHideCleanupSource,
+  });
+  const card = harness.createElement({
+    className: 'ad-card',
+    width: 300,
+    height: 250,
+  });
+  harness.createElement({
+    tagName: 'button',
+    textContent: 'Continue',
+    parent: card,
+    width: 120,
+    height: 40,
+  });
+
+  await harness.load();
+
+  assert.equal(
+    harness.isHidden(card),
+    false,
+    'standard dimensions plus an ad-like class must not hide interactive content'
+  );
+});
+
+test('post-hide cleanup revisits an ad shell after its meaningful child is removed', async () => {
+  const harness = createContentScriptHarness({
+    source: postHideCleanupSource,
+  });
+  const shell = harness.createElement({
+    className: 'ad-slot',
+    width: 300,
+    height: 250,
+  });
+  const content = harness.createElement({
+    className: 'creative-content',
+    parent: shell,
+    width: 280,
+    height: 220,
+  });
+
+  await harness.load();
+  assert.equal(harness.isHidden(shell), false);
+
+  content.remove();
+  harness.triggerObserver(0, [{
+    type: 'childList',
+    target: shell,
+    addedNodes: [],
+    removedNodes: [content],
+  }]);
+  await harness.settle();
+
+  assert.equal(harness.isHidden(shell), true);
+});
+
+test('post-hide cleanup releases owned styles when a collapsed shell detaches', async () => {
+  const harness = createContentScriptHarness({
+    source: postHideCleanupSource,
+  });
+  const shell = harness.createElement({
+    className: 'ad-slot',
+    width: 300,
+    height: 250,
+  });
+
+  await harness.load();
+  assert.equal(harness.isHidden(shell), true);
+
+  shell.remove();
+  harness.triggerObserver(0, [{
+    type: 'childList',
+    target: harness.document.body,
+    addedNodes: [],
+    removedNodes: [shell],
+  }]);
+  await harness.settle();
+
+  assert.equal(
+    harness.isHidden(shell),
+    false,
+    'detached shells must not retain Talon-owned inline hiding styles'
+  );
 });
 
 test('post-hide cleanup needs strong evidence to collapse nonstandard parent gaps', async () => {
@@ -1755,16 +2482,100 @@ test('post-hide cleanup keeps added-node scans incremental and batches mutation 
   await harness.settle();
 
   assert.equal(documentQueries.count, 0);
-  assert.ok(wrapperQueries.count >= 1);
-  assert.equal(
-    harness.getScheduledAnimationFrameCount() - beforeFrames,
-    1,
-    'post-hide cleanup should batch a mutation burst into one animation frame'
+  assert.ok(
+    wrapperQueries.count <= 2,
+    'added-subtree processing should only run bounded candidate safety queries'
+  );
+  assert.ok(
+    harness.getScheduledAnimationFrameCount() - beforeFrames <= 2,
+    'post-hide cleanup should batch a mutation burst into bounded collection and apply frames'
   );
   assert.equal(harness.isHidden(slot), true);
 
   documentQueries.restore();
   wrapperQueries.restore();
+});
+
+test('post-hide cleanup time-slices one large inserted subtree', async () => {
+  const harness = createContentScriptHarness({
+    source: postHideCleanupSource,
+  });
+  await harness.load();
+
+  const subtree = harness.createElement({ tagName: 'section' });
+  for (let i = 0; i < 900; i += 1) {
+    harness.createElement({ className: `subtree-noise-${i}`, parent: subtree });
+  }
+  const shell = harness.createElement({
+    className: 'ad-slot',
+    parent: subtree,
+    width: 300,
+    height: 250,
+  });
+  const framesBefore = harness.getScheduledAnimationFrameCount();
+
+  harness.triggerObserver(0, [{
+    type: 'childList',
+    target: harness.document.body,
+    addedNodes: [subtree],
+    removedNodes: [],
+  }]);
+  await harness.settle();
+
+  assert.equal(harness.isHidden(shell), true);
+  assert.ok(
+    harness.getScheduledAnimationFrameCount() - framesBefore <= 12,
+    'one large subtree must be divided into bounded collection slices'
+  );
+});
+
+test('post-hide cleanup bounds candidate queues during mutation churn', async () => {
+  const harness = createContentScriptHarness({
+    source: postHideCleanupSource,
+  });
+  await harness.load();
+
+  const records = [];
+  for (let i = 0; i < 700; i += 1) {
+    const target = harness.createElement({
+      className: 'ad-slot',
+      width: 10,
+      height: 10,
+    });
+    records.push({
+      type: 'childList',
+      target,
+      addedNodes: [],
+      removedNodes: [harness.document.createElement('div')],
+    });
+  }
+  const shell = harness.createElement({
+    className: 'ad-slot',
+    width: 300,
+    height: 250,
+  });
+  records.push({
+    type: 'childList',
+    target: shell,
+    addedNodes: [],
+    removedNodes: [harness.document.createElement('div')],
+  });
+  const framesBefore = harness.getScheduledAnimationFrameCount();
+
+  harness.triggerObserver(0, records);
+  await harness.settle();
+
+  assert.equal(
+    harness.isHidden(shell),
+    false,
+    'the hard cap should defer a late candidate instead of growing the queue'
+  );
+  await harness.advanceTime(100);
+  assert.equal(harness.isHidden(shell), true);
+  assert.ok(
+    harness.getScheduledAnimationFrameCount() - framesBefore <= 16,
+    'overflow recovery must remain budgeted across collection and processing slices'
+  );
 });
 
 test('post-hide cleanup stop disconnects the observer and cancels pending frame work', async () => {

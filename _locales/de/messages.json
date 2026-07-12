@@ -637,12 +637,21 @@
     "message": "Diesen Computer verwenden"
   },
   "optionsFilterExtraProtectionLabel": {
-    "message": "Zus?tzlicher Schutz"
+    "message": "Zusätzlicher Schutz"
   },
   "optionsFilterExtraProtectionNote": {
-    "message": "Blockiert mehr Cookie-Hinweise, Newsletter-Fenster, Benachrichtigungsanfragen, Social-Media-Widgets und andere St?rungen."
+    "message": "Blockiert mehr Cookie-Hinweise, Benachrichtigungsanfragen, Social-Media-Widgets, KI-generierte Störelemente und andere Ablenkungen."
   },
   "uiPartial": {
     "message": "Teilweise aktiv"
+  },
+  "popupRuntimeHotfixReloadNotice": {
+    "message": "Laden Sie diesen Tab neu, um den neuesten Talon Defender-Hotfix anzuwenden."
+  },
+  "popupRuntimeReloadNotice": {
+    "message": "Laden Sie diesen Tab neu, um die neuesten Schutzänderungen von Talon Defender vollständig anzuwenden."
+  },
+  "popupRuntimeHotfixReloadButton": {
+    "message": "Tab neu laden"
   }
 }

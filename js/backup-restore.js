@@ -20,6 +20,7 @@
 */
 
 import {
+    browser,
     localRead, localRemove, localWrite,
     runtime,
     sendMessage,
@@ -65,7 +66,15 @@ export async function backupToObject(currentConfig) {
     if ( filters.length !== 0 ) {
         out.cosmeticFilters = filters;
     }
-    const dnrRules = await localRead('userDnrRules');
+    const dnrRulesBin = await browser.storage.local.get('userDnrRules');
+    if (
+        dnrRulesBin === null ||
+        typeof dnrRulesBin !== 'object' ||
+        Array.isArray(dnrRulesBin)
+    ) {
+        throw new Error('invalid local storage response for user DNR rules');
+    }
+    const dnrRules = dnrRulesBin.userDnrRules;
     if ( typeof dnrRules === 'string' && dnrRules.length !== 0 ) {
         out.dnrRules = dnrRules.split(/\n+/);
     }

@@ -34,12 +34,34 @@ export const webextFlavor = (( ) => {
     return extURL.startsWith('moz-extension:') ? 'firefox' : 'chromium';
 })();
 
-export const supportsUserScripts = (() => {
-    if ( browser.offscreen === undefined ) { return false; }
-    try { browser.userScripts.getScripts(); }
-    catch { return false; }
-    return true;
-})();
+export const isUserScriptsAvailable = () => {
+    if ( browser.userScripts instanceof Object === false ) { return false; }
+    if ( typeof browser.userScripts.getScripts !== 'function' ) { return false; }
+    if ( typeof browser.userScripts.register !== 'function' ) { return false; }
+    try {
+        // Chrome recommends a method-call probe: before Chrome 138 the API can
+        // be present while Developer Mode is off, and after 138 a revoked
+        // Allow User Scripts toggle can leave the namespace defined until this
+        // worker is reloaded while method calls throw.
+        const probe = browser.userScripts.getScripts();
+        if ( probe && typeof probe.catch === 'function' ) {
+            probe.catch(() => {});
+        }
+        return true;
+    } catch {
+    }
+    return false;
+};
+
+// Capability and current availability are intentionally separate. On
+// Chromium the userScripts namespace can disappear while the user-controlled
+// Allow User Scripts/Developer Mode switch is off, even though this extension
+// targets a version which supports the declared permission.
+const declaredPermissions = runtime.getManifest?.()?.permissions;
+export const supportsUserScripts =
+    browser.offscreen !== undefined &&
+    Array.isArray(declaredPermissions) &&
+    declaredPermissions.includes('userScripts');
 
 /******************************************************************************/
 
@@ -126,23 +148,21 @@ export async function sessionKeys() {
 }
 
 export async function sessionAccessLevel(level) {
-    try {
-        browser.storage.session.setAccessLevel(level);
-    } catch {
+    if ( typeof browser.storage?.session?.setAccessLevel !== 'function' ) {
+        throw new Error('session storage access-level API unavailable');
     }
+    return browser.storage.session.setAccessLevel(level);
 }
 
 /******************************************************************************/
 
 export async function adminRead(key) {
-    if ( browser.storage instanceof Object === false ) { return; }
-    if ( browser.storage.managed instanceof Object === false ) { return; }
-    try {
-        const bin = await browser.storage.managed.get(key);
-        if ( bin instanceof Object === false ) { return; }
-        return bin[key] ?? undefined;
-    } catch {
+    if ( browser.storage?.managed?.get === undefined ) { return; }
+    const bin = await browser.storage.managed.get(key);
+    if ( bin === null || typeof bin !== 'object' || Array.isArray(bin) ) {
+        throw new Error(`invalid managed storage response for ${key}`);
     }
+    return Object.hasOwn(bin, key) ? bin[key] : undefined;
 }
 
 /******************************************************************************/

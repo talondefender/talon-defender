@@ -637,12 +637,21 @@
     "message": "Utiliser cet ordinateur"
   },
   "optionsFilterExtraProtectionLabel": {
-    "message": "Protection renforc?e"
+    "message": "Protection renforcée"
   },
   "optionsFilterExtraProtectionNote": {
-    "message": "Bloque davantage de bandeaux cookies, fen?tres d'inscription, demandes de notifications, widgets sociaux et autres nuisances."
+    "message": "Bloque davantage de bandeaux cookies, demandes de notifications, widgets sociaux, nuisances générées par l’IA et autres distractions."
   },
   "uiPartial": {
     "message": "Partiellement actif"
+  },
+  "popupRuntimeHotfixReloadNotice": {
+    "message": "Rechargez cet onglet pour appliquer le dernier correctif de Talon Defender."
+  },
+  "popupRuntimeReloadNotice": {
+    "message": "Rechargez cet onglet pour terminer l’application des dernières modifications de protection de Talon Defender."
+  },
+  "popupRuntimeHotfixReloadButton": {
+    "message": "Recharger l’onglet"
   }
 }

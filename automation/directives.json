@@ -66,8 +66,7 @@
     "action": "click",
     "selectors": [
       "#CybotCookiebotDialogBodyButtonDecline",
-      "#CybotCookiebotDialogBodyLevelButtonLevelOptinDeclineAll",
-      "#CybotCookiebotDialogBodyButtonDetails"
+      "#CybotCookiebotDialogBodyLevelButtonLevelOptinDeclineAll"
     ],
     "fallbackAction": "hide",
     "fallbackSelectors": [

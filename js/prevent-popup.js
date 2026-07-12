@@ -21,6 +21,7 @@
 
 import { rulesetConfig, saveRulesetConfig } from './config.js';
 import { matchesFromHostnames } from './utils.js';
+import { contentScriptRegistrationsEqual } from './injectable-registration.js';
 
 /******************************************************************************/
 
@@ -57,7 +58,14 @@ export async function registerPreventPopup(context) {
         excludeMatches: matchesFromHostnames(excludeMatches),
         runAt: 'document_start',
     };
-    context.toAdd.push(directive);
+    const registered = context.before.get(directive.id);
+    context.before.delete(directive.id);
+    if ( registered === undefined ) {
+        context.toAdd.push(directive);
+    } else if ( contentScriptRegistrationsEqual(registered, directive) === false ) {
+        context.toRemove.push(directive.id);
+        context.toAdd.push(directive);
+    }
 }
 
 /******************************************************************************/
@@ -67,6 +75,6 @@ export async function setPopupBlockMode(state, force = false) {
     if ( force === false ) {
         if ( newState === rulesetConfig.popupBlockMode ) { return; }
     }
-    rulesetConfig.popupBlockMode = state;
+    rulesetConfig.popupBlockMode = newState;
     await saveRulesetConfig();
 }

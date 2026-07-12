@@ -640,9 +640,18 @@
     "message": "Ekstra beskyttelse"
   },
   "optionsFilterExtraProtectionNote": {
-    "message": "Blokerer flere cookie-beskeder, nyhedsbrevsvinduer, notifikationsanmodninger, sociale widgets og andre forstyrrelser."
+    "message": "Blokerer flere cookiebeskeder, notifikationsanmodninger, sociale widgets, AI-genererede forstyrrelser og andre distraktioner."
   },
   "uiPartial": {
     "message": "Delvist aktiv"
+  },
+  "popupRuntimeHotfixReloadNotice": {
+    "message": "Genindlæs denne fane for at anvende den seneste Talon Defender-rettelse."
+  },
+  "popupRuntimeReloadNotice": {
+    "message": "Genindlæs denne fane for at færdiggøre de seneste ændringer i Talon Defender-beskyttelsen."
+  },
+  "popupRuntimeHotfixReloadButton": {
+    "message": "Genindlæs fanen"
   }
 }

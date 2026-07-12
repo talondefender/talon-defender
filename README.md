@@ -23,7 +23,7 @@ It does not own:
 Current product summary:
 - the extension starts a 7-day trial on first use
 - it ships default blocker DNR rulesets enabled by default, plus Talon-owned YouTube and site compatibility rulesets
-- it also bundles five additional annoyance rulesets disabled by default and auto-enables that full annoyance family in complete mode
+- it also bundles seven non-default annoyance rulesets: one owned by the `Pop-ups` control and six owned by `Extra protection`, with the full family auto-enabled in complete mode
 - it also bundles a public-safe regional language ruleset family disabled by default and auto-enables locale-matched entries on untouched profiles
 - it now exposes a plain-language `Extra protection` toggle in Settings for the stronger non-default annoyance packs
 - it verifies paid licenses against the API
@@ -38,6 +38,7 @@ Store review notes:
 - `<all_urls>` is required for the reviewed blocker surface: DNR blocking, cosmetic filtering, strict-block navigation, picker/unpicker, and per-site protection checks on user-visited pages
 - picker and unpicker web-accessible overlay pages must claim a one-time background capability before accepting a `MessagePort`
 - license keys are stored locally only; sync storage accepts only sync-safe activation token metadata when the API provides it
+- `unlimitedStorage` protects versioned compiled cosmetic data and last-known-good rollback generations from Chrome's default local-storage quota; it is not used for browsing history or remote executable code
 - `Allowed Sites` is reviewer-visible from the popup for the current tab and from Settings for manually entered hosts; it uses the existing filtering-mode allow-all DNR path and does not require the `cookies` permission
 
 Key commands:

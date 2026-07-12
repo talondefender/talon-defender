@@ -640,9 +640,18 @@
     "message": "Protezione extra"
   },
   "optionsFilterExtraProtectionNote": {
-    "message": "Blocca pi? avvisi sui cookie, pop-up di iscrizione, richieste di notifiche, widget social e altri fastidi."
+    "message": "Blocca più avvisi sui cookie, richieste di notifiche, widget social, elementi molesti generati dall'IA e altre distrazioni."
   },
   "uiPartial": {
     "message": "Parzialmente attivo"
+  },
+  "popupRuntimeHotfixReloadNotice": {
+    "message": "Ricarica questa scheda per applicare l'ultima correzione di Talon Defender."
+  },
+  "popupRuntimeReloadNotice": {
+    "message": "Ricarica questa scheda per completare l'applicazione delle ultime modifiche alla protezione di Talon Defender."
+  },
+  "popupRuntimeHotfixReloadButton": {
+    "message": "Ricarica scheda"
   }
 }

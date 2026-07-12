@@ -110,6 +110,33 @@ const getExtensionIdFromServiceWorker = async context => {
   return match?.[1] || '';
 };
 
+const stopExtensionServiceWorker = async (context, page, extensionId) => {
+  const session = await context.newCDPSession(page);
+  const versions = new Map();
+  const collect = event => {
+    for (const version of event?.versions || []) {
+      versions.set(version.versionId, version);
+    }
+  };
+  session.on('ServiceWorker.workerVersionUpdated', collect);
+  try {
+    await session.send('ServiceWorker.enable');
+    await sleep(500);
+    const version = Array.from(versions.values()).find(entry =>
+      typeof entry?.scriptURL === 'string' &&
+      entry.scriptURL.startsWith(`chrome-extension://${extensionId}/`)
+    );
+    if (!version?.versionId) { return false; }
+    await session.send('ServiceWorker.stopWorker', {
+      versionId: version.versionId,
+    });
+    await sleep(500);
+    return true;
+  } finally {
+    await session.detach().catch(() => {});
+  }
+};
+
 const waitFor = async (label, fn, { timeoutMs = 15000, intervalMs = 250 } = {}) => {
   const deadline = Date.now() + timeoutMs;
   let lastError;
@@ -210,13 +237,40 @@ const getDynamicRules = (page, ruleIds) =>
     });
   }), ruleIds);
 
+const getAllDynamicRules = page =>
+  page.evaluate(() => new Promise((resolve, reject) => {
+    chrome.declarativeNetRequest.getDynamicRules(rules => {
+      const err = chrome.runtime.lastError;
+      if (err) {
+        reject(new Error(err.message));
+        return;
+      }
+      resolve(rules);
+    });
+  }));
+
+const getAllSessionRules = page =>
+  page.evaluate(() => new Promise((resolve, reject) => {
+    chrome.declarativeNetRequest.getSessionRules(rules => {
+      const err = chrome.runtime.lastError;
+      if (err) {
+        reject(new Error(err.message));
+        return;
+      }
+      resolve(rules);
+    });
+  }));
+
 const waitForOptionsStartup = page =>
   waitFor('extension startup', async () => {
     const response = await sendRuntimeMessage(page, { what: 'getOptionsPageData' });
+    if (typeof response?.error === 'string' && response.error !== '') {
+      throw new Error(response.error);
+    }
     return Array.isArray(response?.rulesetDetails) && response.rulesetDetails.length > 0
       ? response
       : null;
-  });
+  }, { timeoutMs: 45000 });
 
 const gotoControlPage = (page, extensionId) =>
   page.goto(`chrome-extension://${extensionId}/${CONTROL_PAGE_PATH}`, {
@@ -287,7 +341,32 @@ const run = async () => {
       );
     }
 
-    const optionsData = await waitForOptionsStartup(page);
+    let optionsData;
+    try {
+      optionsData = await waitForOptionsStartup(page);
+    } catch (error) {
+      const warmup = await sendRuntimeMessage(page, {
+        what: 'popupWarmup',
+      }).catch(reason => ({ transportError: `${reason}` }));
+      const diagnostics = await getLocalStorage(page, [
+        'contentScriptRegistrationMutationJournalV1',
+        'entitlementEffectsDirtyV1',
+        'injectableCssCacheDirtyV1',
+        'injectableRuntimeStateV1',
+        'injectableSyncDiagnosticsV1',
+        'initialSetupPendingV1',
+        'pendingRemoteScriptletReloadHintV1',
+        'sandboxFilters.dnrDirtyV1',
+        'sandboxFilters.registrationDirtyV1',
+        'startupDocumentRuntimeDirtyV1',
+        'startupSessionCommitV1',
+      ]).catch(reason => ({ storageError: `${reason}` }));
+      throw new Error(
+        `${error instanceof Error ? error.message : error}; ` +
+        `popupWarmup=${JSON.stringify(warmup)}; ` +
+        `diagnostics=${JSON.stringify(diagnostics)}`
+      );
+    }
     assert(Array.isArray(optionsData.rulesetDetails), 'options startup response is malformed');
 
     const enabledRulesets = await waitFor('default DNR rulesets', async () => {
@@ -297,6 +376,83 @@ const run = async () => {
     assert(
       DEFAULT_RULESET_IDS.every(id => enabledRulesets.includes(id)),
       `default rulesets not enabled: ${enabledRulesets.join(',')}`
+    );
+
+    const dynamicRegexRules = await waitFor('base dynamic regex rules', async () => {
+      const rules = await getAllDynamicRules(page);
+      const regexRules = rules.filter(rule =>
+        typeof rule?.condition?.regexFilter === 'string' &&
+        rule.id < TRUSTED_DIRECTIVE_BASE_RULE_ID
+      );
+      return regexRules.length >= 100 ? regexRules : null;
+    });
+    assert(
+      dynamicRegexRules.length >= 100,
+      `base dynamic regex rules missing: ${dynamicRegexRules.length}`
+    );
+
+    const strictSessionRules = await waitFor('strict-block session rules', async () => {
+      const rules = await getAllSessionRules(page);
+      const strictRules = rules.filter(rule =>
+        rule?.action?.type === 'redirect' &&
+        typeof rule?.action?.redirect?.regexSubstitution === 'string'
+      );
+      return strictRules.length >= 100 ? strictRules : null;
+    });
+    const strictRuleIds = strictSessionRules.map(rule => rule.id);
+    assert(
+      new Set(strictRuleIds).size === strictRuleIds.length,
+      'strict-block session rules contain duplicate ids'
+    );
+
+    const startupErrors = await sendRuntimeMessage(page, { what: 'getConsoleOutput' });
+    assert(Array.isArray(startupErrors), 'background error log response is malformed');
+    assert(
+      startupErrors.length === 0,
+      `background startup errors: ${startupErrors.join(' | ')}`
+    );
+
+    const wakeStateBefore = await getLocalStorage(page, [
+      'injectableSyncDiagnosticsV1',
+      'injectableRuntimeStateV1',
+    ]);
+    const workerStopped = await stopExtensionServiceWorker(
+      context,
+      page,
+      extensionIdFromKey
+    ).catch(() => false);
+    if (workerStopped) {
+      await waitForOptionsStartup(page);
+      const wakeStateAfter = await getLocalStorage(page, [
+        'injectableSyncDiagnosticsV1',
+        'injectableRuntimeStateV1',
+      ]);
+      assert(
+        (Number(wakeStateAfter?.injectableSyncDiagnosticsV1?.updatedAt) || 0) ===
+          (Number(wakeStateBefore?.injectableSyncDiagnosticsV1?.updatedAt) || 0),
+        'unchanged service-worker wake rebuilt injectable registrations'
+      );
+      assert(
+        JSON.stringify(wakeStateAfter?.injectableRuntimeStateV1 || null) ===
+          JSON.stringify(wakeStateBefore?.injectableRuntimeStateV1 || null),
+        'unchanged service-worker wake rewrote persisted injectable state'
+      );
+    } else {
+      console.warn('Chrome smoke could not force service-worker eviction; no-op wake assertion skipped.');
+    }
+
+    const entitlementReadBefore = await getLocalStorage(page, [
+      'injectableSyncDiagnosticsV1',
+      'injectableRuntimeStateV1',
+    ]);
+    await sendRuntimeMessage(page, { what: 'getEntitlementStatus' });
+    const entitlementReadAfter = await getLocalStorage(page, [
+      'injectableSyncDiagnosticsV1',
+      'injectableRuntimeStateV1',
+    ]);
+    assert(
+      JSON.stringify(entitlementReadAfter) === JSON.stringify(entitlementReadBefore),
+      'read-only entitlement status request mutated injectable state'
     );
 
     const now = Date.now();

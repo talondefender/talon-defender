@@ -22,6 +22,7 @@ const APPROVED_MANIFEST_PERMISSIONS = new Map([
   ['offscreen', 'Compiles user custom filters in an MV3-safe offscreen document.'],
   ['scripting', 'Registers packaged content scripts and packaged scriptlet interpreters.'],
   ['storage', 'Stores user settings, entitlement state, diagnostics, and signed remote data.'],
+  ['unlimitedStorage', 'Keeps generation-swapped cosmetic/filter data atomic without quota-driven partial state.'],
   ['userScripts', 'Registers compiled user custom scriptlet filters when the browser supports the API.'],
   ['webNavigation', 'Coordinates navigation-aware refresh and compatibility handling.'],
 ]);

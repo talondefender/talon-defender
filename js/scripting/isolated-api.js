@@ -52,14 +52,15 @@
         },
         get topHostname() {
             if ( this.entries.length === 0 ) { this.compute(); }
-            return this.entries.at(-1).hns[0];
+            return this.entries.at(-1)?.hns?.[0] || '';
         },
         get hostnames() {
             if ( this.entries.length === 0 ) { this.compute(); }
-            return this.entries[0].hns;
+            return this.entries[0]?.hns || [];
         },
         get entities() {
             if ( this.entries.length === 0 ) { this.compute(); }
+            if ( this.entries.length === 0 ) { return []; }
             if ( this.entries[0].ens === undefined ) {
                 const ens = [];
                 const hnparts =  this.entries[0].hns[0].split('.');

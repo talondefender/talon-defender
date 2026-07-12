@@ -21,7 +21,7 @@
 
 // Important!
 // Isolate from global scope
-(async function uBOL_cssSpecific() {
+self.TalonCssSpecificReady = (async function uBOL_cssSpecific() {
 
 /******************************************************************************/
 
@@ -31,28 +31,95 @@ self.specificImports = undefined;
 /******************************************************************************/
 
 const { isolatedAPI } = self;
+const runtimeGeneration = Number(self.TalonCoreCssRuntimeGeneration) || 0;
+const runtimeWasTerminated = () =>
+    (Number(self.TalonCoreCssTerminationDepth) || 0) !== 0 ||
+    (Number(self.TalonCoreCssRuntimeGeneration) || 0) !== runtimeGeneration;
+if ( runtimeWasTerminated() ) { return; }
 
-const sessionRead = async function(key) {
+const proceduralApiMessageTimeoutMs = 5000;
+const sendRuntimeMessageBounded = payload => {
+    let raw;
     try {
-        const bin = await chrome.storage.session.get(key);
-        return bin?.[key] ?? undefined;
-    } catch {
+        raw = Promise.resolve(chrome.runtime.sendMessage(payload));
+    } catch (reason) {
+        return Promise.reject(reason);
     }
+    raw.catch(() => {});
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const timer = self.setTimeout(() => {
+            if ( settled ) { return; }
+            settled = true;
+            reject(new Error('specific procedural CSS API request timed out'));
+        }, proceduralApiMessageTimeoutMs);
+        raw.then(value => {
+            if ( settled ) { return; }
+            settled = true;
+            self.clearTimeout(timer);
+            resolve(value);
+        }, reason => {
+            if ( settled ) { return; }
+            settled = true;
+            self.clearTimeout(timer);
+            reject(reason);
+        });
+    });
+};
+const ensureProceduralFiltererAPI = async () => {
+    if ( typeof self.ProceduralFiltererAPI === 'function' ) { return; }
+    if ( self.ProceduralFiltererAPI === undefined ) {
+        self.ProceduralFiltererAPI = sendRuntimeMessageBounded({
+            what: 'injectCSSProceduralAPI',
+        });
+    }
+    const pending = self.ProceduralFiltererAPI;
+    if ( pending instanceof Promise ) {
+        try {
+            const response = await pending;
+            if (
+                typeof self.ProceduralFiltererAPI !== 'function' &&
+                response?.ok !== true
+            ) {
+                throw new Error(
+                    response?.error || 'specific procedural CSS API request failed'
+                );
+            }
+        } catch (reason) {
+            // The injected file can install the constructor before the message
+            // response channel settles. Keep that valid late success.
+            if ( typeof self.ProceduralFiltererAPI === 'function' ) { return; }
+            if ( self.ProceduralFiltererAPI === pending ) {
+                self.ProceduralFiltererAPI = undefined;
+            }
+            throw reason;
+        }
+    }
+    if ( typeof self.ProceduralFiltererAPI === 'function' ) { return; }
+    if ( self.ProceduralFiltererAPI === pending ) {
+        self.ProceduralFiltererAPI = undefined;
+    }
+    throw new Error('specific procedural CSS API unavailable');
 };
 
-const sessionWrite = function(key, data) {
-    try {
-        chrome.storage.session.set({ [key]: data });
-    } catch {
+const sessionRead = async function(key) {
+    const bin = await chrome.storage.session.get(key);
+    if ( bin === null || typeof bin !== 'object' || Array.isArray(bin) ) {
+        throw new Error(`invalid session storage response for ${key}`);
     }
+    return Object.hasOwn(bin, key) ? bin[key] : undefined;
+};
+
+const sessionWrite = async function(key, data) {
+    await chrome.storage.session.set({ [key]: data });
 };
 
 const localRead = async function(key) {
-    try {
-        const bin = await chrome.storage.local.get(key);
-        return bin?.[key] ?? undefined;
-    } catch {
+    const bin = await chrome.storage.local.get(key);
+    if ( bin === null || typeof bin !== 'object' || Array.isArray(bin) ) {
+        throw new Error(`invalid local storage response for ${key}`);
     }
+    return Object.hasOwn(bin, key) ? bin[key] : undefined;
 };
 
 const selectorsFromListIndex = (data, ilist) => {
@@ -108,11 +175,12 @@ const fillCache = async function(rulesetIds) {
         localRead('filteringModeDetails'),
         ...rulesetIds.map(a => selectorsFromRuleset(a, result)),
     ]);
-    const skip = filteringModeDetails?.none.some(a => {
+    const skip = filteringModeDetails?.none.includes('all-urls') ||
+        filteringModeDetails?.none.some(a => {
         if ( topHostname.endsWith(a) === false ) { return false; }
         const n = a.length;
         return topHostname.length === n || topHostname.at(-n-1) === '.';
-    });
+        });
     for ( const selector of exceptions ) {
         selectors.delete(selector);
     }
@@ -132,66 +200,116 @@ const fillCache = async function(rulesetIds) {
 };
 
 const topHostname = isolatedAPI.contexts.topHostname;
-const thisHostname = document.location.hostname || '';
+const thisHostname = document.location.hostname ||
+    isolatedAPI.contexts.hostnames[0] || '';
 const cachePath = topHostname !== thisHostname ? `${topHostname}/` : '';
 const cacheKey = `cache.css.${cachePath}${thisHostname}`;
 
 let cacheEntry = await sessionRead(cacheKey) ?? { t: 0 };
+if (
+    cacheEntry === null ||
+    typeof cacheEntry !== 'object' ||
+    Array.isArray(cacheEntry) ||
+    Array.isArray(cacheEntry.s) === false && Number(cacheEntry.t) !== 0 ||
+    Array.isArray(cacheEntry.p) === false && Number(cacheEntry.t) !== 0
+) {
+    cacheEntry = { t: 0 };
+}
+if ( runtimeWasTerminated() ) { return; }
 if ( cacheEntry.t === 0 ) {
     cacheEntry = await fillCache(specificImports);
 }
+if ( runtimeWasTerminated() ) { return; }
 const now = Math.round(Date.now() / (5 * 60000));
 const since = now - cacheEntry.t;
 if ( since > 1 ) {
     cacheEntry.t = now;
-    sessionWrite(cacheKey, cacheEntry);
+    await sessionWrite(cacheKey, cacheEntry).catch(() => {});
 }
+if ( runtimeWasTerminated() ) { return; }
 
 const { s, p } = cacheEntry;
+const coreSpecificScope = 'core-specific';
+const cleanupSpecificCosmetics = async () => {
+    const jobs = [];
+    if ( self.listsSpecificProceduralFiltererAPI instanceof Object ) {
+        jobs.push(Promise.resolve(
+            self.listsSpecificProceduralFiltererAPI.reset()
+        ));
+    }
+    if ( self.cssAPI instanceof Object ) {
+        jobs.push(Promise.resolve(self.cssAPI.removeAll(coreSpecificScope)));
+    }
+    const results = await Promise.allSettled(jobs);
+    self.listsSpecificProceduralFiltererAPI = undefined;
+    const failures = results
+        .filter(result => result.status === 'rejected')
+        .map(result => result.reason);
+    if ( failures.length !== 0 ) {
+        throw new AggregateError(failures, 'specific cosmetic rollback failed');
+    }
+};
+
+try {
 
 if ( s.length !== 0 ) {
-    self.cssAPI.insert(`${s.join(',\n')}{display:none!important;}`);
+    await self.cssAPI.insert(
+        `${s.join(',\n')}{display:none!important;}`,
+        coreSpecificScope
+    );
+}
+if ( runtimeWasTerminated() ) {
+    await cleanupSpecificCosmetics();
+    return;
 }
 
 if ( p.length === 0 ) { return; }
 
-if ( self.ProceduralFiltererAPI === undefined ) {
-    self.ProceduralFiltererAPI = chrome.runtime.sendMessage({
-        what: 'injectCSSProceduralAPI'
-    }).catch(( ) => {
-    });
-}
+await ensureProceduralFiltererAPI();
 
-if ( self.ProceduralFiltererAPI instanceof Promise ) {
-    try {
-        await self.ProceduralFiltererAPI;
-    } catch {
-    }
+if ( runtimeWasTerminated() ) {
+    await cleanupSpecificCosmetics();
+    return;
 }
 
 if ( typeof self.ProceduralFiltererAPI !== 'function' ) {
     self.ProceduralFiltererAPI = undefined;
+    throw new Error('specific procedural CSS API unavailable');
+}
+
+if ( self.listsSpecificProceduralFiltererAPI instanceof Object === false ) {
+    self.listsSpecificProceduralFiltererAPI =
+        new self.ProceduralFiltererAPI(coreSpecificScope);
+}
+
+if ( runtimeWasTerminated() ) {
+    await cleanupSpecificCosmetics();
     return;
 }
 
-try {
-    self.listsProceduralFiltererAPI = new self.ProceduralFiltererAPI();
-} catch {
-    self.listsProceduralFiltererAPI = undefined;
-    return;
-}
+await self.listsSpecificProceduralFiltererAPI.addSelectors(p);
 
-const declaratives = p.filter(a => a.cssable);
-if ( declaratives.length !== 0 ) {
-    self.listsProceduralFiltererAPI.addDeclaratives(declaratives);
-}
-const procedurals = p.filter(a => !a.cssable);
-if ( procedurals.length !== 0 ) {
-    self.listsProceduralFiltererAPI.addProcedurals(procedurals);
+} catch (reason) {
+    try {
+        await cleanupSpecificCosmetics();
+    } catch (cleanupReason) {
+        throw new AggregateError(
+            [ reason, cleanupReason ],
+            'specific cosmetic initialization rollback failed'
+        );
+    }
+    throw reason;
 }
 
 /******************************************************************************/
 
 })();
 
-void 0;
+((ready, pending) => {
+    pending.add(ready);
+    ready.finally(() => pending.delete(ready)).catch(() => {});
+    return ready;
+})(
+    self.TalonCssSpecificReady,
+    self.TalonCssSpecificReadySet ||= new Set()
+);

@@ -171,17 +171,22 @@ const createHelperHarness = (readyState = 'loading') => {
     clearTimeout: context.clearTimeout,
   });
   context.globalThis = context.self;
+  const runNextTimer = () => {
+    const entry = timers.entries().next().value;
+    if (entry === undefined) { return false; }
+    const [id, callback] = entry;
+    timers.delete(id);
+    callback();
+    return true;
+  };
   const runAllTimers = () => {
-    while (timers.size !== 0) {
-      const callbacks = Array.from(timers.values());
-      timers.clear();
-      callbacks.forEach(fn => fn());
-    }
+    while (runNextTimer()) {}
   };
   return {
     context,
     document,
     mutationObservers,
+    runNextTimer,
     runAllTimers,
   };
 };
@@ -201,6 +206,7 @@ test('shadow helper discovers open and closed roots during initial scan', () => 
   harness.document.documentElement.append(closedHost);
 
   const controller = loadHelper(harness);
+  harness.runAllTimers();
   const roots = controller.enumerateRoots();
 
   assert.equal(roots.length, 2);
@@ -229,6 +235,64 @@ test('shadow helper rescans after mutation bursts and picks up newly attached ro
   assert.equal(controller.enumerateRoots().includes(lateHost.shadowRoot), true);
 });
 
+test('shadow helper coalesces oversized mutation queues into a bounded full scan', () => {
+  const harness = createHelperHarness('complete');
+  const controller = loadHelper(harness);
+  const addedNodes = [];
+  for (let i = 0; i < 700; i += 1) {
+    const node = new FakeElement('div');
+    harness.document.documentElement.append(node);
+    addedNodes.push(node);
+  }
+  const lateHost = new FakeElement('section');
+  lateHost.shadowRoot = new FakeDocumentFragment();
+  harness.document.documentElement.append(lateHost);
+  addedNodes.push(lateHost);
+
+  harness.mutationObservers[0].trigger([
+    {
+      target: harness.document.documentElement,
+      addedNodes,
+      removedNodes: [],
+    },
+  ]);
+  harness.runAllTimers();
+
+  assert.equal(controller.enumerateRoots().includes(lateHost.shadowRoot), true);
+});
+
+test('shadow helper time-slices one large added subtree', () => {
+  const harness = createHelperHarness('loading');
+  const controller = loadHelper(harness);
+  const subtree = new FakeElement('section');
+  for (let i = 0; i < 1000; i += 1) {
+    subtree.append(new FakeElement('div'));
+  }
+  const lateHost = new FakeElement('article');
+  lateHost.shadowRoot = new FakeDocumentFragment();
+  subtree.append(lateHost);
+  harness.document.documentElement.append(subtree);
+
+  harness.mutationObservers[0].trigger([
+    {
+      target: harness.document.documentElement,
+      addedNodes: [subtree],
+      removedNodes: [],
+    },
+  ]);
+
+  assert.equal(harness.runNextTimer(), true);
+  assert.equal(
+    controller.enumerateRoots().includes(lateHost.shadowRoot),
+    false,
+    'the first mutation callback slice must not synchronously walk the entire subtree'
+  );
+
+  controller.scheduleRescan(0);
+  harness.runAllTimers();
+  assert.equal(controller.enumerateRoots().includes(lateHost.shadowRoot), true);
+});
+
 test('shadow helper post-load rescans discover roots attached after initial paint', () => {
   const harness = createHelperHarness('complete');
   const host = new FakeElement('div');
@@ -251,6 +315,7 @@ test('shadow helper disconnects removed roots before re-observing active ones', 
   harness.document.documentElement.append(secondHost);
 
   const controller = loadHelper(harness);
+  harness.runAllTimers();
   const observer = harness.mutationObservers[0];
 
   assert.equal(observer.targets.includes(firstHost.shadowRoot), true);
@@ -270,4 +335,92 @@ test('shadow helper disconnects removed roots before re-observing active ones', 
   assert.equal(controller.enumerateRoots().includes(firstHost.shadowRoot), false);
   assert.equal(observer.targets.includes(firstHost.shadowRoot), false);
   assert.equal(observer.targets.includes(secondHost.shadowRoot), true);
+});
+
+test('shadow helper reports content added or removed inside an already-known root', () => {
+  const harness = createHelperHarness('complete');
+  const host = new FakeElement('section');
+  host.shadowRoot = new FakeDocumentFragment();
+  harness.document.documentElement.append(host);
+  const controller = loadHelper(harness);
+  harness.runAllTimers();
+  const events = [];
+  harness.context.self.addEventListener(controller.CONTENT_CHANGED_EVENT, event => {
+    events.push(event.detail);
+  });
+
+  const child = new FakeElement('div');
+  host.shadowRoot.append(child);
+  harness.mutationObservers[0].trigger([
+    {
+      target: host.shadowRoot,
+      addedNodes: [child],
+      removedNodes: [],
+    },
+  ]);
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].roots.includes(host.shadowRoot), true);
+  assert.equal(events[0].addedNodes.includes(child), true);
+
+  host.shadowRoot.children = host.shadowRoot.children.filter(node => node !== child);
+  child.parentNode = null;
+  harness.mutationObservers[0].trigger([
+    {
+      target: host.shadowRoot,
+      addedNodes: [],
+      removedNodes: [child],
+    },
+  ]);
+
+  assert.equal(events.length, 2);
+  assert.equal(events[1].roots.includes(host.shadowRoot), true);
+  assert.equal(events[1].removedNodes.includes(child), true);
+});
+
+test('shadow helper signals bounded recovery when an existing-root content event truncates', () => {
+  const harness = createHelperHarness('complete');
+  const host = new FakeElement('section');
+  host.shadowRoot = new FakeDocumentFragment();
+  harness.document.documentElement.append(host);
+  const controller = loadHelper(harness);
+  harness.runAllTimers();
+  const events = [];
+  harness.context.self.addEventListener(controller.CONTENT_CHANGED_EVENT, event => {
+    events.push(event.detail);
+  });
+  const addedNodes = [];
+  for (let i = 0; i < 200; i += 1) {
+    const child = new FakeElement('div');
+    host.shadowRoot.append(child);
+    addedNodes.push(child);
+  }
+
+  harness.mutationObservers[0].trigger([{
+    target: host.shadowRoot,
+    addedNodes,
+    removedNodes: [],
+  }]);
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].overflowed, true);
+  assert.equal(events[0].roots.includes(host.shadowRoot), true);
+  assert.equal(events[0].addedNodes.length <= 128, true);
+});
+
+test('shadow helper stop and start control all observers and timers', () => {
+  const harness = createHelperHarness('complete');
+  const host = new FakeElement('section');
+  host.shadowRoot = new FakeDocumentFragment();
+  harness.document.documentElement.append(host);
+  const controller = loadHelper(harness);
+  const observer = harness.mutationObservers[0];
+
+  controller.stop();
+  assert.equal(observer.targets.length, 0);
+
+  controller.start();
+  harness.runAllTimers();
+  assert.equal(observer.targets.includes(harness.document), true);
+  assert.equal(observer.targets.includes(host.shadowRoot), true);
 });

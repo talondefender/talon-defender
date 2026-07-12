@@ -29,8 +29,8 @@ import {
 
 import {
     browser,
-    localRead, localWrite,
-    sessionRead, sessionWrite,
+    localRemove, localWrite,
+    sessionWrite,
 } from './ext.js';
 
 import {
@@ -40,6 +40,49 @@ import {
 
 import { adminReadEx } from './admin.js';
 import { filteringModesToDNR } from './ruleset-manager.js';
+
+const FILTERING_MODE_DETAILS_KEY = 'filteringModeDetails';
+export const FILTERING_MODE_DNR_DIRTY_KEY = 'filteringModeDnrDirtyV1';
+
+const strictStorageRead = async (areaName, key, { optional = false } = {}) => {
+    const area = browser.storage?.[areaName];
+    if ( typeof area?.get !== 'function' ) {
+        if ( optional ) { return; }
+        throw new Error(`${areaName} storage API unavailable`);
+    }
+    const bin = await area.get(key);
+    if ( bin === null || typeof bin !== 'object' || Array.isArray(bin) ) {
+        throw new Error(`invalid ${areaName} storage response for ${key}`);
+    }
+    return bin[key];
+};
+
+const writeLocalModeIntent = async data => {
+    const area = browser.storage?.local;
+    if ( typeof area?.set !== 'function' ) {
+        throw new Error('local storage API unavailable');
+    }
+    await area.set({
+        [FILTERING_MODE_DETAILS_KEY]: data,
+        [FILTERING_MODE_DNR_DIRTY_KEY]: true,
+    });
+};
+
+const markFilteringModeDnrDirty = async () => {
+    const area = browser.storage?.local;
+    if ( typeof area?.set !== 'function' ) {
+        throw new Error('local storage API unavailable');
+    }
+    await area.set({ [FILTERING_MODE_DNR_DIRTY_KEY]: true });
+};
+
+const clearFilteringModeDnrDirty = async () => {
+    const area = browser.storage?.local;
+    if ( typeof area?.remove !== 'function' ) {
+        throw new Error('local storage API unavailable');
+    }
+    await area.remove(FILTERING_MODE_DNR_DIRTY_KEY);
+};
 
 /******************************************************************************/
 
@@ -58,6 +101,15 @@ export const defaultFilteringModes = {
     basic: [],
     optimal: [ 'all-urls' ],
     complete: [],
+};
+
+let filteringModeRevision = 0;
+let pendingFilteringModeOperation = Promise.resolve();
+
+const enqueueFilteringModeOperation = operation => {
+    const result = pendingFilteringModeOperation.then(operation, operation);
+    pendingFilteringModeOperation = result.catch(() => {});
+    return result;
 };
 
 /******************************************************************************/
@@ -82,8 +134,9 @@ const pruneHostnameFromSet = (hostname, hnSet) => {
 
 /******************************************************************************/
 
-const serializeModeDetails = details => {
+const serializeModeDetails = (details, revision = filteringModeRevision) => {
     return {
+        configRevision: revision,
         none: Array.from(details.none),
         basic: Array.from(details.basic),
         optimal: Array.from(details.optimal),
@@ -92,12 +145,140 @@ const serializeModeDetails = details => {
 };
 
 const unserializeModeDetails = details => {
+    const fallback = defaultFilteringModes;
     return {
-        none: new Set(details.none),
-        basic: new Set(details.basic ?? details.network),
-        optimal: new Set(details.optimal ?? details.extendedSpecific),
-        complete: new Set(details.complete ?? details.extendedGeneric),
+        none: new Set(details?.none ?? fallback.none),
+        basic: new Set(details?.basic ?? details?.network ?? fallback.basic),
+        optimal: new Set(
+            details?.optimal ?? details?.extendedSpecific ?? fallback.optimal
+        ),
+        complete: new Set(
+            details?.complete ?? details?.extendedGeneric ?? fallback.complete
+        ),
     };
+};
+
+const modeRevisionFrom = details => {
+    const revision = Number(details?.configRevision);
+    return Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
+};
+
+const isStoredModeDetails = details =>
+    details instanceof Object && Array.isArray(details) === false;
+
+const validateStoredModeDetailsRecord = (details, areaName) => {
+    if ( details === undefined ) { return false; }
+    if ( isStoredModeDetails(details) === false ) {
+        throw new Error(`invalid ${areaName} filteringModeDetails record`);
+    }
+    if ( Object.hasOwn(details, 'none') === false ) {
+        throw new Error(`invalid ${areaName} filteringModeDetails record`);
+    }
+    for ( const aliases of [
+        [ 'basic', 'network' ],
+        [ 'optimal', 'extendedSpecific' ],
+        [ 'complete', 'extendedGeneric' ],
+    ] ) {
+        if ( aliases.some(key => Object.hasOwn(details, key)) ) { continue; }
+        throw new Error(`invalid ${areaName} filteringModeDetails record`);
+    }
+    if (
+        Object.hasOwn(details, 'configRevision') &&
+        (
+            Number.isSafeInteger(details.configRevision) === false ||
+            details.configRevision < 0
+        )
+    ) {
+        throw new Error(
+            `invalid ${areaName} filteringModeDetails configRevision`
+        );
+    }
+    for ( const key of [
+        'none',
+        'basic',
+        'optimal',
+        'complete',
+        'network',
+        'extendedSpecific',
+        'extendedGeneric',
+    ] ) {
+        if ( Object.hasOwn(details, key) === false ) { continue; }
+        const values = details[key];
+        if (
+            Array.isArray(values) &&
+            values.every(hostname => typeof hostname === 'string')
+        ) {
+            continue;
+        }
+        throw new Error(`invalid ${areaName} filteringModeDetails ${key}`);
+    }
+    return true;
+};
+
+const sameStoredModeDetails = (before, after) => {
+    if ( isStoredModeDetails(before) === false ) { return false; }
+    try {
+        return JSON.stringify(before) === JSON.stringify(after);
+    } catch {
+    }
+    return false;
+};
+
+const cloneModeDetails = details => unserializeModeDetails(
+    serializeModeDetails(details)
+);
+
+const invalidateFilteringModeCache = () => {
+    readFilteringModeDetails.userCache = undefined;
+    readFilteringModeDetails.cache = undefined;
+};
+
+const modeDetailsKey = details => JSON.stringify({
+    none: Array.from(details.none).sort(),
+    basic: Array.from(details.basic).sort(),
+    optimal: Array.from(details.optimal).sort(),
+    complete: Array.from(details.complete).sort(),
+});
+
+const modeDetailsEqual = (before, after) =>
+    modeDetailsKey(before) === modeDetailsKey(after);
+
+export const applyManagedFilteringModes = (
+    userModes,
+    adminDefaultFiltering,
+    adminNoFiltering,
+) => {
+    const effectiveModes = cloneModeDetails(userModes);
+    if ( adminDefaultFiltering !== undefined ) {
+        const modefromName = {
+            none: MODE_NONE,
+            basic: MODE_BASIC,
+            optimal: MODE_OPTIMAL,
+            complete: MODE_COMPLETE,
+        };
+        const adminDefaultFilteringMode = modefromName[adminDefaultFiltering];
+        if ( adminDefaultFilteringMode !== undefined ) {
+            applyFilteringMode(
+                effectiveModes,
+                'all-urls',
+                adminDefaultFilteringMode
+            );
+        }
+    }
+    if ( Array.isArray(adminNoFiltering) && adminNoFiltering.length !== 0 ) {
+        if ( adminNoFiltering.includes('-*') ) {
+            effectiveModes.none.clear();
+        }
+        for ( const hn of adminNoFiltering ) {
+            if ( typeof hn !== 'string' ) { continue; }
+            if ( hn.charAt(0) === '-' ) {
+                effectiveModes.none.delete(hn.slice(1));
+            } else {
+                applyFilteringMode(effectiveModes, hn, MODE_NONE);
+            }
+        }
+    }
+    return effectiveModes;
 };
 
 /******************************************************************************/
@@ -220,83 +401,198 @@ function applyFilteringMode(filteringModes, hostname, afterLevel) {
 
 /******************************************************************************/
 
-export async function readFilteringModeDetails(bypassCache = false) {
-    if ( bypassCache === false ) {
-        if ( readFilteringModeDetails.cache ) {
-            return readFilteringModeDetails.cache;
-        }
-        const sessionModes = await sessionRead('filteringModeDetails');
-        if ( sessionModes instanceof Object ) {
-            readFilteringModeDetails.cache = unserializeModeDetails(sessionModes);
-            return readFilteringModeDetails.cache;
-        }
+export function reconcileGranularPermissionModes({
+    filteringModes,
+    beforeAllowedHostnames,
+    afterAllowedHostnames,
+    fallbackMode,
+}) {
+    if ( afterAllowedHostnames.has('all-urls') ) { return false; }
+    const { none, basic, optimal, complete } = filteringModes;
+    let modified = false;
+    for ( const hn of new Set([ ...optimal, ...complete ]) ) {
+        if ( afterAllowedHostnames.has(hn) ) { continue; }
+        if ( isDescendantHostnameOfIter(hn, afterAllowedHostnames) ) { continue; }
+        applyFilteringMode(filteringModes, hn, fallbackMode);
+        modified = true;
     }
-    let [
-        userModes = structuredClone(defaultFilteringModes),
-        adminDefaultFiltering,
-        adminNoFiltering,
-    ] = await Promise.all([
-        localRead('filteringModeDetails'),
-        adminReadEx('defaultFiltering'),
-        adminReadEx('noFiltering'),
-    ]);
-    userModes = unserializeModeDetails(userModes);
-    if ( adminDefaultFiltering !== undefined ) {
-        const modefromName = {
-            none: MODE_NONE,
-            basic: MODE_BASIC,
-            optimal: MODE_OPTIMAL,
-            complete: MODE_COMPLETE,
-        };
-        const adminDefaultFilteringMode = modefromName[adminDefaultFiltering];
-        if ( adminDefaultFilteringMode !== undefined ) {
-            applyFilteringMode(userModes, 'all-urls', adminDefaultFilteringMode);
-        }
+    for ( const hn of afterAllowedHostnames ) {
+        if ( beforeAllowedHostnames.has(hn) ) { continue; }
+        if ( optimal.has(hn) || complete.has(hn) ) { continue; }
+        if ( basic.has(hn) || none.has(hn) ) { continue; }
+        applyFilteringMode(filteringModes, hn, MODE_OPTIMAL);
+        modified = true;
     }
-    if ( Array.isArray(adminNoFiltering) && adminNoFiltering.length !== 0 ) {
-        if ( adminNoFiltering.includes('-*') ) {
-            userModes.none.clear();
-        }
-        for ( const hn of adminNoFiltering ) {
-            if ( hn.charAt(0) === '-' ) {
-                userModes.none.delete(hn.slice(1));
-            } else {
-                applyFilteringMode(userModes, hn, 0);
-            }
-        }
-    }
-    readFilteringModeDetails.cache = userModes;
-    return userModes;
+    return modified;
 }
 
 /******************************************************************************/
 
-export async function reconcileFilteringModeDetails() {
-    const details = await readFilteringModeDetails(true);
-    await writeFilteringModeDetails(details);
-    return details;
+export const applyEffectiveModeDeltaToUser = (
+    userModes,
+    beforeEffectiveModes,
+    afterEffectiveModes,
+) => {
+    const hostnames = new Set([ 'all-urls' ]);
+    for ( const details of [ beforeEffectiveModes, afterEffectiveModes ] ) {
+        for ( const modeSet of [
+            details.none,
+            details.basic,
+            details.optimal,
+            details.complete,
+        ] ) {
+            for ( const hostname of modeSet ) { hostnames.add(hostname); }
+        }
+    }
+    const orderedHostnames = Array.from(hostnames).sort((a, b) => {
+        if ( a === 'all-urls' ) { return -1; }
+        if ( b === 'all-urls' ) { return 1; }
+        return a.split('.').length - b.split('.').length || a.localeCompare(b);
+    });
+    for ( const hostname of orderedHostnames ) {
+        const beforeLevel = lookupFilteringMode(beforeEffectiveModes, hostname);
+        const afterLevel = lookupFilteringMode(afterEffectiveModes, hostname);
+        if ( beforeLevel === afterLevel ) { continue; }
+        applyFilteringMode(userModes, hostname, afterLevel);
+    }
+};
+
+/******************************************************************************/
+
+export async function readFilteringModeDetails(bypassCache = false) {
+    if ( bypassCache === false && readFilteringModeDetails.cache ) {
+        return readFilteringModeDetails.cache;
+    }
+    let [
+        localModes,
+        sessionModes,
+        dnrDirtyValue,
+        adminDefaultFiltering,
+        adminNoFiltering,
+    ] = await Promise.all([
+        strictStorageRead('local', FILTERING_MODE_DETAILS_KEY),
+        strictStorageRead('session', FILTERING_MODE_DETAILS_KEY, { optional: true }),
+        strictStorageRead('local', FILTERING_MODE_DNR_DIRTY_KEY),
+        adminReadEx('defaultFiltering'),
+        adminReadEx('noFiltering'),
+    ]);
+    const hasLocal = validateStoredModeDetailsRecord(localModes, 'local');
+    const hasSession = validateStoredModeDetailsRecord(sessionModes, 'session');
+    const dnrDirty = dnrDirtyValue !== undefined && dnrDirtyValue !== false;
+    if ( dnrDirty && hasLocal === false && hasSession === false ) {
+        throw new Error('filtering mode DNR intent has no desired mode record');
+    }
+    let storedUserModes;
+    if ( hasLocal && hasSession ) {
+        storedUserModes = modeRevisionFrom(sessionModes) > modeRevisionFrom(localModes)
+            ? sessionModes
+            : localModes;
+    } else if ( hasLocal ) {
+        storedUserModes = localModes;
+    } else if ( hasSession ) {
+        storedUserModes = sessionModes;
+    } else {
+        storedUserModes = structuredClone(defaultFilteringModes);
+    }
+    filteringModeRevision = modeRevisionFrom(storedUserModes);
+    const userModes = unserializeModeDetails(storedUserModes);
+    const durableUserData = serializeModeDetails(userModes);
+    if ( sameStoredModeDetails(localModes, durableUserData) === false ) {
+        await localWrite(FILTERING_MODE_DETAILS_KEY, durableUserData);
+    }
+    if ( sameStoredModeDetails(sessionModes, durableUserData) === false ) {
+        await sessionWrite(FILTERING_MODE_DETAILS_KEY, durableUserData);
+    }
+    const effectiveModes = applyManagedFilteringModes(
+        userModes,
+        adminDefaultFiltering,
+        adminNoFiltering
+    );
+    if ( dnrDirty ) {
+        invalidateFilteringModeCache();
+        await filteringModesToDNR(effectiveModes);
+        await clearFilteringModeDnrDirty();
+    }
+    readFilteringModeDetails.userCache = userModes;
+    readFilteringModeDetails.cache = effectiveModes;
+    return effectiveModes;
+}
+
+/******************************************************************************/
+
+export function reconcileFilteringModeDetails() {
+    return enqueueFilteringModeOperation(async () => {
+        const details = await readFilteringModeDetails(true);
+        const userDetails = cloneModeDetails(
+            readFilteringModeDetails.userCache ||
+            unserializeModeDetails(defaultFilteringModes)
+        );
+        await markFilteringModeDnrDirty();
+        try {
+            await filteringModesToDNR(details);
+            await clearFilteringModeDnrDirty();
+        } catch (reason) {
+            invalidateFilteringModeCache();
+            throw reason;
+        }
+        readFilteringModeDetails.userCache = userDetails;
+        readFilteringModeDetails.cache = details;
+        const [ defaultFilteringMode, hasOmnipotence ] = await Promise.all([
+            getDefaultFilteringMode(),
+            hasBroadHostPermissions(),
+        ]);
+        broadcastMessage({
+            defaultFilteringMode,
+            hasOmnipotence,
+            filteringModeDetails: details,
+        });
+        return details;
+    });
 }
 
 /**/
 
-async function writeFilteringModeDetails(afterDetails) {
-    await filteringModesToDNR(afterDetails);
-    const data = serializeModeDetails(afterDetails);
-    localWrite('filteringModeDetails', data);
-    sessionWrite('filteringModeDetails', data);
-    readFilteringModeDetails.cache = unserializeModeDetails(data);
-    return Promise.all([
+async function writeFilteringModeDetailsNow(userDetails) {
+    const [ adminDefaultFiltering, adminNoFiltering ] = await Promise.all([
+        adminReadEx('defaultFiltering'),
+        adminReadEx('noFiltering'),
+    ]);
+    const effectiveDetails = applyManagedFilteringModes(
+        userDetails,
+        adminDefaultFiltering,
+        adminNoFiltering
+    );
+    const nextRevision = filteringModeRevision < Number.MAX_SAFE_INTEGER
+        ? filteringModeRevision + 1
+        : 1;
+    const data = serializeModeDetails(userDetails, nextRevision);
+    await writeLocalModeIntent(data);
+    filteringModeRevision = nextRevision;
+    invalidateFilteringModeCache();
+    await sessionWrite(FILTERING_MODE_DETAILS_KEY, data);
+    try {
+        await filteringModesToDNR(effectiveDetails);
+        await clearFilteringModeDnrDirty();
+    } catch (reason) {
+        invalidateFilteringModeCache();
+        throw reason;
+    }
+    readFilteringModeDetails.userCache = cloneModeDetails(userDetails);
+    readFilteringModeDetails.cache = effectiveDetails;
+    const results = await Promise.all([
         getDefaultFilteringMode(),
         hasBroadHostPermissions(),
-        localWrite('filteringModeDetails', data),
-        sessionWrite('filteringModeDetails', data),
-    ]).then(results => {
-        broadcastMessage({
-            defaultFilteringMode: results[0],
-            hasOmnipotence: results[1],
-            filteringModeDetails: readFilteringModeDetails.cache,
-        });
+    ]);
+    broadcastMessage({
+        defaultFilteringMode: results[0],
+        hasOmnipotence: results[1],
+        filteringModeDetails: effectiveDetails,
     });
+    return effectiveDetails;
+}
+
+function writeFilteringModeDetails(afterDetails) {
+    return setFilteringModeDetails(afterDetails);
 }
 
 /******************************************************************************/
@@ -312,8 +608,43 @@ export async function getFilteringModeDetails(serializable = false) {
     return serializable ? serializeModeDetails(out) : out;
 }
 
-export async function setFilteringModeDetails(details) {
-    await writeFilteringModeDetails(details);
+export function setFilteringModeDetails(details, expectedRevision) {
+    const desiredEffectiveModes = cloneModeDetails(details);
+    if (
+        expectedRevision !== undefined &&
+        (Number.isSafeInteger(expectedRevision) === false || expectedRevision < 0)
+    ) {
+        const error = new TypeError('expectedRevision must be a non-negative safe integer');
+        error.code = 'invalid_filtering_mode_revision';
+        return Promise.reject(error);
+    }
+    return enqueueFilteringModeOperation(async () => {
+        const beforeEffectiveModes = await readFilteringModeDetails();
+        if (
+            expectedRevision !== undefined &&
+            expectedRevision !== filteringModeRevision
+        ) {
+            const error = new Error('filtering mode details changed before mutation');
+            error.code = 'stale_filtering_mode_revision';
+            error.currentDetails = serializeModeDetails(beforeEffectiveModes);
+            throw error;
+        }
+        if ( modeDetailsEqual(beforeEffectiveModes, desiredEffectiveModes) ) {
+            return beforeEffectiveModes;
+        }
+        const beforeUserModes = readFilteringModeDetails.userCache ||
+            unserializeModeDetails(defaultFilteringModes);
+        const afterUserModes = cloneModeDetails(beforeUserModes);
+        applyEffectiveModeDeltaToUser(
+            afterUserModes,
+            beforeEffectiveModes,
+            desiredEffectiveModes
+        );
+        if ( modeDetailsEqual(beforeUserModes, afterUserModes) ) {
+            return beforeEffectiveModes;
+        }
+        return writeFilteringModeDetailsNow(afterUserModes);
+    });
 }
 
 /******************************************************************************/
@@ -323,11 +654,23 @@ export async function getFilteringMode(hostname) {
     return lookupFilteringMode(filteringModes, hostname);
 }
 
-export async function setFilteringMode(hostname, afterLevel) {
-    const filteringModes = await getFilteringModeDetails();
-    const level = applyFilteringMode(filteringModes, hostname, afterLevel);
-    await writeFilteringModeDetails(filteringModes);
-    return level;
+export function setFilteringMode(hostname, afterLevel) {
+    return enqueueFilteringModeOperation(async () => {
+        const beforeEffectiveModes = await readFilteringModeDetails();
+        const beforeLevel = lookupFilteringMode(beforeEffectiveModes, hostname);
+        if ( beforeLevel === afterLevel ) { return beforeLevel; }
+        const beforeUserModes = readFilteringModeDetails.userCache ||
+            unserializeModeDetails(defaultFilteringModes);
+        const afterUserModes = cloneModeDetails(beforeUserModes);
+        applyFilteringMode(afterUserModes, hostname, afterLevel);
+        if ( modeDetailsEqual(beforeUserModes, afterUserModes) ) {
+            return beforeLevel;
+        }
+        const afterEffectiveModes = await writeFilteringModeDetailsNow(
+            afterUserModes
+        );
+        return lookupFilteringMode(afterEffectiveModes, hostname);
+    });
 }
 
 /******************************************************************************/
@@ -342,16 +685,36 @@ export function setDefaultFilteringMode(afterLevel) {
 
 /******************************************************************************/
 
+export async function persistHostPermissions(iter) {
+    if ( iter === undefined ) {
+        const permissions = await browser.permissions.getAll();
+        iter = hostnamesFromMatches(permissions.origins || []);
+    }
+    const hostnames = Array.from(iter || []);
+    return hostnames.length !== 0
+        ? localWrite('permissions.hostnames', hostnames)
+        : localRemove('permissions.hostnames');
+}
+
+/******************************************************************************/
+
 export async function syncWithBrowserPermissions() {
     const [
-        permissions,
+        beforePermissions,
+        afterPermissions,
         beforeMode,
     ] = await Promise.all([
+        strictStorageRead('local', 'permissions.hostnames'),
         browser.permissions.getAll(),
         getDefaultFilteringMode(),
     ]);
-    const allowedHostnames = new Set(hostnamesFromMatches(permissions.origins || []));
-    const hasBroadHostPermissions = allowedHostnames.has('all-urls');
+    const beforeAllowedHostnames = new Set(
+        Array.isArray(beforePermissions) ? beforePermissions : []
+    );
+    const afterAllowedHostnames = new Set(
+        hostnamesFromMatches(afterPermissions.origins || [])
+    );
+    const hasBroadHostPermissions = afterAllowedHostnames.has('all-urls');
     const broadHostPermissionsToggled =
         hasBroadHostPermissions !== rulesetConfig.hasBroadHostPermissions;
     let modified = false;
@@ -364,28 +727,24 @@ export async function syncWithBrowserPermissions() {
     }
     if ( broadHostPermissionsToggled ) {
         rulesetConfig.hasBroadHostPermissions = hasBroadHostPermissions;
-        saveRulesetConfig();
+        await saveRulesetConfig();
     }
     const afterMode = await getDefaultFilteringMode();
-    if ( afterMode > MODE_BASIC ) { return afterMode !== beforeMode; }
-    const filteringModes = await getFilteringModeDetails();
-    if ( allowedHostnames.has('all-urls') === false ) {
-        const { none, basic, optimal, complete } = filteringModes;
-        for ( const hn of new Set([ ...optimal, ...complete ]) ) {
-            applyFilteringMode(filteringModes, hn, afterMode);
-            modified = true;
-        }
-        for ( const hn of allowedHostnames ) {
-            if ( optimal.has(hn) || complete.has(hn) ) { continue; }
-            if ( basic.has(hn) || none.has(hn) ) { continue; }
-            applyFilteringMode(filteringModes, hn, MODE_OPTIMAL);
-            modified = true;
-        }
-        if ( modified ) {
+    let granularModified = false;
+    if ( afterMode <= MODE_BASIC ) {
+        const filteringModes = await getFilteringModeDetails();
+        granularModified = reconcileGranularPermissionModes({
+            filteringModes,
+            beforeAllowedHostnames,
+            afterAllowedHostnames,
+            fallbackMode: afterMode,
+        });
+        if ( granularModified ) {
             await writeFilteringModeDetails(filteringModes);
         }
     }
-    return modified;
+    await persistHostPermissions(afterAllowedHostnames);
+    return modified || granularModified;
 }
 
 /******************************************************************************/

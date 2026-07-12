@@ -640,9 +640,18 @@
     "message": "Extra protection"
   },
   "optionsFilterExtraProtectionNote": {
-    "message": "Blocks more cookie notices, signup pop-ups, notification prompts, social widgets, and other annoyances."
+    "message": "Blocks more cookie notices, notification prompts, social widgets, AI-generated annoyances, and other distractions."
   },
   "uiPartial": {
     "message": "Partially active"
+  },
+  "popupRuntimeHotfixReloadNotice": {
+    "message": "Reload this tab to apply the latest Talon Defender hotfix."
+  },
+  "popupRuntimeReloadNotice": {
+    "message": "Reload this tab to finish applying Talon Defender protection changes."
+  },
+  "popupRuntimeHotfixReloadButton": {
+    "message": "Reload tab"
   }
 }

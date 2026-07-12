@@ -637,12 +637,21 @@
     "message": "이 컴퓨터에서 사용하기"
   },
   "optionsFilterExtraProtectionLabel": {
-    "message": "?? ??"
+    "message": "추가 보호"
   },
   "optionsFilterExtraProtectionNote": {
-    "message": "?? ??, ?? ??, ?? ?? ??, ?? ?? ? ??? ??? ? ??? ?????."
+    "message": "쿠키 알림, 알림 권한 요청, 소셜 위젯, AI 생성 방해 요소 및 기타 불편 요소를 추가로 차단합니다."
   },
   "uiPartial": {
-    "message": "?? ???"
+    "message": "일부 활성화"
+  },
+  "popupRuntimeHotfixReloadNotice": {
+    "message": "최신 Talon Defender 긴급 수정 사항을 적용하려면 이 탭을 새로고침하세요."
+  },
+  "popupRuntimeReloadNotice": {
+    "message": "최신 Talon Defender 보호 변경 사항을 완전히 적용하려면 이 탭을 새로고침하세요."
+  },
+  "popupRuntimeHotfixReloadButton": {
+    "message": "탭 새로고침"
   }
 }

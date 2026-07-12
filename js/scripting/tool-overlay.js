@@ -28,10 +28,49 @@ if ( self.ubolOverlay ) {
     self.ubolOverlay = undefined;
 }
 
+const runtimeDocumentURL = (() => {
+    const httpURLFrom = value => {
+        if (
+            typeof value !== 'string' ||
+            value === '' ||
+            value.length > 2048
+        ) { return; }
+        try {
+            const parsed = new URL(value);
+            if ( parsed.protocol === 'http:' || parsed.protocol === 'https:' ) {
+                return parsed;
+            }
+            if (
+                (parsed.protocol === 'blob:' || parsed.protocol === 'filesystem:') &&
+                /^https?:\/\//i.test(parsed.origin)
+            ) {
+                return new URL(parsed.origin);
+            }
+        } catch {
+        }
+    };
+    const candidates = [
+        document.location?.href,
+        document.location?.origin,
+        document.referrer,
+        ...Array.from(document.location?.ancestorOrigins || []),
+    ];
+    for ( const candidate of candidates ) {
+        const resolved = httpURLFrom(candidate);
+        if ( resolved ) { return resolved; }
+    }
+    try {
+        const resolved = httpURLFrom(self.opener?.location?.origin);
+        if ( resolved ) { return resolved; }
+    } catch {
+    }
+    return new URL('about:blank');
+})();
+
 self.ubolOverlay = {
     file: '',
     webext: typeof browser === 'object' ? browser : chrome,
-    url: new URL(document.baseURI),
+    url: runtimeDocumentURL,
     port: null,
     highlightedElements: [],
     secretAttr: (( ) => {

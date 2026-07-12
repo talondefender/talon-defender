@@ -25,6 +25,8 @@ import { toolOverlay } from './tool-overlay-ui.js';
 
 /******************************************************************************/
 
+let customRuntimeRestarted = false;
+
 function onMinimizeClicked() {
     dom.cl.toggle(dom.root, 'minimized');
 }
@@ -72,7 +74,8 @@ function onFilterClicked(ev) {
         toolOverlay.sendMessage({ what: 'removeCustomFilters',
             hostname: toolOverlay.url.hostname,
             selectors: [ selector ],
-        }).then(( ) => {
+        }).then(result => {
+            customRuntimeRestarted ||= result?.runtimeRefreshed === true;
             autoSelectFilter();
         });
         return;
@@ -83,7 +86,8 @@ function onFilterClicked(ev) {
         toolOverlay.sendMessage({ what: 'addCustomFilters',
             hostname: toolOverlay.url.hostname,
             selectors: [ selector ],
-        }).then(( ) => {
+        }).then(result => {
+            customRuntimeRestarted ||= result?.runtimeRefreshed === true;
             dom.cl.remove('.customFilter.on', 'on');
             dom.cl.add(filterElem, 'on');
             highlight();
@@ -129,6 +133,7 @@ function populateFilters(selectors) {
 /******************************************************************************/
 
 async function startUnpicker() {
+    customRuntimeRestarted = false;
     const selectors = await toolOverlay.sendMessage({
         what: 'customFiltersFromHostname',
         hostname: toolOverlay.url.hostname,
@@ -147,7 +152,9 @@ async function startUnpicker() {
 /******************************************************************************/
 
 async function quitUnpicker() {
-    await toolOverlay.postMessage({ what: 'startCustomFilters' });
+    if ( customRuntimeRestarted === false ) {
+        await toolOverlay.postMessage({ what: 'startCustomFilters' });
+    }
     toolOverlay.stop();
 }
 

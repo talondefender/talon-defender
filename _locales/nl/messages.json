@@ -640,9 +640,18 @@
     "message": "Extra bescherming"
   },
   "optionsFilterExtraProtectionNote": {
-    "message": "Blokkeert meer cookiemeldingen, aanmeldvensters, meldingsverzoeken, sociale widgets en andere ergernissen."
+    "message": "Blokkeert meer cookiemeldingen, meldingsverzoeken, sociale widgets, door AI gegenereerde ergernissen en andere afleidingen."
   },
   "uiPartial": {
     "message": "Gedeeltelijk actief"
+  },
+  "popupRuntimeHotfixReloadNotice": {
+    "message": "Laad dit tabblad opnieuw om de nieuwste Talon Defender-hotfix toe te passen."
+  },
+  "popupRuntimeReloadNotice": {
+    "message": "Laad dit tabblad opnieuw om de nieuwste beveiligingswijzigingen van Talon Defender volledig toe te passen."
+  },
+  "popupRuntimeHotfixReloadButton": {
+    "message": "Tabblad opnieuw laden"
   }
 }

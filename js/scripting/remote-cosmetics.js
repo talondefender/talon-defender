@@ -14,11 +14,50 @@ const shadowController = self.TalonShadowRootController;
 const blockHints = self.TalonBlockHintsController;
 const shadowRootsChangedEvent =
     shadowController?.ROOTS_CHANGED_EVENT || 'talon-shadow-roots-changed';
+const protectionChangedEvent =
+    guard?.PROTECTION_CHANGED_EVENT || 'talon-protection-changed';
 if ( runtime?.sendMessage === undefined || storage?.get === undefined ) { return; }
 
 if ( self.TalonRemoteCosmeticsController ) { return; }
 
-const hostname = (self.location?.hostname || '').toLowerCase();
+const hostname = (() => {
+    const hostnameFrom = value => {
+        if (
+            typeof value !== 'string' ||
+            value === '' ||
+            value.length > 2048
+        ) { return ''; }
+        try {
+            const parsed = new URL(value);
+            if ( parsed.protocol === 'http:' || parsed.protocol === 'https:' ) {
+                return parsed.hostname.toLowerCase();
+            }
+            if (
+                (parsed.protocol === 'blob:' || parsed.protocol === 'filesystem:') &&
+                /^https?:\/\//i.test(parsed.origin)
+            ) {
+                return new URL(parsed.origin).hostname.toLowerCase();
+            }
+        } catch {
+        }
+        return '';
+    };
+    const candidates = [
+        self.location?.origin,
+        self.location?.href,
+        document.referrer,
+        ...Array.from(self.location?.ancestorOrigins || []),
+    ];
+    for ( const candidate of candidates ) {
+        const resolved = hostnameFrom(candidate);
+        if ( resolved !== '' ) { return resolved; }
+    }
+    try {
+        return hostnameFrom(self.opener?.location?.origin);
+    } catch {
+    }
+    return '';
+})();
 if ( hostname === '' ) { return; }
 
 const registrableDomain = hostname => {
@@ -108,15 +147,49 @@ const getCosmetics = ( ) => {
         if ( maybePromise?.then ) {
             return maybePromise.then(bin => bin?.[STORAGE_KEY]);
         }
-    } catch {
+    } catch (reason) {
+        return Promise.reject(reason);
     }
-    return new Promise(resolve => {
+    return new Promise((resolve, reject) => {
         try {
-            storage.get(STORAGE_KEY, bin => resolve(bin?.[STORAGE_KEY]));
-        } catch {
-            resolve(undefined);
+            storage.get(STORAGE_KEY, bin => {
+                const lastError = runtime?.lastError;
+                if ( lastError ) {
+                    reject(new Error(lastError.message || 'storage.get failed'));
+                    return;
+                }
+                resolve(bin?.[STORAGE_KEY]);
+            });
+        } catch (reason) {
+            reject(reason);
         }
     });
+};
+
+const UNSAFE_REMOTE_PSEUDO_RE = /:(?:has|visited|target|focus(?:-within|-visible)?|checked|indeterminate|valid|invalid|user-valid|user-invalid)\b/i;
+
+const isSafeRemoteSelector = selector => {
+    if (
+        selector === '' ||
+        selector.length > 256 ||
+        /[\u0000-\u001F\u007F{};@]/.test(selector) ||
+        UNSAFE_REMOTE_PSEUDO_RE.test(selector)
+    ) {
+        return false;
+    }
+    const combinatorCount = (selector.match(/[>+~]|\s+(?=[.#[:*a-z])/gi) || []).length;
+    const pseudoCount = (selector.match(/:{1,2}[a-z-]+/gi) || []).length;
+    const attributeCount = (selector.match(/\[/g) || []).length;
+    if ( combinatorCount > 8 || pseudoCount > 8 || attributeCount > 12 ) {
+        return false;
+    }
+    try {
+        const probe = document.createElement('div');
+        probe.matches(selector);
+    } catch {
+        return false;
+    }
+    return true;
 };
 
 const normalizeSelectors = selectors => {
@@ -125,7 +198,7 @@ const normalizeSelectors = selectors => {
     for ( const sel of selectors ) {
         if ( typeof sel !== 'string' ) { continue; }
         const s = sel.trim();
-        if ( s === '' || s.length > 256 ) { continue; }
+        if ( isSafeRemoteSelector(s) === false ) { continue; }
         if ( seen.has(s) ) { continue; }
         seen.add(s);
         out.push(s);
@@ -136,31 +209,32 @@ const normalizeSelectors = selectors => {
 const buildCssChunks = selectors => {
     const chunks = [];
     let droppedAtApply = 0;
-    let currentSelectors = [];
-    let currentLength = CSS_RULE_SUFFIX.length;
+    let currentRules = [];
+    let currentLength = 0;
 
     const flush = ( ) => {
-        if ( currentSelectors.length === 0 ) { return; }
-        chunks.push(`${currentSelectors.join(',')}${CSS_RULE_SUFFIX}`);
-        currentSelectors = [];
-        currentLength = CSS_RULE_SUFFIX.length;
+        if ( currentRules.length === 0 ) { return; }
+        chunks.push(currentRules.join('\n'));
+        currentRules = [];
+        currentLength = 0;
     };
 
     for ( const selector of selectors ) {
         if ( typeof selector !== 'string' || selector === '' ) { continue; }
-        const selectorLength = selector.length + (currentSelectors.length === 0 ? 0 : 1);
+        const rule = `${selector}${CSS_RULE_SUFFIX}`;
+        const ruleLength = rule.length + (currentRules.length === 0 ? 0 : 1);
         if (
-            currentSelectors.length !== 0 &&
-            (currentLength + selectorLength) > MAX_CHUNK_CSS_LENGTH
+            currentRules.length !== 0 &&
+            (currentLength + ruleLength) > MAX_CHUNK_CSS_LENGTH
         ) {
             flush();
         }
-        if ( (CSS_RULE_SUFFIX.length + selector.length) > MAX_CHUNK_CSS_LENGTH ) {
+        if ( rule.length > MAX_CHUNK_CSS_LENGTH ) {
             droppedAtApply += 1;
             continue;
         }
-        currentSelectors.push(selector);
-        currentLength += selectorLength;
+        currentRules.push(rule);
+        currentLength += ruleLength;
     }
 
     flush();
@@ -190,13 +264,21 @@ const scopeStates = new Map([
         cssText: '',
         documentStyle: undefined,
         shadowStyleMap: new Map(),
+        sharedSheet: undefined,
+        sharedSheetCssText: '',
+        adoptedRoots: new Set(),
         installed: false,
+        generation: 0,
     } ],
     [ SCOPE_HOST, {
         cssText: '',
         documentStyle: undefined,
         shadowStyleMap: new Map(),
+        sharedSheet: undefined,
+        sharedSheetCssText: '',
+        adoptedRoots: new Set(),
         installed: false,
+        generation: 0,
     } ],
 ]);
 const runtimeStatsByScope = new Map();
@@ -214,9 +296,6 @@ const upsertStyleText = (style, cssText) => {
     return true;
 };
 
-const getScopeStyleSelector = scope =>
-    `style[${STYLE_MARKER_ATTR}="1"][${STYLE_SCOPE_ATTR}="${scope}"]`;
-
 const ensureDocumentStyle = (scope, cssText) => {
     if ( cssText === '' ) { return null; }
     const scopeState = getScopeState(scope);
@@ -225,22 +304,10 @@ const ensureDocumentStyle = (scope, cssText) => {
     let style = scopeState.documentStyle;
     if ( style instanceof HTMLStyleElement === false ) {
         try {
-            style = document.getElementById(scopeConfig.documentStyleId);
-        } catch {
-            style = null;
-        }
-    }
-    if ( style instanceof HTMLStyleElement === false ) {
-        try {
-            style = document.querySelector?.(getScopeStyleSelector(scope)) || null;
-        } catch {
-            style = null;
-        }
-    }
-    if ( style instanceof HTMLStyleElement === false ) {
-        try {
             style = document.createElement('style');
-            style.id = scopeConfig.documentStyleId;
+            if ( document.getElementById(scopeConfig.documentStyleId) === null ) {
+                style.id = scopeConfig.documentStyleId;
+            }
             style.setAttribute(STYLE_MARKER_ATTR, '1');
             style.setAttribute(STYLE_SCOPE_ATTR, scope);
             const parent = getDocumentStyleParent();
@@ -255,18 +322,62 @@ const ensureDocumentStyle = (scope, cssText) => {
     return style;
 };
 
+const ensureSharedSheet = (scope, cssText) => {
+    const scopeState = getScopeState(scope);
+    if ( scopeState === null || typeof self.CSSStyleSheet !== 'function' ) {
+        return null;
+    }
+    let sheet = scopeState.sharedSheet;
+    if ( sheet === undefined ) {
+        try { sheet = new self.CSSStyleSheet(); } catch {
+            return null;
+        }
+        scopeState.sharedSheet = sheet;
+    }
+    if ( scopeState.sharedSheetCssText !== cssText ) {
+        try {
+            sheet.replaceSync(cssText);
+            scopeState.sharedSheetCssText = cssText;
+        } catch {
+            // Keep ownership cleanup possible if a browser rejects an update
+            // (for example under stylesheet resource pressure). An orphaned
+            // adopted sheet would otherwise keep stale selectors active.
+            for ( const root of scopeState.adoptedRoots ) {
+                try {
+                    root.adoptedStyleSheets = Array.from(root.adoptedStyleSheets || [])
+                        .filter(candidate => candidate !== sheet);
+                } catch {
+                }
+            }
+            scopeState.adoptedRoots.clear();
+            scopeState.sharedSheet = undefined;
+            scopeState.sharedSheetCssText = '';
+            return null;
+        }
+    }
+    return sheet;
+};
+
 const ensureShadowRootStyle = (scope, root, cssText) => {
     if ( root instanceof DocumentFragment === false ) { return null; }
     const scopeState = getScopeState(scope);
     if ( scopeState === null ) { return null; }
-    let style = scopeState.shadowStyleMap.get(root) || null;
-    if ( style instanceof HTMLStyleElement === false ) {
+    const sharedSheet = ensureSharedSheet(scope, cssText);
+    if ( sharedSheet !== null && 'adoptedStyleSheets' in root ) {
         try {
-            style = root.querySelector?.(getScopeStyleSelector(scope)) || null;
+            const current = Array.from(root.adoptedStyleSheets || []);
+            if ( current.includes(sharedSheet) === false ) {
+                root.adoptedStyleSheets = [ ...current, sharedSheet ];
+            }
+            scopeState.adoptedRoots.add(root);
+            const oldStyle = scopeState.shadowStyleMap.get(root);
+            if ( oldStyle instanceof HTMLStyleElement ) { oldStyle.remove(); }
+            scopeState.shadowStyleMap.delete(root);
+            return sharedSheet;
         } catch {
-            style = null;
         }
     }
+    let style = scopeState.shadowStyleMap.get(root) || null;
     if ( style instanceof HTMLStyleElement === false ) {
         try {
             style = document.createElement('style');
@@ -302,13 +413,25 @@ const removeShadowStyle = (scope, root) => {
         }
     }
     scopeState.shadowStyleMap.delete(root);
+    if ( scopeState.adoptedRoots.has(root) && scopeState.sharedSheet !== undefined ) {
+        try {
+            root.adoptedStyleSheets = Array.from(root.adoptedStyleSheets || [])
+                .filter(sheet => sheet !== scopeState.sharedSheet);
+        } catch {
+        }
+        scopeState.adoptedRoots.delete(root);
+    }
 };
 
 const syncShadowStyles = scope => {
     const scopeState = getScopeState(scope);
     if ( scopeState === null ) { return; }
     if ( scopeState.cssText === '' ) {
-        for ( const root of Array.from(scopeState.shadowStyleMap.keys()) ) {
+        const appliedRoots = new Set([
+            ...scopeState.shadowStyleMap.keys(),
+            ...scopeState.adoptedRoots,
+        ]);
+        for ( const root of appliedRoots ) {
             removeShadowStyle(scope, root);
         }
         return;
@@ -320,19 +443,26 @@ const syncShadowStyles = scope => {
         activeRoots.add(root);
         ensureShadowRootStyle(scope, root, scopeState.cssText);
     }
-    for ( const root of Array.from(scopeState.shadowStyleMap.keys()) ) {
+    const appliedRoots = new Set([
+        ...scopeState.shadowStyleMap.keys(),
+        ...scopeState.adoptedRoots,
+    ]);
+    for ( const root of appliedRoots ) {
         if ( activeRoots.has(root) ) { continue; }
         removeShadowStyle(scope, root);
     }
 };
 
-const clearAppliedCss = scope => {
+const clearAppliedCss = (scope, { invalidate = true } = {}) => {
     const scopeState = getScopeState(scope);
     if ( scopeState === null ) { return Promise.resolve(); }
+    if ( invalidate ) { scopeState.generation += 1; }
     scopeState.cssText = '';
     runtimeStatsByScope.delete(scope);
     removeDocumentStyle(scope);
     syncShadowStyles(scope);
+    scopeState.sharedSheet = undefined;
+    scopeState.sharedSheetCssText = '';
     return Promise.resolve();
 };
 
@@ -358,12 +488,13 @@ const sendRuntimeStats = (scope, {
         return Promise.resolve();
     }
     runtimeStatsByScope.set(scope, nextStats);
-    return sendMessage({
+    sendMessage({
         what: 'recordRemoteCosmeticsRuntimeStats',
         hostname,
         laneScope: scope,
         ...nextStats,
-    });
+    }).catch(() => {});
+    return Promise.resolve();
 };
 
 const resolveScopeSelectors = (scope, cosmetics) => {
@@ -417,10 +548,14 @@ const applyScopeCosmetics = async scope => {
             droppedAtApply: 0,
         };
     }
+    const generation = ++scopeState.generation;
 
     await guard?.whenReady?.();
+    if ( generation !== scopeState.generation ) {
+        return { applied: false, laneScope: scope, stale: true };
+    }
     if ( guard?.shouldRunSubsystem?.('remoteCosmetics') === false ) {
-        await clearAppliedCss(scope);
+        await clearAppliedCss(scope, { invalidate: false });
         await sendRuntimeStats(scope);
         return {
             applied: false,
@@ -433,8 +568,11 @@ const applyScopeCosmetics = async scope => {
     }
 
     const cosmetics = await getCosmetics();
+    if ( generation !== scopeState.generation ) {
+        return { applied: false, laneScope: scope, stale: true };
+    }
     if ( cosmetics instanceof Object === false ) {
-        await clearAppliedCss(scope);
+        await clearAppliedCss(scope, { invalidate: false });
         await sendRuntimeStats(scope);
         return {
             applied: false,
@@ -457,10 +595,9 @@ const applyScopeCosmetics = async scope => {
     if ( scopeState.cssText !== cssText ) {
         scopeState.cssText = cssText;
         if ( cssText === '' ) {
-            await clearAppliedCss(scope);
+            await clearAppliedCss(scope, { invalidate: false });
         } else {
             ensureDocumentStyle(scope, cssText);
-            shadowController?.rescanNow?.();
             syncShadowStyles(scope);
         }
     }
@@ -474,21 +611,13 @@ const applyScopeCosmetics = async scope => {
         hostSpecificSelectorCount: hostSpecificNormalized.length,
         droppedAtApply,
     });
+    if ( generation !== scopeState.generation ) {
+        return { applied: false, laneScope: scope, stale: true };
+    }
 
     if ( scope === SCOPE_HOST && hostSpecificNormalized.length !== 0 ) {
         blockHints?.noteSelectorMatches?.(hostSpecificNormalized, {
             ancestors: 1,
-        });
-    }
-
-    if (
-        scope === SCOPE_HOST &&
-        hostSpecificNormalized.length >= 3 &&
-        guard?.isProtectedSurface?.() !== true
-    ) {
-        await sendMessage({
-            what: 'promoteGenericHigh',
-            hostname: pageDomain || hostname,
         });
     }
 
@@ -504,14 +633,35 @@ const applyScopeCosmetics = async scope => {
 
 const refreshScopes = scopes => Promise.all(scopes.map(scope => applyScopeCosmetics(scope)));
 
-const shadowRootsChangedListener = ( ) => {
+const shadowRootsChangedListener = event => {
+    const addedRoots = Array.isArray(event?.detail?.addedRoots)
+        ? event.detail.addedRoots
+        : null;
+    const removedRoots = Array.isArray(event?.detail?.removedRoots)
+        ? event.detail.removedRoots
+        : [];
     for ( const [ scope, state ] of scopeStates ) {
         if ( state.cssText === '' ) { continue; }
-        syncShadowStyles(scope);
+        if ( addedRoots === null ) {
+            syncShadowStyles(scope);
+            continue;
+        }
+        for ( const root of removedRoots ) {
+            removeShadowStyle(scope, root);
+        }
+        for ( const root of addedRoots ) {
+            if ( root instanceof DocumentFragment === false ) { continue; }
+            ensureShadowRootStyle(scope, root, state.cssText);
+        }
     }
 };
 
+const protectionChangedListener = () => {
+    self.TalonRemoteCosmeticsController?.refresh?.().catch(() => {});
+};
+
 self.addEventListener?.(shadowRootsChangedEvent, shadowRootsChangedListener);
+self.addEventListener?.(protectionChangedEvent, protectionChangedListener);
 
 self.TalonRemoteCosmeticsController = {
     install(options = {}) {
@@ -550,6 +700,7 @@ self.TalonRemoteCosmeticsController = {
             return clearAppliedCss(scope);
         }
         self.removeEventListener?.(shadowRootsChangedEvent, shadowRootsChangedListener);
+        self.removeEventListener?.(protectionChangedEvent, protectionChangedListener);
         for ( const [, state] of scopeStates ) {
             state.installed = false;
         }

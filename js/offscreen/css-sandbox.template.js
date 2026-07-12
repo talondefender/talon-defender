@@ -73,7 +73,7 @@ for ( let i = 0, n = regexes.length; i < n; i += 3 ) {
         regexes[i+1] = new RegExp(regexes[i+1]);
     }
     if ( regexes[i+1].test(thisHostname) === false ) { continue; }
-    selectorsFromListIndex(cssSpecificData, regexes[i+2]);
+    selectorsFromListIndex(regexes[i+2]);
 }
 
 const s = [];
@@ -86,22 +86,45 @@ for ( const selector of selectors ) {
     }
 }
 
-if ( s.length !== 0 ) {
-    self.cssAPI.insert(`${s.join(',\n')}{display:none!important;}`);
-}
-
-if ( p.length !== 0 ) {
-    await self.ProceduralFiltererAPI;
-    self.listsProceduralFiltererAPI = new self.ProceduralFiltererAPI();
-
-    const declaratives = p.filter(a => a.cssable);
-    if ( declaratives.length !== 0 ) {
-        self.listsProceduralFiltererAPI.addDeclaratives(declaratives);
+const sandboxScope = 'sandbox';
+try {
+    if ( s.length !== 0 ) {
+        await self.cssAPI.insert(
+            `${s.join(',\n')}{display:none!important;}`,
+            sandboxScope
+        );
     }
-    const procedurals = p.filter(a => !a.cssable);
-    if ( procedurals.length !== 0 ) {
-        self.listsProceduralFiltererAPI.addProcedurals(procedurals);
+
+    if ( p.length !== 0 ) {
+        await self.ProceduralFiltererAPI;
+        if ( typeof self.ProceduralFiltererAPI !== 'function' ) {
+            throw new Error('sandbox procedural CSS API unavailable');
+        }
+        self.listsProceduralFiltererAPI =
+            new self.ProceduralFiltererAPI(sandboxScope);
+        await self.listsProceduralFiltererAPI.addSelectors(p);
     }
+} catch (reason) {
+    const cleanup = [];
+    if ( self.listsProceduralFiltererAPI instanceof Object ) {
+        cleanup.push(Promise.resolve(
+            self.listsProceduralFiltererAPI.reset()
+        ));
+    }
+    if ( typeof self.cssAPI?.removeAll === 'function' ) {
+        cleanup.push(Promise.resolve(self.cssAPI.removeAll(sandboxScope)));
+    }
+    const results = await Promise.allSettled(cleanup);
+    const failures = results
+        .filter(result => result.status === 'rejected')
+        .map(result => result.reason);
+    if ( failures.length !== 0 ) {
+        throw new AggregateError(
+            [ reason, ...failures ],
+            'sandbox cosmetic rollback failed'
+        );
+    }
+    throw reason;
 }
 
 self.isolatedAPI = undefined;

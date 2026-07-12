@@ -637,12 +637,21 @@
     "message": "この端末で使う"
   },
   "optionsFilterExtraProtectionLabel": {
-    "message": "?????"
+    "message": "追加保護"
   },
   "optionsFilterExtraProtectionNote": {
-    "message": "Cookie ??????????????????????????????????????????????????????????"
+    "message": "Cookie 通知、通知許可の要求、ソーシャルウィジェット、AI 生成の迷惑要素、その他の邪魔な要素をさらにブロックします。"
   },
   "uiPartial": {
-    "message": "????"
+    "message": "一部有効"
+  },
+  "popupRuntimeHotfixReloadNotice": {
+    "message": "最新の Talon Defender 修正を適用するには、このタブを再読み込みしてください。"
+  },
+  "popupRuntimeReloadNotice": {
+    "message": "Talon Defender の保護設定の変更を完全に適用するには、このタブを再読み込みしてください。"
+  },
+  "popupRuntimeHotfixReloadButton": {
+    "message": "タブを再読み込み"
   }
 }

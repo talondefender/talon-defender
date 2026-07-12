@@ -240,6 +240,122 @@ export function patternMatchesHostname(pattern, hostname) {
     return hn === p || hn.endsWith(`.${p}`);
 }
 
+const remoteAutomationMatchFromHostname = (hostname, exact = false) =>
+    exact ? `*://${hostname}/*` : `*://*.${hostname}/*`;
+
+/**
+ * Return the narrow Chrome match-pattern intersection for active signed
+ * automation directives and the current Optimal/Complete filtering surface.
+ * Cross-TLD scopes such as `example.*` cannot be expressed by an MV3 match
+ * pattern without registering globally, so they are retained only when a
+ * concrete enabled-mode hostname makes an exact safe intersection possible.
+ */
+export function getRemoteAutomationRegistrationMatches(
+    directives,
+    enabledRulesetIds,
+    filteringModeDetails
+) {
+    if ( Array.isArray(directives) === false ) { return []; }
+    const enabled = enabledRulesetIds instanceof Set
+        ? enabledRulesetIds
+        : new Set(Array.isArray(enabledRulesetIds) ? enabledRulesetIds : []);
+    const allowedModePatterns = [];
+    for ( const mode of [
+        filteringModeDetails?.optimal,
+        filteringModeDetails?.complete,
+    ]) {
+        if ( mode instanceof Set === false && Array.isArray(mode) === false ) {
+            continue;
+        }
+        for ( const value of mode ) {
+            const normalized = normalizeScopedHostPattern(value);
+            if ( normalized !== '' ) { allowedModePatterns.push(normalized); }
+        }
+    }
+    const modeIsGlobal = allowedModePatterns.some(pattern =>
+        pattern === '*' || pattern === 'all-urls'
+    );
+    const concreteModeHostnames = Array.from(new Set(allowedModePatterns
+        .filter(pattern => pattern !== '*' && pattern !== 'all-urls')
+        .map(pattern => pattern.startsWith('=')
+            ? pattern.slice(1)
+            : pattern.startsWith('*.')
+                ? pattern.slice(2)
+                : pattern.endsWith('.*')
+                    ? ''
+                    : pattern
+        )
+        .filter(Boolean)));
+    const matches = new Set();
+
+    const exactHostIsEnabled = hostname => modeIsGlobal ||
+        allowedModePatterns.some(pattern => patternMatchesHostname(pattern, hostname));
+
+    for ( const directive of directives ) {
+        if (
+            directive instanceof Object === false ||
+            typeof directive.action !== 'string' ||
+            directive.action.trim() === '' ||
+            Array.isArray(directive.hosts) === false ||
+            directive.hosts.length === 0 ||
+            Array.isArray(directive.selectors) === false ||
+            directive.selectors.length === 0
+        ) {
+            continue;
+        }
+        const required = Array.isArray(directive.requiresRulesets)
+            ? directive.requiresRulesets
+            : [];
+        if ( required.every(id => enabled.has(id)) === false ) { continue; }
+
+        for ( const value of directive.hosts ) {
+            const pattern = normalizeScopedHostPattern(value, { allowGlobal: false });
+            if ( pattern === '' ) { continue; }
+            if ( pattern.startsWith('=') ) {
+                const hostname = pattern.slice(1);
+                if ( exactHostIsEnabled(hostname) ) {
+                    matches.add(remoteAutomationMatchFromHostname(hostname, true));
+                }
+                continue;
+            }
+            if ( pattern.endsWith('.*') ) {
+                // MV3 match patterns cannot express a wildcard TLD. When the
+                // filtering mode names concrete hosts, preserve only those
+                // exact intersections instead of widening registration.
+                for ( const hostname of concreteModeHostnames ) {
+                    if ( patternMatchesHostname(pattern, hostname) ) {
+                        matches.add(remoteAutomationMatchFromHostname(hostname, true));
+                    }
+                }
+                continue;
+            }
+            const hostname = pattern.startsWith('*.')
+                ? pattern.slice(2)
+                : pattern;
+            if ( modeIsGlobal ) {
+                matches.add(remoteAutomationMatchFromHostname(hostname));
+                continue;
+            }
+            for ( const allowedHostname of concreteModeHostnames ) {
+                let intersection = '';
+                if (
+                    hostname === allowedHostname ||
+                    hostname.endsWith(`.${allowedHostname}`)
+                ) {
+                    intersection = hostname;
+                } else if ( allowedHostname.endsWith(`.${hostname}`) ) {
+                    intersection = allowedHostname;
+                }
+                if ( intersection !== '' ) {
+                    matches.add(remoteAutomationMatchFromHostname(intersection));
+                }
+            }
+        }
+    }
+
+    return Array.from(matches).sort();
+}
+
 export function registrableDomain(hostname) {
     return resolveRegistrableDomain(hostname);
 }

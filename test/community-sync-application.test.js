@@ -6,6 +6,20 @@ import { webcrypto } from 'node:crypto';
 const fallbackRules = JSON.parse(
   await fs.readFile(new URL('../automation/community-fallback.json', import.meta.url), 'utf8')
 );
+const compiledStrictBlockRules = {
+  'ublock-filters': JSON.parse(
+    await fs.readFile(new URL('../rulesets/strictblock/ublock-filters.json', import.meta.url), 'utf8')
+  ),
+  'ublock-badware': JSON.parse(
+    await fs.readFile(new URL('../rulesets/strictblock/ublock-badware.json', import.meta.url), 'utf8')
+  ),
+};
+const compiledUblockRegexRules = JSON.parse(
+  await fs.readFile(new URL('../rulesets/regex/ublock-filters.json', import.meta.url), 'utf8')
+);
+const compiledTalonSiteFixRules = JSON.parse(
+  await fs.readFile(new URL('../rulesets/main/talon-site-fixes.json', import.meta.url), 'utf8')
+);
 
 const clone = value => structuredClone(value);
 
@@ -16,12 +30,35 @@ const alarmClears = [];
 const permissionsState = {
   broadHostPermissions: true,
 };
+const storageReadFailures = {
+  local: new Map(),
+  session: new Map(),
+};
+const storageInvalidReadResponses = {
+  local: new Map(),
+  session: new Map(),
+};
+let localStorageReadFailurePredicate = null;
 const rulesetResources = {
   '/rulesets/ruleset-details.json': [
     {
       id: 'strict',
       rules: {
         strictblock: 3,
+        regex: 0,
+      },
+    },
+    {
+      id: 'ublock-filters',
+      rules: {
+        strictblock: compiledStrictBlockRules['ublock-filters'].length,
+        regex: compiledUblockRegexRules.length,
+      },
+    },
+    {
+      id: 'ublock-badware',
+      rules: {
+        strictblock: compiledStrictBlockRules['ublock-badware'].length,
         regex: 0,
       },
     },
@@ -58,22 +95,62 @@ const rulesetResources = {
       },
     },
   ],
+  '/rulesets/strictblock/ublock-filters.json': compiledStrictBlockRules['ublock-filters'],
+  '/rulesets/strictblock/ublock-badware.json': compiledStrictBlockRules['ublock-badware'],
+  '/rulesets/regex/ublock-filters.json': compiledUblockRegexRules,
+  '/rulesets/main/talon-site-fixes.json': compiledTalonSiteFixRules,
 };
 
 const dnrState = {
   dynamicRules: [],
   sessionRules: [],
   failCommunityUpdateCount: 0,
+  failUserUpdateCount: 0,
   failSessionUpdateCount: 0,
   enabledRulesets: [],
   reorderReturnedRules: false,
+  dynamicUpdateCalls: [],
+  sessionUpdateCalls: [],
 };
 
 const DEFAULT_MAX_NUMBER_OF_DYNAMIC_RULES = 5000;
 const DEFAULT_MAX_NUMBER_OF_REGEX_RULES = 1000;
 
-const makeStorageArea = data => ({
+const consumeStorageReadFault = (faults, key) => {
+  const count = faults.get(key) || 0;
+  if (count === 0) { return false; }
+  if (count === 1) {
+    faults.delete(key);
+  } else {
+    faults.set(key, count - 1);
+  }
+  return true;
+};
+
+const failNextStorageRead = (areaName, key, count = 1) => {
+  storageReadFailures[areaName].set(key, count);
+};
+
+const invalidateNextStorageRead = (areaName, key, count = 1) => {
+  storageInvalidReadResponses[areaName].set(key, count);
+};
+
+const makeStorageArea = (data, areaName) => ({
   async get(key) {
+    if (
+      areaName === 'local' &&
+      typeof localStorageReadFailurePredicate === 'function' &&
+      localStorageReadFailurePredicate(key)
+    ) {
+      localStorageReadFailurePredicate = null;
+      throw new Error('simulated transient local storage snapshot failure');
+    }
+    if (consumeStorageReadFault(storageReadFailures[areaName], key)) {
+      throw new Error(`simulated ${areaName} storage read failure for ${key}`);
+    }
+    if (consumeStorageReadFault(storageInvalidReadResponses[areaName], key)) {
+      return null;
+    }
     if (key === null) {
       return clone(data);
     }
@@ -143,6 +220,25 @@ const cloneRulesForApi = rules => {
     : cloned;
 };
 
+const assertUniqueRuleIds = rules => {
+  const ids = rules.map(rule => rule.id);
+  if (new Set(ids).size !== ids.length) {
+    throw new Error('Rule does not have a unique ID');
+  }
+};
+
+const assertSupportedRuleConditions = rules => {
+  if (dnr.RuleConditionKeys?.TOP_DOMAINS) { return; }
+  for (const rule of rules) {
+    if (rule.condition?.topDomains !== undefined) {
+      throw new Error('RuleCondition.topDomains is not supported');
+    }
+    if (rule.condition?.excludedTopDomains !== undefined) {
+      throw new Error('RuleCondition.excludedTopDomains is not supported');
+    }
+  }
+};
+
 const dnr = {
   MAX_NUMBER_OF_DYNAMIC_RULES: DEFAULT_MAX_NUMBER_OF_DYNAMIC_RULES,
   MAX_NUMBER_OF_REGEX_RULES: DEFAULT_MAX_NUMBER_OF_REGEX_RULES,
@@ -155,10 +251,20 @@ const dnr = {
       dnrState.failCommunityUpdateCount -= 1;
       throw new Error('simulated community apply failure');
     }
-    dnrState.dynamicRules = dnrState.dynamicRules.filter(
+    const touchesUserRules = addRules.some(rule => rule.id >= 9000000) ||
+      removeRuleIds.some(id => id >= 9000000);
+    if (touchesUserRules && dnrState.failUserUpdateCount > 0) {
+      dnrState.failUserUpdateCount -= 1;
+      throw new Error('simulated user-rule apply failure');
+    }
+    const nextRules = dnrState.dynamicRules.filter(
       rule => removeRuleIds.includes(rule.id) === false
     );
-    dnrState.dynamicRules.push(...clone(addRules));
+    nextRules.push(...clone(addRules));
+    assertUniqueRuleIds(nextRules);
+    assertSupportedRuleConditions(nextRules);
+    dnrState.dynamicUpdateCalls.push(clone({ addRules, removeRuleIds }));
+    dnrState.dynamicRules = nextRules;
   },
   async getSessionRules(options = {}) {
     return cloneRulesForApi(filterRulesByIds(dnrState.sessionRules, options.ruleIds));
@@ -168,10 +274,13 @@ const dnr = {
       dnrState.failSessionUpdateCount -= 1;
       throw new Error('simulated session update failure');
     }
-    dnrState.sessionRules = dnrState.sessionRules.filter(
+    const nextRules = dnrState.sessionRules.filter(
       rule => removeRuleIds.includes(rule.id) === false
     );
-    dnrState.sessionRules.push(...clone(addRules));
+    nextRules.push(...clone(addRules));
+    assertUniqueRuleIds(nextRules);
+    dnrState.sessionUpdateCalls.push(clone({ addRules, removeRuleIds }));
+    dnrState.sessionRules = nextRules;
   },
   async isRegexSupported() {
     return { isSupported: true };
@@ -214,8 +323,8 @@ const browserStub = {
     },
   },
   storage: {
-    local: makeStorageArea(storageData),
-    session: makeStorageArea(sessionData),
+    local: makeStorageArea(storageData, 'local'),
+    session: makeStorageArea(sessionData, 'session'),
   },
   runtime: {
     getManifest() {
@@ -333,8 +442,13 @@ const {
   syncCommunityRules,
 } = await import(new URL('../js/community-sync.js', import.meta.url));
 const {
+  excludeFromStrictBlock,
+  patchDefaultRulesets,
+  repairDnrReconciliation,
   updateCommunityRules,
+  updateDynamicRules,
   updateSessionRules,
+  updateTalonSiteFixRuntimeRules,
   updateUserRules,
 } = await import(new URL('../js/ruleset-manager.js', import.meta.url));
 const { dnr: compatDnr } = await import(new URL('../js/ext-compat.js', import.meta.url));
@@ -477,20 +591,33 @@ const applyOverlayBundle = async (siteKey, options = {}) => {
 };
 
 const resetEnvironment = () => {
+  localStorageReadFailurePredicate = null;
   for (const key of Object.keys(storageData)) {
     delete storageData[key];
   }
   for (const key of Object.keys(sessionData)) {
     delete sessionData[key];
   }
+  for (const faults of [
+    storageReadFailures.local,
+    storageReadFailures.session,
+    storageInvalidReadResponses.local,
+    storageInvalidReadResponses.session,
+  ]) {
+    faults.clear();
+  }
   alarmCreates.length = 0;
   alarmClears.length = 0;
   dnrState.dynamicRules.length = 0;
   dnrState.sessionRules.length = 0;
   dnrState.failCommunityUpdateCount = 0;
+  dnrState.failUserUpdateCount = 0;
   dnrState.failSessionUpdateCount = 0;
   dnrState.enabledRulesets.length = 0;
   dnrState.reorderReturnedRules = false;
+  dnrState.dynamicUpdateCalls.length = 0;
+  dnrState.sessionUpdateCalls.length = 0;
+  delete dnr.RuleConditionKeys;
   dnr.MAX_NUMBER_OF_DYNAMIC_RULES = DEFAULT_MAX_NUMBER_OF_DYNAMIC_RULES;
   dnr.MAX_NUMBER_OF_REGEX_RULES = DEFAULT_MAX_NUMBER_OF_REGEX_RULES;
   remoteBundle = null;
@@ -500,11 +627,278 @@ const resetEnvironment = () => {
     delete manifestExtras[key];
   }
   permissionsState.broadHostPermissions = true;
+  rulesetConfig.enabledRulesets = [];
   rulesetConfig.communityRulesEnabled = true;
   rulesetConfig.communityRulesURL = '';
   rulesetConfig.developerMode = false;
   rulesetConfig.strictBlockMode = true;
 };
+
+test('compiled strict-block packs receive globally unique IDs within Talon regex headroom', { concurrency: false }, async () => {
+  resetEnvironment();
+  dnrState.enabledRulesets.push('ublock-filters', 'ublock-badware');
+
+  const sourceIds = compiledStrictBlockRules['ublock-filters'].map(rule => rule.id);
+  const badwareIds = new Set(compiledStrictBlockRules['ublock-badware'].map(rule => rule.id));
+  assert.ok(sourceIds.some(id => badwareIds.has(id)), 'fixture must contain overlapping compiled IDs');
+
+  const result = await updateSessionRules();
+
+  assert.equal(result?.error, undefined);
+  const strictRules = dnrState.sessionRules.filter(rule => rule.priority === 29);
+  assert.equal(strictRules.length, 799);
+  assert.equal(new Set(strictRules.map(rule => rule.id)).size, strictRules.length);
+  assert.deepEqual(strictRules.map(rule => rule.id), Array.from({ length: 799 }, (_, i) => i + 1));
+  assert.ok(strictRules.every(rule => (
+    rule.condition.regexFilter !== undefined &&
+    rule.action.redirect.regexSubstitution ===
+      'chrome-extension://talon-defender-test/strictblock.html#\\0'
+  )));
+});
+
+test('strict-block regex exhaustion preserves non-regex hostname exclusions', { concurrency: false }, async () => {
+  resetEnvironment();
+  dnr.MAX_NUMBER_OF_REGEX_RULES = 5;
+  dnrState.enabledRulesets.push('strict');
+  dnrState.dynamicRules.push(...Array.from({ length: 4 }, (_, i) => ({
+    id: i + 1,
+    action: { type: 'block' },
+    condition: {
+      regexFilter: `^https:\\/\\/dynamic-${i + 1}\\.example\\/`,
+      resourceTypes: ['script'],
+    },
+  })));
+  await browserStub.storage.local.set({
+    excludedStrictBlockHostnames: ['trusted.example'],
+  });
+
+  const result = await updateSessionRules();
+
+  assert.equal(result?.error, undefined);
+  assert.deepEqual(dnrState.sessionRules, [{
+    id: 1,
+    action: { type: 'allow' },
+    condition: {
+      requestDomains: ['trusted.example'],
+      resourceTypes: ['main_frame'],
+    },
+    priority: 29,
+  }]);
+});
+
+test('strict-block exclusion read failures preserve installed session rules until retry', { concurrency: false }, async () => {
+  resetEnvironment();
+  dnrState.enabledRulesets.push('strict');
+  const installedBefore = [{
+    id: 77,
+    action: {
+      type: 'redirect',
+      redirect: {
+        regexSubstitution: 'chrome-extension://talon-defender-test/strictblock.html#\\0',
+      },
+    },
+    condition: {
+      regexFilter: '^https:\\/\\/last-good\\.example\\/',
+      resourceTypes: ['main_frame'],
+    },
+    priority: 29,
+  }];
+  dnrState.sessionRules.push(...clone(installedBefore));
+  storageData.excludedStrictBlockHostnames = ['permanent.example'];
+  sessionData.excludedStrictBlockHostnames = ['temporary.example'];
+
+  failNextStorageRead('local', 'excludedStrictBlockHostnames');
+  await assert.rejects(
+    updateSessionRules(),
+    /simulated local storage read failure/
+  );
+  assert.deepEqual(dnrState.sessionRules, installedBefore);
+  assert.equal(dnrState.sessionUpdateCalls.length, 0);
+
+  const localRetry = await updateSessionRules();
+  assert.equal(localRetry?.error, undefined);
+  assert.equal(dnrState.sessionUpdateCalls.length, 1);
+  assert.ok(dnrState.sessionRules.some(rule => (
+    rule.action?.type === 'allow' &&
+    rule.condition?.requestDomains?.includes('permanent.example') &&
+    rule.condition?.requestDomains?.includes('temporary.example')
+  )));
+
+  const afterLocalRetry = clone(dnrState.sessionRules);
+  invalidateNextStorageRead('session', 'excludedStrictBlockHostnames');
+  await assert.rejects(
+    updateSessionRules(),
+    /invalid session storage response/
+  );
+  assert.deepEqual(dnrState.sessionRules, afterLocalRetry);
+  assert.equal(dnrState.sessionUpdateCalls.length, 1);
+
+  const sessionRetry = await updateSessionRules();
+  assert.equal(sessionRetry?.error, undefined);
+  assert.equal(dnrState.sessionUpdateCalls.length, 2);
+});
+
+test('adding a strict-block exclusion never overwrites prior hosts after a storage read failure', { concurrency: false }, async () => {
+  resetEnvironment();
+  storageData.excludedStrictBlockHostnames = ['keep-local.example'];
+
+  failNextStorageRead('local', 'excludedStrictBlockHostnames');
+  await assert.rejects(
+    excludeFromStrictBlock('new-local.example', true),
+    /simulated local storage read failure/
+  );
+  assert.deepEqual(
+    storageData.excludedStrictBlockHostnames,
+    ['keep-local.example']
+  );
+
+  await excludeFromStrictBlock('new-local.example', true);
+  assert.deepEqual(
+    storageData.excludedStrictBlockHostnames.sort(),
+    ['keep-local.example', 'new-local.example']
+  );
+
+  sessionData.excludedStrictBlockHostnames = ['keep-session.example'];
+  invalidateNextStorageRead('session', 'excludedStrictBlockHostnames');
+  await assert.rejects(
+    excludeFromStrictBlock('new-session.example', false),
+    /invalid session storage response/
+  );
+  assert.deepEqual(
+    sessionData.excludedStrictBlockHostnames,
+    ['keep-session.example']
+  );
+
+  await excludeFromStrictBlock('new-session.example', false);
+  assert.deepEqual(
+    sessionData.excludedStrictBlockHostnames.sort(),
+    ['keep-session.example', 'new-session.example']
+  );
+});
+
+test('strict-block permission cleanup awaits both exclusion stores', { concurrency: false }, async () => {
+  resetEnvironment();
+  permissionsState.broadHostPermissions = false;
+  storageData.excludedStrictBlockHostnames = ['local-exclusion.example'];
+  sessionData.excludedStrictBlockHostnames = ['session-exclusion.example'];
+
+  const localArea = browserStub.storage.local;
+  const sessionArea = browserStub.storage.session;
+  const originalLocalRemove = localArea.remove;
+  const originalSessionRemove = sessionArea.remove;
+  let releaseLocal;
+  let releaseSession;
+  let localStarted;
+  let sessionStarted;
+  const localStartedPromise = new Promise(resolve => { localStarted = resolve; });
+  const sessionStartedPromise = new Promise(resolve => { sessionStarted = resolve; });
+  const localGate = new Promise(resolve => { releaseLocal = resolve; });
+  const sessionGate = new Promise(resolve => { releaseSession = resolve; });
+
+  localArea.remove = async key => {
+    localStarted();
+    await localGate;
+    return originalLocalRemove.call(localArea, key);
+  };
+  sessionArea.remove = async key => {
+    sessionStarted();
+    await sessionGate;
+    return originalSessionRemove.call(sessionArea, key);
+  };
+
+  try {
+    let settled = false;
+    const updating = updateSessionRules().finally(() => { settled = true; });
+    await Promise.all([localStartedPromise, sessionStartedPromise]);
+    await Promise.resolve();
+    assert.equal(settled, false);
+
+    releaseLocal();
+    await Promise.resolve();
+    assert.equal(settled, false);
+    releaseSession();
+    await updating;
+
+    assert.equal(storageData.excludedStrictBlockHostnames, undefined);
+    assert.equal(sessionData.excludedStrictBlockHostnames, undefined);
+  } finally {
+    localArea.remove = originalLocalRemove;
+    sessionArea.remove = originalSessionRemove;
+  }
+});
+
+test('dynamic regex installation drops unsupported topDomains rules on older Chrome', { concurrency: false }, async () => {
+  resetEnvironment();
+  dnrState.enabledRulesets.push('ublock-filters');
+  rulesetConfig.strictBlockMode = false;
+
+  const topDomainRuleCount = compiledUblockRegexRules.filter(
+    rule => rule.condition?.topDomains !== undefined
+  ).length;
+  assert.ok(topDomainRuleCount > 0, 'fixture must contain compiled topDomains rules');
+
+  const result = await updateDynamicRules();
+
+  assert.equal(result?.error, undefined);
+  assert.equal(
+    dnrState.dynamicRules.length,
+    compiledUblockRegexRules.length - topDomainRuleCount
+  );
+  assert.ok(dnrState.dynamicRules.every(rule => (
+    rule.condition?.topDomains === undefined &&
+    rule.condition?.excludedTopDomains === undefined
+  )));
+});
+
+test('dynamic regex installation retains topDomains rules when Chrome advertises support', { concurrency: false }, async () => {
+  resetEnvironment();
+  dnr.RuleConditionKeys = { TOP_DOMAINS: 'topDomains' };
+  dnrState.enabledRulesets.push('ublock-filters');
+  rulesetConfig.strictBlockMode = false;
+
+  const result = await updateDynamicRules();
+
+  assert.equal(result?.error, undefined);
+  assert.equal(dnrState.dynamicRules.length, compiledUblockRegexRules.length);
+  assert.equal(
+    dnrState.dynamicRules.filter(rule => rule.condition?.topDomains !== undefined).length,
+    2
+  );
+});
+
+test('Talon site-fix runtime mirror loads compiled rules once and is idempotent', { concurrency: false }, async () => {
+  resetEnvironment();
+  dnrState.enabledRulesets.push('talon-site-fixes');
+  const expectedRules = compiledTalonSiteFixRules.filter(rule => (
+    rule instanceof Object &&
+    rule.action?.type === 'block' &&
+    rule.condition instanceof Object
+  ));
+
+  const first = await updateTalonSiteFixRuntimeRules();
+
+  assert.deepEqual(first, { added: expectedRules.length, removed: 0 });
+  assert.equal(dnrState.dynamicUpdateCalls.length, 1);
+  assert.deepEqual(
+    dnrState.dynamicRules.map(rule => rule.id),
+    expectedRules.map((unused, i) => 7000000 + i)
+  );
+  assert.ok(dnrState.dynamicRules.every(rule => rule.priority >= 500000));
+
+  dnrState.reorderReturnedRules = true;
+  const second = await updateTalonSiteFixRuntimeRules();
+
+  assert.deepEqual(second, { added: 0, removed: 0 });
+  assert.equal(dnrState.dynamicUpdateCalls.length, 1);
+
+  dnrState.enabledRulesets = dnrState.enabledRulesets.filter(
+    id => id !== 'talon-site-fixes'
+  );
+  const disabled = await updateTalonSiteFixRuntimeRules();
+
+  assert.deepEqual(disabled, { added: 0, removed: expectedRules.length });
+  assert.equal(dnrState.dynamicRules.length, 0);
+});
 
 test('community sync falls back to stored rules when remote apply fails', { concurrency: false }, async () => {
   resetEnvironment();
@@ -2227,6 +2621,142 @@ test('community activation rollback restores last-known-good bundle state after 
   );
 });
 
+test('community activation snapshot read failure is mutation-free and retryable', { concurrency: false }, async () => {
+  resetEnvironment();
+
+  const storedRules = [{
+    action: { type: 'block' },
+    condition: { urlFilter: '||snapshot-stored.example^' },
+  }];
+  const storedMeta = {
+    version: 'snapshot-stored-v1',
+    schemaVersion: 2,
+    ttlHours: 6,
+    hotfixLane: 'public',
+  };
+  await browserStub.storage.local.set({
+    communityBundleRules: storedRules,
+    communityBundleMeta: storedMeta,
+    communityBundleLastSuccess: Date.UTC(2026, 2, 25, 17, 0, 0, 0),
+    communityBaselineMetaV1: storedMeta,
+    communityBaselineRulesV1: storedRules,
+  });
+  await updateCommunityRules(storedRules, {
+    source: 'stored',
+    version: storedMeta.version,
+    schemaVersion: storedMeta.schemaVersion,
+  });
+  dnrState.dynamicUpdateCalls.length = 0;
+
+  remoteBundle = await createSignedBundle({
+    version: 'snapshot-remote-v2',
+    rules: [{
+      action: { type: 'block' },
+      condition: { urlFilter: '||snapshot-remote.example^' },
+    }],
+  });
+  const storageBefore = clone({ ...storageData });
+  const dnrBefore = clone(dnrState.dynamicRules);
+  localStorageReadFailurePredicate = key =>
+    Array.isArray(key) &&
+    key.includes('communityOverlayPayloadsV1') &&
+    key.includes('communityBundleLastSuccess') &&
+    key.includes('communityInjectableFingerprintV1');
+
+  await assert.rejects(
+    syncCommunityRules({ force: true }),
+    /community storage read failed: simulated transient local storage snapshot failure/
+  );
+
+  assert.deepEqual(clone({ ...storageData }), storageBefore);
+  assert.deepEqual(dnrState.dynamicRules, dnrBefore);
+  assert.equal(dnrState.dynamicUpdateCalls.length, 0);
+  assert.equal(alarmCreates.length, 0);
+
+  const retried = await syncCommunityRules({ force: true });
+  assert.equal(retried.source, 'remote');
+  assert.equal(retried.meta.version, 'snapshot-remote-v2');
+  assert.equal(dnrState.dynamicUpdateCalls.length, 1);
+  assert.deepEqual(
+    dnrState.dynamicRules
+      .filter(rule => rule.id >= 6000000 && rule.id < 7000000)
+      .map(rule => rule.condition.urlFilter),
+    ['||snapshot-remote.example^']
+  );
+});
+
+test('community rollback refuses an incomplete snapshot without mutating last-good state', { concurrency: false }, async () => {
+  resetEnvironment();
+  storageData.communityBundleMeta = { version: 'last-good' };
+  dnrState.dynamicRules.push({
+    id: 6000000,
+    priority: 30,
+    action: { type: 'block' },
+    condition: { urlFilter: '||last-good.example^' },
+  });
+  const storageBefore = clone({ ...storageData });
+  const dnrBefore = clone(dnrState.dynamicRules);
+
+  await assert.rejects(
+    rollbackCommunityActivation({}, 'registration failed'),
+    /community rollback snapshot unavailable/
+  );
+
+  assert.deepEqual(clone({ ...storageData }), storageBefore);
+  assert.deepEqual(dnrState.dynamicRules, dnrBefore);
+  assert.equal(dnrState.dynamicUpdateCalls.length, 0);
+  assert.equal(alarmCreates.length, 0);
+});
+
+test('overlay finalization reads authoritative state before success writes and retries safely', { concurrency: false }, async () => {
+  resetEnvironment();
+  storageData.communityBundleMeta = { version: 'overlay-candidate' };
+  storageData.communityBundleLastSuccess = 123;
+  storageData.communityOverlayIndexV1 = {
+    'video.example': {
+      siteKey: 'video.example',
+      version: 'overlay-v2',
+      lastStatus: 'updated',
+    },
+  };
+  storageData.communityOverlayPayloadsV1 = {
+    'video.example': {
+      siteKey: 'video.example',
+      version: 'overlay-v2',
+      baselineVersion: 'baseline-v1',
+      schemaVersion: 3,
+      rules: [],
+    },
+  };
+  const activation = {
+    kind: 'overlay',
+    overlaySiteKey: 'video.example',
+    overlayVersion: 'overlay-v2',
+    overlayStatus: 'updated',
+    overlayReason: 'test-finalize',
+  };
+  const storageBefore = clone({ ...storageData });
+  localStorageReadFailurePredicate = key =>
+    Array.isArray(key) &&
+    key.includes('communityOverlayIndexV1') &&
+    key.includes('communityOverlayPayloadsV1');
+
+  await assert.rejects(
+    finalizeCommunityActivationSuccess(activation),
+    /community storage read failed: simulated transient local storage snapshot failure/
+  );
+  assert.deepEqual(clone({ ...storageData }), storageBefore);
+  assert.equal(alarmCreates.length, 0);
+
+  const finalized = await finalizeCommunityActivationSuccess(activation);
+  assert.ok(finalized.lastSuccess > 123);
+  assert.equal(storageData.communityBundleLastSuccess, finalized.lastSuccess);
+  assert.equal(
+    storageData.communityOverlayIndexV1['video.example'].lastStatus,
+    'updated'
+  );
+});
+
 test('scrubPrivateCommunityState preserves public hotfix state while clearing proof-only extras', { concurrency: false }, async () => {
   resetEnvironment();
 
@@ -2345,6 +2875,169 @@ test('user regex rules rebalance shared regex budget for community and session r
   );
 });
 
+test('user-rule reconciliation exposes Chrome apply failures for durable retry markers', { concurrency: false }, async () => {
+  resetEnvironment();
+  rulesetConfig.developerMode = true;
+  await browserStub.storage.local.set({
+    userDnrRules: textFromRules([
+      {
+        action: { type: 'block' },
+        condition: {
+          urlFilter: '||retry.example.com^',
+          resourceTypes: ['script'],
+        },
+      },
+    ]),
+  });
+  dnrState.failUserUpdateCount = 1;
+
+  const result = await updateUserRules();
+
+  assert.equal(result.applyFailed, true);
+  assert.match(result.errors.join('\n'), /simulated user-rule apply failure/);
+  assert.equal(dnrState.dynamicRules.some(rule => rule.id >= 9000000), false);
+});
+
+test('user-rule source read failures never replace last-good DNR state and remain retryable', { concurrency: false }, async () => {
+  resetEnvironment();
+  rulesetConfig.developerMode = true;
+  const lastGoodRule = {
+    id: 9000000,
+    priority: 1000001,
+    action: { type: 'block' },
+    condition: {
+      urlFilter: '||last-good.example^',
+      resourceTypes: ['script'],
+    },
+  };
+  dnrState.dynamicRules.push(clone(lastGoodRule));
+  storageData.userDnrRules = textFromRules([{
+    action: { type: 'block' },
+    condition: {
+      urlFilter: '||replacement.example^',
+      resourceTypes: ['script'],
+    },
+  }]);
+
+  failNextStorageRead('local', 'userDnrRules');
+  await assert.rejects(
+    updateUserRules(),
+    /simulated local storage read failure/
+  );
+  assert.deepEqual(dnrState.dynamicRules, [lastGoodRule]);
+  assert.equal(dnrState.dynamicUpdateCalls.length, 0);
+
+  const sourceRetry = await updateUserRules();
+  assert.equal(sourceRetry.applyFailed, false);
+  assert.equal(dnrState.dynamicUpdateCalls.length, 1);
+  assert.equal(
+    dnrState.dynamicRules.find(rule => rule.id >= 9000000)?.condition?.urlFilter,
+    '||replacement.example^'
+  );
+
+  const afterSourceRetry = clone(dnrState.dynamicRules);
+  invalidateNextStorageRead('local', 'sandboxFilters.dnrRules');
+  await assert.rejects(
+    updateUserRules(),
+    /invalid local storage response for sandboxFilters\.dnrRules/
+  );
+  assert.deepEqual(dnrState.dynamicRules, afterSourceRetry);
+  assert.equal(dnrState.dynamicUpdateCalls.length, 1);
+
+  const sandboxRetry = await updateUserRules();
+  assert.equal(sandboxRetry.applyFailed, false);
+  assert.equal(dnrState.dynamicUpdateCalls.length, 2);
+
+  delete storageData.userDnrRules;
+  delete storageData['sandboxFilters.dnrRules'];
+  const missingKeys = await updateUserRules();
+  assert.equal(missingKeys.applyFailed, false);
+  assert.equal(dnrState.dynamicRules.some(rule => rule.id >= 9000000), false);
+});
+
+test('default-ruleset baseline read failure cannot rewrite selection state before retry', { concurrency: false }, async () => {
+  resetEnvironment();
+  manifestExtras.declarative_net_request = {
+    rule_resources: [
+      { id: 'next-default-a', enabled: true, path: 'rulesets/main/a.json' },
+      { id: 'next-default-b', enabled: true, path: 'rulesets/main/b.json' },
+    ],
+  };
+  storageData.defaultRulesetIds = ['old-default'];
+  rulesetConfig.enabledRulesets = ['old-default'];
+  rulesetConfig.rulesetSelectionVersion = 1;
+
+  failNextStorageRead('local', 'defaultRulesetIds');
+  await assert.rejects(
+    patchDefaultRulesets(),
+    /simulated local storage read failure/
+  );
+  assert.deepEqual(storageData.defaultRulesetIds, ['old-default']);
+  assert.deepEqual(rulesetConfig.enabledRulesets, ['old-default']);
+  assert.equal(rulesetConfig.rulesetSelectionVersion, 1);
+
+  const retried = await patchDefaultRulesets();
+  assert.equal(retried, true);
+  assert.deepEqual(
+    storageData.defaultRulesetIds,
+    ['next-default-a', 'next-default-b']
+  );
+  assert.deepEqual(
+    rulesetConfig.enabledRulesets,
+    ['next-default-a', 'next-default-b']
+  );
+});
+
+test('missing default-ruleset baseline remains a successful empty-baseline fallback', { concurrency: false }, async () => {
+  resetEnvironment();
+  manifestExtras.declarative_net_request = {
+    rule_resources: [
+      { id: 'next-default', enabled: true, path: 'rulesets/main/next.json' },
+    ],
+  };
+  rulesetConfig.enabledRulesets = ['custom-selection'];
+  rulesetConfig.rulesetSelectionVersion = 1;
+
+  const changed = await patchDefaultRulesets();
+
+  assert.equal(changed, false);
+  assert.deepEqual(storageData.defaultRulesetIds, ['next-default']);
+  assert.deepEqual(rulesetConfig.enabledRulesets, ['custom-selection']);
+});
+
+test('DNR dirty-marker read failure performs no repair mutation and retries safely', { concurrency: false }, async () => {
+  resetEnvironment();
+  storageData.dnrReconciliationDirtyV1 = true;
+  dnrState.dynamicRules.push({
+    id: 123,
+    priority: 1,
+    action: { type: 'block' },
+    condition: {
+      urlFilter: '||stale-dynamic.example^',
+      resourceTypes: ['script'],
+    },
+  });
+
+  failNextStorageRead('local', 'dnrReconciliationDirtyV1');
+  await assert.rejects(
+    repairDnrReconciliation(),
+    /simulated local storage read failure/
+  );
+  assert.equal(dnrState.dynamicUpdateCalls.length, 0);
+  assert.equal(dnrState.dynamicRules.some(rule => rule.id === 123), true);
+  assert.equal(storageData.dnrReconciliationDirtyV1, true);
+
+  const retried = await repairDnrReconciliation();
+  assert.equal(retried.repaired, true);
+  assert.equal(dnrState.dynamicRules.some(rule => rule.id === 123), false);
+  assert.equal(Object.hasOwn(storageData, 'dnrReconciliationDirtyV1'), false);
+  const callsAfterRepair = dnrState.dynamicUpdateCalls.length;
+
+  const missingMarker = await repairDnrReconciliation();
+  assert.deepEqual(missingMarker, { skipped: 'clean' });
+  assert.equal(dnrState.dynamicUpdateCalls.length, callsAfterRepair);
+});
+
 test('setAllowAllRules repairs missing session companion rules and records the repair', { concurrency: false }, async () => {
   resetEnvironment();
 
@@ -2457,15 +3150,17 @@ test('setAllowAllRules rolls back partial updates when the session companion wri
   });
   dnrState.failSessionUpdateCount = 1;
 
-  const modified = await compatDnr.setAllowAllRules(
-    8000000,
-    ['news.example'],
-    [],
-    false,
-    2000000
+  await assert.rejects(
+    compatDnr.setAllowAllRules(
+      8000000,
+      ['news.example'],
+      [],
+      false,
+      2000000
+    ),
+    /desired state failed and was rolled back/
   );
 
-  assert.equal(modified, false);
   assert.deepEqual(dnrState.dynamicRules, [
     {
       id: 8000000,

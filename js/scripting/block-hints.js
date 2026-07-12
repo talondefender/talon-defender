@@ -9,6 +9,7 @@ const ELEMENT_TTL_MS = 5000;
 const NETWORK_TTL_MS = 5000;
 const MAX_TRACKED_ELEMENTS = 96;
 const MAX_SELECTOR_MATCHES = 24;
+const MAX_HINT_SELECTORS = 128;
 
 if ( self.TalonBlockHintsController ) { return; }
 
@@ -145,25 +146,29 @@ const noteSelectorMatches = (
     } = {}
 ) => {
     if ( Array.isArray(selectors) === false || selectors.length === 0 ) { return 0; }
+    const selectorText = selectors
+        .filter(selector => typeof selector === 'string' && selector !== '')
+        .slice(0, MAX_HINT_SELECTORS)
+        .join(',');
+    if ( selectorText === '' ) { return 0; }
     const seen = new Set();
     let matched = 0;
-    for ( const selector of selectors ) {
-        if ( typeof selector !== 'string' || selector === '' || matched >= maxMatches ) { continue; }
-        for ( const root of enumerateQueryRoots() ) {
+    for ( const root of enumerateQueryRoots() ) {
+        if ( matched >= maxMatches ) { break; }
+        let nodes = [];
+        try {
+            // Run one selector-list query per root instead of traversing the
+            // same document once for every remotely supplied selector.
+            nodes = root.querySelectorAll?.(selectorText) || [];
+        } catch {
+            nodes = [];
+        }
+        for ( const node of nodes ) {
+            if ( node instanceof Element === false || seen.has(node) ) { continue; }
+            seen.add(node);
+            noteElement(node, { ancestors, notify: false });
+            matched += 1;
             if ( matched >= maxMatches ) { break; }
-            let nodes = [];
-            try {
-                nodes = root.querySelectorAll?.(selector) || [];
-            } catch {
-                nodes = [];
-            }
-            for ( const node of nodes ) {
-                if ( node instanceof Element === false || seen.has(node) ) { continue; }
-                seen.add(node);
-                noteElement(node, { ancestors, notify: false });
-                matched += 1;
-                if ( matched >= maxMatches ) { break; }
-            }
         }
     }
     notifyHintsChanged(matched);
@@ -180,12 +185,15 @@ const hasRecentHint = (
     const now = Date.now();
     if ( hasActiveHintAttr(el, now) ) { return true; }
     if ( includeSubtree ) {
-        try {
-            const hinted = el.querySelector?.(`[${HINT_ATTR}]`);
-            if ( hinted instanceof Element && hasActiveHintAttr(hinted, now) ) {
-                return true;
+        // trackedElements is hard-capped, so containment checks avoid an
+        // unbounded selector walk through a newly inserted large subtree.
+        for ( const hinted of trackedElements ) {
+            if ( hinted instanceof Element === false ) { continue; }
+            if ( hasActiveHintAttr(hinted, now) === false ) { continue; }
+            try {
+                if ( el.contains(hinted) ) { return true; }
+            } catch {
             }
-        } catch {
         }
     }
     let current = getNextHintTarget(el);

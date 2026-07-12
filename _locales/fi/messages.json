@@ -637,12 +637,21 @@
     "message": "Käytä tätä tietokonetta"
   },
   "optionsFilterExtraProtectionLabel": {
-    "message": "Lis?suojaus"
+    "message": "Lisäsuojaus"
   },
   "optionsFilterExtraProtectionNote": {
-    "message": "Est?? tehokkaammin ev?steilmoituksia, uutiskirjeponnahduksia, ilmoituspyynt?j?, some-widgettej? ja muita h?iri?it?."
+    "message": "Estää tehokkaammin evästeilmoituksia, ilmoituspyyntöjä, sosiaalisen median pienoisohjelmia, tekoälyn luomia häiriöitä ja muita häiriötekijöitä."
   },
   "uiPartial": {
-    "message": "Osittain k?yt?ss?"
+    "message": "Osittain käytössä"
+  },
+  "popupRuntimeHotfixReloadNotice": {
+    "message": "Ota Talon Defenderin uusin pikakorjaus käyttöön lataamalla tämä välilehti uudelleen."
+  },
+  "popupRuntimeReloadNotice": {
+    "message": "Lataa tämä välilehti uudelleen, jotta Talon Defenderin uusimmat suojausmuutokset tulevat kokonaan voimaan."
+  },
+  "popupRuntimeHotfixReloadButton": {
+    "message": "Lataa välilehti uudelleen"
   }
 }

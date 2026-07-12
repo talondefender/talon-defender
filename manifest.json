@@ -330,35 +330,6 @@
       ],
       "run_at": "document_start",
       "all_frames": true
-    },
-    {
-      "matches": [
-        "*://*.french-stream.one/*",
-        "*://*.fsvid.lol/*",
-        "*://*.kakaflix.lol/*",
-        "*://*.uqload.is/*",
-        "*://*.vidzy.cc/*"
-      ],
-      "js": [
-        "rulesets/scripting/scriptlet/main/talon-site-fixes.js"
-      ],
-      "run_at": "document_start",
-      "world": "MAIN",
-      "all_frames": true
-    },
-    {
-      "matches": [
-        "*://*.french-stream.one/*",
-        "*://*.fsvid.lol/*",
-        "*://*.kakaflix.lol/*",
-        "*://*.uqload.is/*",
-        "*://*.vidzy.cc/*"
-      ],
-      "js": [
-        "js/scripting/french-stream-site-fix-loader.js"
-      ],
-      "run_at": "document_start",
-      "all_frames": true
     }
   ],
   "name": "__MSG_extensionName__",
@@ -370,6 +341,7 @@
     "offscreen",
     "scripting",
     "storage",
+    "unlimitedStorage",
     "userScripts",
     "webNavigation"
   ],
@@ -377,7 +349,7 @@
   "storage": {
     "managed_schema": "managed_storage.json"
   },
-  "version": "0.1.10",
+  "version": "0.1.11",
   "web_accessible_resources": [
     {
       "resources": [

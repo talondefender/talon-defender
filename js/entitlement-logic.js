@@ -63,12 +63,36 @@ export const sanitizeEntitlementSyncState = (
     const activationTokenExpiresAtMs = normalizePositiveMs(
         source.activationTokenExpiresAtMs ?? source.activationTokenExpiresAt
     );
-    if (activationToken !== '' && activationTokenExpiresAtMs > now) {
+    let activationTokenClearedAtMs = normalizePositiveMs(source.activationTokenClearedAtMs);
+    const recordedActivationTokenUpdatedMs = normalizePositiveMs(source.activationTokenUpdatedMs);
+    const activationTokenUpdatedMs = recordedActivationTokenUpdatedMs > 0
+        ? recordedActivationTokenUpdatedMs
+        : (activationTokenClearedAtMs === 0 && activationToken !== '' ? 1 : 0);
+    if (
+        activationToken !== '' &&
+        activationTokenExpiresAtMs > 0 &&
+        activationTokenExpiresAtMs <= now
+    ) {
+        // Expiry is also a deletion event. Keep a versioned tombstone so an
+        // older, longer-lived token from another sync replica cannot revive.
+        activationTokenClearedAtMs = Math.max(
+            activationTokenClearedAtMs,
+            activationTokenUpdatedMs,
+            activationTokenExpiresAtMs
+        );
+    }
+    if ( activationTokenClearedAtMs > 0 ) {
+        out.activationTokenClearedAtMs = activationTokenClearedAtMs;
+    }
+    if (
+        activationToken !== '' &&
+        activationTokenExpiresAtMs > now &&
+        activationTokenUpdatedMs > activationTokenClearedAtMs
+    ) {
         out.activationToken = activationToken;
         out.activationTokenExpiresAtMs = activationTokenExpiresAtMs;
-        const updatedMs = normalizePositiveMs(source.activationTokenUpdatedMs);
-        if (updatedMs > 0) {
-            out.activationTokenUpdatedMs = updatedMs;
+        if (activationTokenUpdatedMs > 0) {
+            out.activationTokenUpdatedMs = activationTokenUpdatedMs;
         }
         const deviceId = typeof source.deviceId === 'string'
             ? source.deviceId.trim().slice(0, 128)
@@ -85,7 +109,13 @@ export const sanitizeEntitlementSyncState = (
     return out;
 };
 
-export const buildActivationTokenSyncPatch = (input = {}, { now = Date.now() } = {}) =>
+export const buildActivationTokenSyncPatch = (
+    input = {},
+    {
+        now = Date.now(),
+        updatedMs = now,
+    } = {}
+) =>
     sanitizeEntitlementSyncState({
         activationToken: input.activationToken,
         activationTokenExpiresAtMs:
@@ -93,7 +123,7 @@ export const buildActivationTokenSyncPatch = (input = {}, { now = Date.now() } =
             input.activationTokenExpiresAt ??
             input.expiresAtMs ??
             input.expiresAt,
-        activationTokenUpdatedMs: now,
+        activationTokenUpdatedMs: updatedMs,
         deviceId: input.deviceId,
         deviceLabel: input.deviceLabel,
     }, { now });
@@ -120,6 +150,35 @@ export const shouldForceCommunitySyncAfterEntitlementRefresh = ({
     if ( shouldEnablePaywallForStatus(status) ) { return false; }
     return wasPaywalled === true || wasStatusExpired === true;
 };
+
+export async function runDurableEntitlementEffects({
+    markDirty,
+    applyEffects,
+    clearDirty,
+    scheduleRetry = () => {},
+    clearRetry = () => {},
+} = {}) {
+    if ( typeof markDirty !== 'function' ) {
+        throw new TypeError('markDirty must be a function');
+    }
+    if ( typeof applyEffects !== 'function' ) {
+        throw new TypeError('applyEffects must be a function');
+    }
+    if ( typeof clearDirty !== 'function' ) {
+        throw new TypeError('clearDirty must be a function');
+    }
+    let result;
+    try {
+        await markDirty();
+        result = await applyEffects();
+        await clearDirty();
+    } catch (reason) {
+        try { await scheduleRetry(reason); } catch { }
+        throw reason;
+    }
+    try { await clearRetry(); } catch { }
+    return result;
+}
 
 export const isTrialReminderOnCooldown = ({
     now = Date.now(),

@@ -229,12 +229,14 @@ async function onCreateClicked() {
     const selector = validateSelector(qs$('textarea').value);
     if ( selector === undefined ) { return; }
     await toolOverlay.postMessage({ what: 'terminateCustomFilters' });
-    await toolOverlay.sendMessage({
+    const result = await toolOverlay.sendMessage({
         what: 'addCustomFilters',
         hostname: toolOverlay.url.hostname,
         selectors: [ selector ],
     });
-    await toolOverlay.postMessage({ what: 'startCustomFilters' });
+    if ( result?.runtimeRefreshed !== true ) {
+        await toolOverlay.postMessage({ what: 'startCustomFilters' });
+    }
     qs$('textarea').value = '';
     dom.cl.remove(dom.root, 'preview');
     quitPicker();

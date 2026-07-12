@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import {
   AUDITABLE_SUBSYSTEMS,
   classifyProtectedSurface,
+  getRemoteAutomationRegistrationMatches,
   isInternalUnfilteredHostname,
   isKnownConsentSelector,
   isRemoteScriptletAllowed,
@@ -15,6 +16,55 @@ import {
   resolveAuditOverride,
   sanitizeBreakageAuditOverrides,
 } from '../js/breakage-policy.js';
+
+test('remote automation registration stays within directive and filtering scopes', () => {
+  const directive = (hosts, requiresRulesets) => ({
+    id: 'remote-test',
+    action: 'hide',
+    hosts,
+    selectors: ['.remote-popup'],
+    requiresRulesets,
+  });
+
+  assert.deepEqual(getRemoteAutomationRegistrationMatches(
+    [directive(['=news.example.com', '*.offers.example', 'invalid.*'])],
+    new Set(),
+    {
+      optimal: new Set(['all-urls']),
+      complete: new Set(),
+    }
+  ), [
+    '*://*.offers.example/*',
+    '*://news.example.com/*',
+  ]);
+
+  assert.deepEqual(getRemoteAutomationRegistrationMatches(
+    [directive(['example.com'])],
+    new Set(),
+    {
+      optimal: new Set(['shop.example.com']),
+      complete: new Set(),
+    }
+  ), [ '*://*.shop.example.com/*' ]);
+
+  assert.deepEqual(getRemoteAutomationRegistrationMatches(
+    [directive(['example.*'])],
+    new Set(),
+    {
+      optimal: new Set(['example.co.jp']),
+      complete: new Set(),
+    }
+  ), [ '*://example.co.jp/*' ]);
+
+  assert.deepEqual(getRemoteAutomationRegistrationMatches(
+    [directive(['=news.example.com'], ['annoyances-overlays'])],
+    new Set(),
+    {
+      optimal: new Set(['all-urls']),
+      complete: new Set(),
+    }
+  ), []);
+});
 
 const readSource = relativePath =>
   fs.readFile(new URL(`../${relativePath}`, import.meta.url), 'utf8');
@@ -92,10 +142,10 @@ test('manifest and public allowlist expose bounded static runtime bootstrap lane
   const talonYouTubePath = 'js/scripting/youtube-ad-skip.js';
   const talonYouTubeGuardPath = 'js/scripting/youtube-player-guard.js';
   const talonYouTubeGuardLoaderPath = 'js/scripting/youtube-player-guard-loader.js';
-  const frenchStreamLoaderPath = 'js/scripting/french-stream-site-fix-loader.js';
   const frenchStreamMainSiteFixPath = 'rulesets/scripting/scriptlet/main/talon-site-fixes.js';
   const manifest = JSON.parse(await readSource('manifest.json'));
   const allowlist = await readSource('public-safe-allowlist.txt');
+  const scriptingManager = await readSource('js/scripting-manager.js');
   const contentScripts = Array.isArray(manifest.content_scripts) ? manifest.content_scripts : [];
   const webAccessibleResources = Array.isArray(manifest.web_accessible_resources)
     ? manifest.web_accessible_resources
@@ -141,38 +191,14 @@ test('manifest and public allowlist expose bounded static runtime bootstrap lane
     ),
     false
   );
-  const frenchStreamLoaders = contentScripts.filter(entry =>
-    Array.isArray(entry.js) &&
-    entry.js.includes(frenchStreamLoaderPath)
-  );
   const frenchStreamMainScripts = contentScripts.filter(entry =>
     Array.isArray(entry.js) &&
     entry.js.includes(frenchStreamMainSiteFixPath)
   );
-  assert.equal(frenchStreamLoaders.length, 1);
-  assert.equal(frenchStreamMainScripts.length, 1);
-  assert.deepEqual(frenchStreamMainScripts[0].matches, [
-    '*://*.french-stream.one/*',
-    '*://*.fsvid.lol/*',
-    '*://*.kakaflix.lol/*',
-    '*://*.uqload.is/*',
-    '*://*.vidzy.cc/*',
-  ]);
-  assert.deepEqual(frenchStreamMainScripts[0].js, [frenchStreamMainSiteFixPath]);
-  assert.equal(frenchStreamMainScripts[0].run_at, 'document_start');
-  assert.equal(frenchStreamMainScripts[0].all_frames, true);
-  assert.equal(frenchStreamMainScripts[0].world, 'MAIN');
-  assert.deepEqual(frenchStreamLoaders[0].matches, [
-    '*://*.french-stream.one/*',
-    '*://*.fsvid.lol/*',
-    '*://*.kakaflix.lol/*',
-    '*://*.uqload.is/*',
-    '*://*.vidzy.cc/*',
-  ]);
-  assert.deepEqual(frenchStreamLoaders[0].js, [frenchStreamLoaderPath]);
-  assert.equal(frenchStreamLoaders[0].run_at, 'document_start');
-  assert.equal(frenchStreamLoaders[0].all_frames, true);
-  assert.equal(frenchStreamLoaders[0].world, undefined);
+  assert.equal(frenchStreamMainScripts.length, 0);
+  assert.match(scriptingManager, /const TALON_SITE_FIXES_MAIN_ID = 'talon-site-fixes-main';/);
+  assert.match(scriptingManager, /function registerTalonSiteFixesMain\(context\)/);
+  assert.match(scriptingManager, /id: TALON_SITE_FIXES_MAIN_ID,[\s\S]*allFrames: true,[\s\S]*runAt: 'document_start',[\s\S]*world: 'MAIN'/);
   const youtubeGuardResources = webAccessibleResources.filter(entry =>
     Array.isArray(entry.resources) &&
     entry.resources.includes(talonYouTubeGuardPath)
@@ -195,7 +221,6 @@ test('manifest and public allowlist expose bounded static runtime bootstrap lane
     webAccessibleResources.some(entry =>
       Array.isArray(entry.resources) &&
       (
-        entry.resources.includes(frenchStreamLoaderPath) ||
         entry.resources.includes(frenchStreamMainSiteFixPath)
       )
     ),
@@ -205,7 +230,7 @@ test('manifest and public allowlist expose bounded static runtime bootstrap lane
   assert.equal(allowlist.includes(talonYouTubePath), true);
   assert.equal(allowlist.includes(talonYouTubeGuardPath), true);
   assert.equal(allowlist.includes(talonYouTubeGuardLoaderPath), true);
-  assert.equal(allowlist.includes(frenchStreamLoaderPath), true);
+  assert.equal(allowlist.includes(frenchStreamMainSiteFixPath), true);
   assert.equal(allowlist.includes(bootstrapPath), false);
   assert.equal(allowlist.includes(relayHtmlPath), false);
   assert.equal(allowlist.includes(relayScriptPath), false);

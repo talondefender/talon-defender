@@ -85,7 +85,6 @@ const EXPECTED_BUNDLED_IDS = [
 const EXPECTED_EXTRA_PROTECTION_IDS = [
   'annoyances-ai',
   'annoyances-cookies',
-  'annoyances-overlays',
   'annoyances-social',
   'annoyances-widgets',
   'annoyances-others',
@@ -274,19 +273,28 @@ test('ruleset manager persists rewritten default ids before returning the patch 
   assert.match(source, /await localWrite\('defaultRulesetIds', newDefaultIds\);/);
 });
 
-test('background applies startup ruleset maintenance on wakeup runs before skipping the full session path', async () => {
+test('background keeps service-worker wakeups read-only for persistent DNR state', async () => {
   const source = await readText('../js/background.js');
 
-  assert.match(source, /async function runStartupRulesetMaintenance\(\)/);
-  assert.match(source, /if \(process\.wakeupRun\) \{\s*await runStartupRulesetMaintenance\(\)\.catch\(ubolErr\);\s*\}/s);
-  assert.match(source, /if \(process\.wakeupRun === false\) \{\s*await startSession\(\);\s*\} else \{/s);
+  assert.doesNotMatch(source, /runStartupRulesetMaintenance/);
+  assert.match(
+    source,
+    /const startSessionRequired = process\.wakeupRun === false \|\|[\s\S]*isCurrentStartSessionCommit\(startSessionCommit\) === false;/
+  );
+  assert.match(
+    source,
+    /if \( startSessionRequired \) \{\s*await startSession\(\{\s*forceDynamicRules: initialSetupPending \|\| installResetApplied,/s
+  );
+  assert.match(source, /startupInjectableResult = await ensureStartupInjectableState\(\);/);
+  assert.match(source, /startup injectable state was not verified/);
+  assert.match(source, /A warm worker wake never touches already-open browsing tabs/);
 });
 
 test('background materializes filtering-mode DNR before first-install welcome opens', async () => {
   const source = await readText('../js/background.js');
   const startBlock = source.slice(
-    source.indexOf('async function start() {'),
-    source.indexOf('/******************************************************************************/', source.indexOf('async function start() {'))
+    source.indexOf('async function startNow('),
+    source.indexOf('/******************************************************************************/', source.indexOf('async function startNow('))
   );
   const installBlock = source.slice(
     source.indexOf('runtime.onInstalled.addListener'),
@@ -301,7 +309,7 @@ test('background materializes filtering-mode DNR before first-install welcome op
   );
   assert.match(
     startBlock,
-    /await ensureInstallWelcomeAllowlistReady\(\)\.catch\(ubolErr\);[\s\S]*await syncInjectablesAndRefreshTabs\(\{ runtimeOnly: false \}\)\.catch\(ubolErr\);/
+    /if \( initialSetupPending \|\| installResetApplied \) \{[\s\S]*await ensureInstallWelcomeAllowlistReady\(\);[\s\S]*await startSession\(\{[\s\S]*forceDynamicRules: initialSetupPending \|\| installResetApplied/
   );
   assert.match(
     source,

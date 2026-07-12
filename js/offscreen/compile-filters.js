@@ -124,7 +124,12 @@ function sanitizeCompiledCosmeticFilter(compiled) {
 /******************************************************************************/
 
 (async ( ) => {
-    const text = await chrome.runtime.sendMessage({ what: 'getRawFilters' });
+    const requestId = new URL(self.location.href).searchParams.get('requestId') || '';
+    if ( requestId === '' ) { return; }
+    const text = await chrome.runtime.sendMessage({
+        what: 'getRawFilters',
+        requestId,
+    });
     if ( Boolean(text) === false ) { return; }
     const lines = text.split(/\n/).map(a => a.trim());
     for ( const line of lines ) {
@@ -189,7 +194,7 @@ function sanitizeCompiledCosmeticFilter(compiled) {
         }
     }
 
-    const msg = { what: 'compiledRawFilters' };
+    const msg = { what: 'compiledRawFilters', requestId };
     if ( isolated.length ) {
         msg.ISOLATED = isolated;
     }
