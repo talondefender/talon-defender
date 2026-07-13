@@ -106,6 +106,7 @@ let licenseKeyRevealed = false;
 let storedLicenseKey = "";
 let runtimeStateChannel = null;
 let rulesetsLoaded = false;
+let rulesetRuntimeVerified = false;
 let entitlementLoaded = false;
 let pendingRulesetMutations = 0;
 let pendingAllowlistMutations = 0;
@@ -645,6 +646,14 @@ function wireRuntimeStateUpdates() {
         if (nextRevision !== null) {
           rulesetConfigRevision = nextRevision;
         }
+      }
+      if (typeof message.runtimeVerified === "boolean") {
+        rulesetRuntimeVerified = message.runtimeVerified;
+      }
+      if (
+        Array.isArray(message.enabledRulesets) ||
+        typeof message.runtimeVerified === "boolean"
+      ) {
         renderCoreFilterStatus();
       }
     };
@@ -679,6 +688,7 @@ async function refreshRulesets() {
     ).catch(() => null);
     if (Array.isArray(snapshot?.enabledRulesets)) {
       enabled = snapshot.enabledRulesets;
+      rulesetRuntimeVerified = snapshot.runtimeVerified === true;
       rulesetConfigRevision = normalizeConfigRevision(snapshot.configRevision);
     }
     if (Array.isArray(enabled) === false) {
@@ -687,11 +697,13 @@ async function refreshRulesets() {
         { timeoutMs: 4000 }
       );
       rulesetConfigRevision = null;
+      rulesetRuntimeVerified = false;
     }
     enabledRulesets = new Set(normalizeEnabledRulesets(enabled));
   } catch (error) {
     console.error("Failed to load ruleset state", error);
     enabledRulesets = new Set();
+    rulesetRuntimeVerified = false;
     rulesetConfigRevision = null;
   } finally {
     rulesetsLoaded = true;
@@ -722,14 +734,19 @@ function renderCoreFilterStatus() {
     entry.checkbox.disabled =
       entitlementLoaded === false ||
       paywalled ||
+      rulesetRuntimeVerified === false ||
       pendingRulesetMutations !== 0;
     if (entry.statusEl) {
-      const stateText = partial
+      const stateText = rulesetRuntimeVerified === false
+        ? t("uiLoading")
+        : partial
         ? t("uiPartial")
         : allEnabled
           ? t("uiActive")
           : t("uiDisabled");
-      const stateClass = partial
+      const stateClass = rulesetRuntimeVerified === false
+        ? "warn"
+        : partial
         ? "warn"
         : allEnabled
           ? "ok"
@@ -771,6 +788,9 @@ function updateRulesetStateFromResponse(result) {
   if (revision !== null) {
     rulesetConfigRevision = revision;
   }
+  if (typeof result?.runtimeVerified === "boolean") {
+    rulesetRuntimeVerified = result.runtimeVerified;
+  }
 }
 
 async function applyRulesetDelta(delta) {
@@ -782,7 +802,7 @@ async function applyRulesetDelta(delta) {
   if (rulesetConfigRevision !== null) {
     request.expectedRevision = rulesetConfigRevision;
   }
-  return sendRuntimeMessageWithTimeout(request, { timeoutMs: 4000 });
+  return chrome.runtime.sendMessage(request);
 }
 
 async function refreshAllowlist() {
@@ -870,11 +890,15 @@ async function handleAllowlistSubmit(event) {
   }
   await runAllowlistMutation(async () => {
     try {
-      await chrome.runtime.sendMessage({
+      const result = await chrome.runtime.sendMessage({
         what: "setFilteringMode",
         hostname,
         level: MODE_NONE
       });
+      if (result && typeof result === "object" && result.error) {
+        await refreshAllowlist();
+        throw new Error(String(result.error));
+      }
       allowlistInput.value = "";
       await refreshAllowlist();
     } catch (error) {
@@ -893,11 +917,15 @@ async function handleAllowlistRemove(hostname, button) {
     }
     try {
       const defaultMode = await chrome.runtime.sendMessage({ what: "getDefaultFilteringMode" });
-      await chrome.runtime.sendMessage({
+      const result = await chrome.runtime.sendMessage({
         what: "setFilteringMode",
         hostname,
         level: Number(defaultMode)
       });
+      if (result && typeof result === "object" && result.error) {
+        await refreshAllowlist();
+        throw new Error(String(result.error));
+      }
       await refreshAllowlist();
     } catch (error) {
       console.error("Failed to remove allowlisted site", error);

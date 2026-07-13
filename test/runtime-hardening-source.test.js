@@ -3689,8 +3689,497 @@ test('startup entitlement effects and injectable sync transactions are serialize
   );
   assert.match(
     alarmSource,
-    /const result = startupComplete && startupCoreReady[\s\S]*recoverStartupStateForPopup\(\);[\s\S]*startupCoreReady = startupInjectableResultIsReady\(result\)/
+    /if \( startupComplete && startupCoreReady \)[\s\S]*prepareFilteringSurfaceReconciliation\(\)[\s\S]*ensureStartupInjectableState\(\)[\s\S]*recoverStartupStateForPopup\(\)[\s\S]*startupCoreReady = startupInjectableResultIsReady\(result\)/
   );
+});
+
+test('filtering mode transaction owns the only automatic-selection runtime settlement', async () => {
+  const source = await readSource('js/background.js');
+  const applySource = sourceBetween(
+    source,
+    'async function applyAutomaticRulesetSelection',
+    'async function ensureAnnoyancesForCompleteDefaultNow'
+  );
+  const runtimeReconcileSource = sourceBetween(
+    source,
+    'async function reconcileFilteringModeRuntimeNow',
+    'async function reconcileFilteringModeMutation'
+  );
+  const filteringTransactionSource = sourceBetween(
+    source,
+    'async function reconcileFilteringModeMutation',
+    'async function prepareFilteringSurfaceReconciliation'
+  );
+
+  assert.doesNotMatch(
+    applySource,
+    /registerInjectablesIfEntitled\(\)\.catch\(ubolErr\)/
+  );
+  assert.doesNotMatch(applySource, /syncInjectablesAndRefreshTabs\(/);
+  assert.doesNotMatch(applySource, /broadcastMessage\(/);
+  assert.equal(
+    countMatches(runtimeReconcileSource, /syncInjectablesAndRefreshTabs\(\{/g),
+    1,
+    'a filtering-mode transaction performs exactly one live sync'
+  );
+  assertOrderedIncludes(runtimeReconcileSource, [
+    'await ensureAnnoyancesForCompleteDefaultNow();',
+    'const beforeSyncResult = await beforeSync?.(mutationResult);',
+    'const syncResult = await syncInjectablesAndRefreshTabs({',
+    'assertAuthoritativeInjectableSyncResult(syncResult,',
+    'clearFilteringSurfaceReconciliationToken(',
+    'broadcastVerifiedRulesetRuntimeState();',
+  ], 'serialized filtering surface reconciliation');
+  assertOrderedIncludes(filteringTransactionSource, [
+    'await localWrite(FILTERING_MODE_RECONCILIATION_DIRTY_KEY, {',
+    'await scheduleFilteringModeReconciliationRetry();',
+    'const mutationResult = await operation();',
+    'return await reconcileFilteringModeRuntimeNow({',
+  ], 'durable mutation handoff');
+});
+
+test('authoritative injectable success requires settled registrations and a durable fingerprint', async () => {
+  const source = await readSource('js/background.js');
+  const executableResultCheckSource = sourceBetween(
+    source,
+    'const contentRegistrationResultIsVerified',
+    'const applyContentRegistrationReloadHint'
+  );
+  const resultCheckSource = sourceBetween(
+    source,
+    'function assertAuthoritativeInjectableSyncResult',
+    'const applyContentRegistrationReloadHint'
+  );
+  const syncSource = sourceBetween(
+    source,
+    'async function syncInjectablesAndRefreshTabsNow',
+    'function syncInjectablesAndRefreshTabs'
+  );
+
+  assert.match(
+    resultCheckSource,
+    /contentRegistrationResultIsVerified\(result\.registerResult\)/
+  );
+  assert.match(resultCheckSource, /result\.runtimeStatePersisted === true/);
+  assert.match(resultCheckSource, /typeof result\.runtimeFingerprint === 'string'/);
+  assert.match(resultCheckSource, /error\.code = errorCode/);
+  assert.match(
+    syncSource,
+    /const contentRegistrationSucceeded =\s*contentRegistrationResultIsVerified\(registerResult\)/
+  );
+  assert.match(syncSource, /runtimeStatePersisted,[\s\S]*retryScheduled,[\s\S]*ok: succeeded/);
+
+  const buildHarness = new Function(`
+    ${executableResultCheckSource}
+    return assertAuthoritativeInjectableSyncResult;
+  `);
+  const assertSettled = buildHarness();
+  const settled = {
+    ok: true,
+    registerResult: { ok: true, uncertain: false },
+    runtimeStatePersisted: true,
+    runtimeFingerprint: 'verified-fingerprint',
+    sandboxUserScriptsPending: false,
+    sandboxCustomFilterCount: 0,
+  };
+  assert.equal(assertSettled(settled), settled);
+  assert.throws(
+    () => assertSettled({
+      ok: true,
+      skipped: 'not_entitled',
+      registerResult: false,
+    }, 'filtering_mode_runtime_sync_failed'),
+    error => error?.code === 'filtering_mode_runtime_sync_failed'
+  );
+  const allowedPaywallSkip = {
+    ok: true,
+    skipped: 'not_entitled',
+    registerResult: false,
+  };
+  assert.equal(
+    assertSettled(allowedPaywallSkip, 'startup_sync_failed', {
+      allowNotEntitled: true,
+    }),
+    allowedPaywallSkip
+  );
+  assert.throws(
+    () => assertSettled({
+      ...settled,
+      sandboxUserScriptsPending: true,
+      sandboxCustomFilterCount: 1,
+    }),
+    error => error?.code === 'injectable_reconciliation_failed'
+  );
+  assert.equal(assertSettled({
+    ...settled,
+    sandboxUserScriptsPending: true,
+    sandboxCustomFilterCount: 0,
+  }).ok, true);
+});
+
+test('filtering mode messages do not report success before authoritative reconciliation', async () => {
+  const source = await readSource('js/background.js');
+  const siteModeSource = sourceBetween(
+    source,
+    "case 'setFilteringMode':",
+    "case 'setPendingFilteringMode':"
+  );
+  const defaultModeSource = sourceBetween(
+    source,
+    "case 'setDefaultFilteringMode':",
+    "case 'getFilteringModeDetails':"
+  );
+  const detailsSource = sourceBetween(
+    source,
+    "case 'setFilteringModeDetails':",
+    "case 'excludeFromStrictBlock':"
+  );
+
+  for (const handlerSource of [siteModeSource, defaultModeSource, detailsSource]) {
+    assert.match(handlerSource, /await reconcileFilteringModeMutation\(/);
+    assert.doesNotMatch(handlerSource, /syncInjectablesAndRefreshTabs\(/);
+    assert.doesNotMatch(handlerSource, /ensureAnnoyancesForCompleteDefault\(/);
+    assert.doesNotMatch(handlerSource, /\.finally\(\(\) => \{\s*callback/);
+    assert.match(handlerSource, /filtering_mode_runtime_sync_failed/);
+    assert.match(handlerSource, /runtimeVerified: false/);
+    assert.match(handlerSource, /retryScheduled:/);
+  }
+  assertOrderedIncludes(defaultModeSource, [
+    'await reconcileFilteringModeMutation(',
+    'broadcastMessage({ defaultFilteringMode: afterLevel });',
+    'callback(afterLevel);',
+  ], 'default mode verified callback');
+  assertOrderedIncludes(detailsSource, [
+    'await reconcileFilteringModeMutation(',
+    'broadcastMessage({ defaultFilteringMode });',
+    'callback(await getFilteringModeDetails(true));',
+  ], 'filtering details verified callback');
+
+  const settingsSource = await readSource('js/settings.js');
+  const popupSource = await readSource('popup/popup.js');
+  const legacyPopupSource = await readSource('js/popup.js');
+  const optionsSource = await readSource('options/options.js');
+  const modeEditorSource = await readSource('js/mode-editor.js');
+  const backupRestoreSource = await readSource('js/backup-restore.js');
+  assert.match(
+    settingsSource,
+    /response instanceof Object && response\.error[\s\S]*filteringModeRuntimeVerified = 'false'/
+  );
+  assert.match(
+    popupSource,
+    /response && typeof response === "object" && response\.error[\s\S]*throw new Error/
+  );
+  assert.match(legacyPopupSource, /response instanceof Object && response\.error/);
+  assert.equal(
+    countMatches(optionsSource, /typeof result === "object" && result\.error/g),
+    2
+  );
+  assert.match(modeEditorSource, /if \( modesAfter\?\.error \)[\s\S]*throw new Error/);
+  assert.match(backupRestoreSource, /rulesetResult\?\.error[\s\S]*filteringModeResult\?\.error/);
+});
+
+test('filtering surface dirty token survives cut points and is CAS-cleared after verification', async () => {
+  const source = await readSource('js/background.js');
+  const tokenSource = sourceBetween(
+    source,
+    'let filteringSurfaceReconciliationTokenCounter',
+    'async function reconcileFilteringModeRuntimeNow'
+  );
+  const preparationSource = sourceBetween(
+    source,
+    'async function prepareFilteringSurfaceReconciliation',
+    'const filteringSurfaceRuntimeResultIsVerified'
+  );
+  const clearPreparedSource = sourceBetween(
+    source,
+    'async function clearPreparedFilteringSurfaceReconciliation',
+    'function ensureAnnoyancesForCompleteDefault'
+  );
+  const startSource = sourceBetween(
+    source,
+    'async function startNow({ forcePermissionSync = false } = {}) {',
+    'async function start(options = {}) {'
+  );
+  const entitlementSource = sourceBetween(
+    source,
+    'async function applyEntitlementStatusEffects',
+    'async function enforceEntitlementNow'
+  );
+  const retryAlarmSource = sourceBetween(
+    source,
+    'if (alarm?.name === INJECTABLE_STARTUP_RETRY_ALARM)',
+    "if (alarm?.name === ENTITLEMENT_EFFECTS_RETRY_ALARM)"
+  );
+
+  assert.match(source, /'filteringSurfaceReconciliationDirtyV1'/);
+  assert.match(tokenSource, /filteringSurfaceReconciliationTokenFrom\(current\) !== token/);
+  assert.match(tokenSource, /verifyRuntime[\s\S]*canReusePersistedInjectableRuntimeState/);
+  assertOrderedIncludes(preparationSource, [
+    'token = createFilteringSurfaceReconciliationToken();',
+    'await localWrite(FILTERING_MODE_RECONCILIATION_DIRTY_KEY, {',
+    'await ensureAnnoyancesForCompleteDefaultNow();',
+  ], 'baseline recovery marker');
+  assert.match(clearPreparedSource, /return enqueueRulesetMutation\(async \(\) =>[\s\S]*verifyRuntime: true/);
+  assertOrderedIncludes(startSource, [
+    'await prepareFilteringSurfaceReconciliation();',
+    'startupInjectableResult = await ensureStartupInjectableState();',
+    'await clearPreparedFilteringSurfaceReconciliation(',
+  ], 'startup filtering surface drain');
+  assertOrderedIncludes(entitlementSource, [
+    'resumeRegistrationMutationsAfterPaywall();',
+    'await prepareFilteringSurfaceReconciliation();',
+    'await ensureEntitledRegistrationEffects({',
+    'await clearPreparedFilteringSurfaceReconciliation(',
+  ], 'entitlement filtering surface drain');
+  assert.match(retryAlarmSource, /prepareFilteringSurfaceReconciliation\(\)[\s\S]*ensureStartupInjectableState\(\)[\s\S]*clearPreparedFilteringSurfaceReconciliation/);
+  assert.match(retryAlarmSource, /filteringSurfaceRetryPending === false/);
+});
+
+test('Complete annoyance ownership survives settled starts and entry/exit save retries', async () => {
+  const source = await readSource('js/background.js');
+  const ensureSource = sourceBetween(
+    source,
+    'async function ensureAnnoyancesForCompleteDefaultNow',
+    'async function scheduleFilteringModeReconciliationRetry'
+  );
+  const preparationSource = sourceBetween(
+    source,
+    'async function prepareFilteringSurfaceReconciliation',
+    'const filteringSurfaceRuntimeResultIsVerified'
+  );
+  const buildHarness = new Function('deps', `
+    const {
+      getDefaultFilteringMode,
+      rulesetConfig,
+      MODE_COMPLETE,
+      ANNOYANCE_RULESET_IDS,
+      AUTO_ANNOYANCES_DISABLED_KEY,
+      AUTO_ANNOYANCES_BASELINE_KEY,
+      readLocalStrict,
+      localWrite,
+      localRemove,
+      applyAutomaticRulesetSelection,
+      arrayEqAsSet,
+    } = deps;
+    ${ensureSource}
+    return ensureAnnoyancesForCompleteDefaultNow;
+  `);
+  const createHarness = ({
+    mode = 4,
+    enabled = [ 'base' ],
+    baseline,
+    failApplyAt = 0,
+  } = {}) => {
+    const storage = new Map();
+    if ( baseline !== undefined ) {
+      storage.set('baseline', baseline.slice());
+    }
+    const rulesetConfig = { enabledRulesets: enabled.slice() };
+    const applyCalls = [];
+    let applyCount = 0;
+    const ensure = buildHarness({
+      getDefaultFilteringMode: async () => mode,
+      rulesetConfig,
+      MODE_COMPLETE: 4,
+      ANNOYANCE_RULESET_IDS: [ 'annoyance-a', 'annoyance-b' ],
+      AUTO_ANNOYANCES_DISABLED_KEY: 'disabled',
+      AUTO_ANNOYANCES_BASELINE_KEY: 'baseline',
+      readLocalStrict: async key => storage.get(key),
+      localWrite: async (key, value) => storage.set(key, value.slice?.() ?? value),
+      localRemove: async key => storage.delete(key),
+      applyAutomaticRulesetSelection: async ids => {
+        applyCount += 1;
+        applyCalls.push(ids.slice());
+        rulesetConfig.enabledRulesets = ids.slice();
+        if ( applyCount === failApplyAt ) {
+          throw new Error('injected config save failure');
+        }
+        return true;
+      },
+      arrayEqAsSet: (a, b) =>
+        a.length === b.length && a.every(id => b.includes(id)),
+    });
+    return { ensure, storage, rulesetConfig, applyCalls };
+  };
+
+  const entry = createHarness({
+    enabled: [ 'base' ],
+    baseline: [ 'original-base' ],
+  });
+  await entry.ensure();
+  assert.deepEqual(entry.storage.get('baseline'), [ 'original-base' ]);
+  assert.deepEqual(entry.applyCalls, [
+    [ 'base', 'annoyance-a', 'annoyance-b' ],
+  ]);
+
+  const settled = createHarness({
+    enabled: [ 'base', 'annoyance-a', 'annoyance-b' ],
+    baseline: [ 'base' ],
+  });
+  assert.equal(await settled.ensure(), false);
+  assert.deepEqual(settled.storage.get('baseline'), [ 'base' ]);
+  assert.equal(settled.applyCalls.length, 0);
+
+  const exitRetry = createHarness({
+    mode: 3,
+    enabled: [ 'base', 'annoyance-a', 'annoyance-b' ],
+    baseline: [ 'base' ],
+    failApplyAt: 1,
+  });
+  await assert.rejects(exitRetry.ensure(), /injected config save failure/);
+  assert.deepEqual(exitRetry.rulesetConfig.enabledRulesets, [ 'base' ]);
+  assert.deepEqual(exitRetry.storage.get('baseline'), [ 'base' ]);
+  assert.equal(await exitRetry.ensure(), true);
+  assert.equal(exitRetry.storage.has('baseline'), false);
+  assert.deepEqual(exitRetry.applyCalls, [ [ 'base' ], [ 'base' ] ]);
+
+  assert.match(
+    preparationSource,
+    /selectionReconciled === false && recoveringDirtyMutation[\s\S]*applyAutomaticRulesetSelection\([\s\S]*rulesetConfig\.enabledRulesets\.slice\(\)/
+  );
+});
+
+test('manual ruleset journal preserves Complete ownership and replays exact intent', async () => {
+  const source = await readSource('js/background.js');
+  const planSource = sourceBetween(
+    source,
+    'async function buildManualRulesetOwnershipPlan',
+    'async function applyManualRulesetOwnershipPlan'
+  );
+  const replaySource = sourceBetween(
+    source,
+    'async function replayJournaledRulesetMutation',
+    'async function applyRulesetMutation'
+  );
+  const mutationSource = sourceBetween(
+    source,
+    'async function applyRulesetMutation',
+    'async function deferFailedSenderDocumentRuntime'
+  );
+  const buildPlan = new Function('deps', `
+    const {
+      getDefaultFilteringMode,
+      MODE_COMPLETE,
+      ANNOYANCE_RULESET_IDS,
+      readLocalStrict,
+      AUTO_ANNOYANCES_BASELINE_KEY,
+    } = deps;
+    ${planSource}
+    return buildManualRulesetOwnershipPlan;
+  `)({
+    getDefaultFilteringMode: async () => 4,
+    MODE_COMPLETE: 4,
+    ANNOYANCE_RULESET_IDS: [ 'annoyance-a', 'annoyance-b' ],
+    readLocalStrict: async () => [ 'base', 'annoyance-a' ],
+    AUTO_ANNOYANCES_BASELINE_KEY: 'baseline',
+  });
+  assert.deepEqual(
+    await buildPlan(
+      [ 'new-base', 'annoyance-a', 'annoyance-b' ],
+      true
+    ),
+    {
+      baselineAction: 'write',
+      baselineRulesetIds: [ 'new-base', 'annoyance-a' ],
+      annoyancesDisabled: false,
+    }
+  );
+  assert.deepEqual(
+    await buildPlan([ 'new-base', 'annoyance-a' ], true),
+    { baselineAction: 'remove', annoyancesDisabled: true }
+  );
+
+  assertOrderedIncludes(mutationSource, [
+    'const ownershipPlan = await buildManualRulesetOwnershipPlan(',
+    'await localWrite(FILTERING_MODE_RECONCILIATION_DIRTY_KEY, {',
+    "kind: 'ruleset',",
+    'desiredRulesetIds: userEnabledRulesets.slice(),',
+    'ownershipPlan,',
+    'await scheduleFilteringModeReconciliationRetry();',
+    'await broadcastUnverifiedRulesetRuntimeState();',
+    'result = await enableRulesets(userEnabledRulesets);',
+  ], 'ruleset intent journal precedes Chrome mutation');
+  assertOrderedIncludes(replaySource, [
+    'journal?.desiredRulesetIds',
+    'await getRulesetDetails();',
+    'await enableRulesets(availableDesiredRulesetIds);',
+    'await persistAcceptedRulesetSelection({',
+    'ownershipPlan: journal.ownershipPlan,',
+    'forceSave: true,',
+  ], 'ruleset journal recovery');
+  assert.match(
+    mutationSource,
+    /result\?\.error &&[\s\S]*typeof result\.staticUpdateSucceeded !== 'boolean'[\s\S]*clearFilteringSurfaceReconciliationToken\(dirtyToken\)[\s\S]*retryScheduled: false/
+  );
+});
+
+test('ruleset UIs wait for explicit verified runtime without arbitrary mutation timeouts', async () => {
+  const backgroundSource = await readSource('js/background.js');
+  const optionsSource = await readSource('options/options.js');
+  const classicSource = await readSource('js/filter-lists.js');
+  const adminSource = await readSource('js/admin.js');
+  const applyDeltaSource = sourceBetween(
+    optionsSource,
+    'async function applyRulesetDelta',
+    'async function refreshAllowlist'
+  );
+  const listenerSource = sourceBetween(
+    optionsSource,
+    'function wireRuntimeStateUpdates',
+    'function wireAllowlist'
+  );
+  const startSource = sourceBetween(
+    backgroundSource,
+    'async function startNow({ forcePermissionSync = false } = {}) {',
+    'async function start(options = {}) {'
+  );
+  const retryAlarmSource = sourceBetween(
+    backgroundSource,
+    'if (alarm?.name === INJECTABLE_STARTUP_RETRY_ALARM)',
+    "if (alarm?.name === ENTITLEMENT_EFFECTS_RETRY_ALARM)"
+  );
+
+  assert.match(applyDeltaSource, /return chrome\.runtime\.sendMessage\(request\)/);
+  assert.doesNotMatch(applyDeltaSource, /timeoutMs|sendRuntimeMessageWithTimeout/);
+  assert.match(
+    listenerSource,
+    /typeof message\.runtimeVerified === "boolean"[\s\S]*rulesetRuntimeVerified = message\.runtimeVerified/
+  );
+  assert.doesNotMatch(
+    listenerSource,
+    /rulesetRuntimeVerified = message\.runtimeVerified === true/
+  );
+  assert.match(optionsSource, /entry\.checkbox\.disabled =[\s\S]*rulesetRuntimeVerified === false/);
+  assert.match(classicSource, /const runtimeVerified = cachedRulesetData\.runtimeVerified === true/);
+  assert.match(classicSource, /fromAdmin \|\| runtimeVerified === false \? '' : null/);
+  assert.match(startSource, /rulesetRuntimeIsVerifiedForOptions\(\)[\s\S]*broadcastVerifiedRulesetRuntimeState/);
+  assert.match(retryAlarmSource, /rulesetRuntimeIsVerifiedForOptions\(\)[\s\S]*broadcastVerifiedRulesetRuntimeState/);
+  assert.equal(
+    countMatches(adminSource, /broadcastMessage\(\{ runtimeVerified: false \}\)/g),
+    3
+  );
+  assert.match(adminSource, /managed filtering runtime verification failed/);
+});
+
+test('accepted manual ruleset mutations verify runtime and suppress success broadcasts on failure', async () => {
+  const source = await readSource('js/background.js');
+  const mutationSource = sourceBetween(
+    source,
+    'async function applyRulesetMutation',
+    'async function deferFailedSenderDocumentRuntime'
+  );
+  const handlerSource = sourceBetween(
+    source,
+    "case 'applyRulesets':",
+    "case 'getDefaultConfig':"
+  );
+
+  assert.match(mutationSource, /if \( userIntentAccepted \) \{[\s\S]*syncInjectablesAndRefreshTabs/);
+  assert.match(mutationSource, /assertAuthoritativeInjectableSyncResult\(syncResult,[\s\S]*'ruleset_runtime_sync_failed'/);
+  assert.match(mutationSource, /runtimeVerified/);
+  assert.doesNotMatch(handlerSource, /\.finally\(/);
+  assert.match(handlerSource, /if \( result\?\.runtimeVerified === true \)[\s\S]*broadcastMessage/);
+  assert.match(handlerSource, /runtimeVerified: false/);
 });
 
 test('full startup recovery restores the shared gate before releasing queued license work', async () => {

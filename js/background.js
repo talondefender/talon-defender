@@ -153,6 +153,8 @@ const ENTITLEMENT_EFFECTS_RETRY_DELAY_MINUTES = 1;
 const DNR_RECONCILIATION_ALARM = 'dnr-reconciliation-retry';
 const INJECTABLE_STARTUP_RETRY_ALARM = 'injectable-startup-retry';
 const INJECTABLE_STARTUP_RETRY_DELAY_MINUTES = 1;
+const FILTERING_MODE_RECONCILIATION_DIRTY_KEY =
+    'filteringSurfaceReconciliationDirtyV1';
 const DEFERRED_RUNTIME_RETRY_ALARM = 'deferred-runtime-retry';
 const DEFERRED_RUNTIME_RETRY_DELAY_MINUTES = 1;
 const DEFERRED_RUNTIME_RETRY_DELAYS_MINUTES = Object.freeze([ 1, 5, 15, 60 ]);
@@ -2840,6 +2842,7 @@ import {
 } from './config.js';
 
 import {
+    DNR_RECONCILIATION_DIRTY_KEY,
     enableRulesets,
     excludeFromStrictBlock,
     getDefaultRulesetsFromEnv,
@@ -3348,6 +3351,14 @@ const sanitizeFilteringModesPayload = value => {
         out[key] = items;
     }
     return out;
+};
+
+const defaultFilteringLevelFromModes = modes => {
+    if ( modes?.none?.includes('all-urls') ) { return MODE_NONE; }
+    if ( modes?.basic?.includes('all-urls') ) { return MODE_BASIC; }
+    if ( modes?.optimal?.includes('all-urls') ) { return MODE_OPTIMAL; }
+    if ( modes?.complete?.includes('all-urls') ) { return MODE_COMPLETE; }
+    return null;
 };
 
 function isEntitled() {
@@ -6927,6 +6938,43 @@ const contentRegistrationResultIsVerified = result =>
         result.uncertain !== true
     );
 
+function assertAuthoritativeInjectableSyncResult(
+    result,
+    errorCode = 'injectable_reconciliation_failed',
+    { allowNotEntitled = false } = {}
+) {
+    const notEntitledStateIsSettled = allowNotEntitled &&
+        result instanceof Object &&
+        result.ok === true &&
+        result.skipped === 'not_entitled';
+    const requiredUserScriptsArePending =
+        result?.sandboxUserScriptsPending === true &&
+        Number(result?.sandboxCustomFilterCount) > 0;
+    const entitledStateIsSettled = result instanceof Object &&
+        result.ok === true &&
+        result.skipped !== 'not_entitled' &&
+        contentRegistrationResultIsVerified(result.registerResult) &&
+        result.runtimeStatePersisted === true &&
+        typeof result.runtimeFingerprint === 'string' &&
+        result.runtimeFingerprint !== '' &&
+        requiredUserScriptsArePending === false;
+    if ( notEntitledStateIsSettled || entitledStateIsSettled ) {
+        return result;
+    }
+    const detail = typeof result?.sandboxLastError === 'string' &&
+        result.sandboxLastError !== ''
+        ? result.sandboxLastError
+        : typeof result?.registerResult?.lastError === 'string' &&
+            result.registerResult.lastError !== ''
+            ? result.registerResult.lastError
+            : 'injectable runtime did not reach verified durable state';
+    const error = new Error(detail);
+    error.code = errorCode;
+    error.syncResult = result;
+    error.retryScheduled = result?.retryScheduled === true;
+    throw error;
+}
+
 const applyContentRegistrationReloadHint = async (
     registerResult,
     reloadHint,
@@ -6999,6 +7047,7 @@ async function syncInjectablesAndRefreshTabsNow({
     let reloadHint = null;
     let registrationChanged = false;
     let sandboxRulesChanged = false;
+    let sandboxCustomFilterCount = 0;
     let sandboxRegistrationSucceeded = true;
     let sandboxUserScriptsChanged = false;
     let sandboxCompiledUserScriptIntentChanged = false;
@@ -7041,6 +7090,7 @@ async function syncInjectablesAndRefreshTabsNow({
             lastError: String(reason || 'register sandbox filters failed'),
         }));
         sandboxRevision = sandboxResult.revision;
+        sandboxCustomFilterCount = sandboxResult.customFilterCount;
         sandboxRegistrationSucceeded = sandboxResult.ok === true;
         sandboxRulesChanged = sandboxResult.changed === true;
         sandboxUserScriptsChanged = sandboxResult.userScriptsChanged === true;
@@ -7228,8 +7278,7 @@ async function syncInjectablesAndRefreshTabsNow({
         }
     }
     const contentRegistrationSucceeded =
-        registerResult === true ||
-        (registerResult instanceof Object && registerResult.ok === true);
+        contentRegistrationResultIsVerified(registerResult);
     let registrationSucceeded = contentRegistrationSucceeded &&
         sandboxRegistrationSucceeded && sandboxDnrSucceeded;
     const fingerprintSucceeded = typeof runtimeFingerprint === 'string' &&
@@ -7286,11 +7335,17 @@ async function syncInjectablesAndRefreshTabsNow({
     if ( sandboxUserScriptsPending && sandboxLastError === '' ) {
         sandboxLastError = 'Chrome userScripts API is temporarily unavailable';
     }
+    let retryScheduled = false;
     if ( succeeded === false || sandboxUserScriptsPending ) {
-        await scheduleStartupInjectableRetry({
-            delayInMinutes: sandboxUserScriptsPending ? 15 :
-                INJECTABLE_STARTUP_RETRY_DELAY_MINUTES,
-        }).catch(ubolErr);
+        try {
+            await scheduleStartupInjectableRetry({
+                delayInMinutes: sandboxUserScriptsPending ? 15 :
+                    INJECTABLE_STARTUP_RETRY_DELAY_MINUTES,
+            });
+            retryScheduled = true;
+        } catch (reason) {
+            ubolErr(reason);
+        }
     }
     return {
         registerResult,
@@ -7299,6 +7354,7 @@ async function syncInjectablesAndRefreshTabsNow({
         reloadHint,
         runtimeFingerprint,
         sandboxRulesChanged,
+        sandboxCustomFilterCount,
         sandboxRegistrationSucceeded,
         sandboxUserScriptsChanged,
         sandboxCompiledUserScriptIntentChanged,
@@ -7308,6 +7364,8 @@ async function syncInjectablesAndRefreshTabsNow({
         sandboxDnrSucceeded,
         sandboxLastError,
         sandboxRevision,
+        runtimeStatePersisted,
+        retryScheduled,
         ok: succeeded,
     };
 }
@@ -7328,10 +7386,15 @@ const waitForInjectableSyncIdle = async () => {
     }
 };
 
-setAdminRuntimeReconciler(() => syncInjectablesAndRefreshTabs({
-    runtimeOnly: false,
-    refreshOpenTabs: true,
-}));
+setAdminRuntimeReconciler(async () => {
+    const result = await syncInjectablesAndRefreshTabs({
+        runtimeOnly: false,
+        refreshOpenTabs: true,
+    });
+    assertAuthoritativeInjectableSyncResult(result,
+        'admin_runtime_sync_failed');
+    return { ...result, runtimeVerified: true };
+});
 setAdminDeveloperModeDisabler(() => setDeveloperMode(false));
 
 async function ensureStartupInjectableState() {
@@ -8365,17 +8428,45 @@ async function applyEntitlementStatusEffects(
                 resumeRegistrationMutationsAfterPaywall();
                 await markStartupDocumentRuntimeReady();
                 transitionRequiresRepair = true;
+                const filteringSurfacePreparation =
+                    await prepareFilteringSurfaceReconciliation();
+                let registrationResult;
                 if (
+                    filteringSurfacePreparation.pending === true ||
                     registerInjectablesOnEntitled ||
                     await canReusePersistedInjectableRuntimeState()
                         .catch(() => false) === false
                 ) {
-                    const registrationResult =
+                    registrationResult =
                         await ensureEntitledRegistrationEffects({
                         refreshOpenTabs: refreshOpenTabsOnEntitled,
                     });
                     registrationEffectsPending ||=
                         registrationResult?.sandboxUserScriptsPending === true;
+                }
+                const filteringSurfaceCleared =
+                    await clearPreparedFilteringSurfaceReconciliation(
+                    filteringSurfacePreparation,
+                    registrationResult || { ok: true, skipped: 'unchanged' }
+                );
+                if (
+                    filteringSurfacePreparation.pending === true &&
+                    filteringSurfaceCleared !== true &&
+                    await filteringSurfaceReconciliationIsPending()
+                ) {
+                    const error = new Error(
+                        'filtering surface reconciliation remains pending'
+                    );
+                    error.code = 'filtering_mode_reconciliation_failed';
+                    error.retryScheduled =
+                        filteringSurfacePreparation.retryScheduled === true;
+                    throw error;
+                }
+                if (
+                    filteringSurfaceCleared !== true &&
+                    await rulesetRuntimeIsVerifiedForOptions()
+                ) {
+                    await broadcastVerifiedRulesetRuntimeState();
                 }
                 await drainSuspendedRuntimeReconcileRequests();
                 await drainSuspendedOpenTabRuntimeRefresh();
@@ -8479,21 +8570,30 @@ const arrayEqAsSet = (a = [], b = []) => {
 async function applyAutomaticRulesetSelection(enabledRulesets) {
     const result = await enableRulesets(enabledRulesets);
     if ( result !== undefined && result.staticUpdateSucceeded !== true ) {
-        return false;
+        if ( typeof browser.alarms?.create !== 'function' ) {
+            throw new Error('alarms API unavailable for DNR retry');
+        }
+        await browser.alarms.create(DNR_RECONCILIATION_ALARM, {
+            delayInMinutes: 1,
+        });
+        const error = new Error(
+            result?.error || 'automatic ruleset update was not accepted by Chrome'
+        );
+        error.code = 'automatic_ruleset_reconciliation_failed';
+        error.dnrRetryScheduled = true;
+        throw error;
     }
     rulesetConfig.enabledRulesets = enabledRulesets.slice();
     await saveRulesetConfig();
     const repairResult = await repairDirtyDnrState({ force: true });
     if ( repairResult?.error ) {
-        throw new Error(`automatic ruleset reconciliation failed: ${repairResult.error}`);
+        const error = new Error(
+            `automatic ruleset reconciliation failed: ${repairResult.error}`
+        );
+        error.code = 'automatic_ruleset_reconciliation_failed';
+        error.dnrRetryScheduled = repairResult.retryScheduled === true;
+        throw error;
     }
-    registerInjectablesIfEntitled().catch(ubolErr);
-    const reportedEnabledRulesets = sanitizeRulesetIds(result?.enabledRulesets) ||
-        await getReportedEnabledRulesets().catch(() => enabledRulesets);
-    broadcastMessage({
-        enabledRulesets: reportedEnabledRulesets,
-        configRevision: rulesetConfig.configRevision,
-    });
     return true;
 }
 
@@ -8504,32 +8604,324 @@ async function ensureAnnoyancesForCompleteDefaultNow() {
         : [];
 
     if (defaultMode === MODE_COMPLETE) {
-        const disabledByUser = await readLocalStrict(AUTO_ANNOYANCES_DISABLED_KEY);
-        if (disabledByUser === true) { return; }
+        const [ disabledByUser, existingBaseline ] = await Promise.all([
+            readLocalStrict(AUTO_ANNOYANCES_DISABLED_KEY),
+            readLocalStrict(AUTO_ANNOYANCES_BASELINE_KEY),
+        ]);
+        if (disabledByUser === true) { return false; }
 
         const missing = ANNOYANCE_RULESET_IDS.filter(id =>
             enabledBefore.includes(id) === false
         );
         if (missing.length === 0) {
-            await localRemove(AUTO_ANNOYANCES_BASELINE_KEY);
-            return;
+            return false;
         }
 
-        await localWrite(AUTO_ANNOYANCES_BASELINE_KEY, enabledBefore);
+        if ( Array.isArray(existingBaseline) === false ) {
+            await localWrite(AUTO_ANNOYANCES_BASELINE_KEY, enabledBefore);
+        }
         const afterIds = Array.from(new Set(enabledBefore.concat(ANNOYANCE_RULESET_IDS)));
-        await applyAutomaticRulesetSelection(afterIds);
-        return;
+        return applyAutomaticRulesetSelection(afterIds);
     }
 
     const baseline = await readLocalStrict(AUTO_ANNOYANCES_BASELINE_KEY);
-    if (Array.isArray(baseline) === false) { return; }
+    if (Array.isArray(baseline) === false) { return false; }
 
     const expected = Array.from(new Set(baseline.concat(ANNOYANCE_RULESET_IDS)));
-    if (arrayEqAsSet(enabledBefore, expected)) {
-        const applied = await applyAutomaticRulesetSelection(baseline);
-        if ( applied === false ) { return; }
+    if (
+        arrayEqAsSet(enabledBefore, expected) ||
+        arrayEqAsSet(enabledBefore, baseline)
+    ) {
+        await applyAutomaticRulesetSelection(baseline);
+        await localRemove(AUTO_ANNOYANCES_BASELINE_KEY);
+        return true;
     }
     await localRemove(AUTO_ANNOYANCES_BASELINE_KEY);
+    return false;
+}
+
+async function scheduleFilteringModeReconciliationRetry() {
+    await scheduleStartupInjectableRetry();
+}
+
+let filteringSurfaceReconciliationTokenCounter = 0;
+
+const createFilteringSurfaceReconciliationToken = () =>
+    `${Date.now()}:${++filteringSurfaceReconciliationTokenCounter}:` +
+    Math.random().toString(36).slice(2);
+
+const filteringSurfaceReconciliationTokenFrom = value =>
+    value?.schema === 1 && typeof value.token === 'string' && value.token !== ''
+        ? value.token
+        : '';
+
+async function filteringSurfaceReconciliationIsPending() {
+    const [
+        dirty,
+        automaticBaseline,
+        automaticAnnoyancesDisabled,
+        defaultMode,
+    ] = await Promise.all([
+        readLocalStrict(FILTERING_MODE_RECONCILIATION_DIRTY_KEY),
+        readLocalStrict(AUTO_ANNOYANCES_BASELINE_KEY),
+        readLocalStrict(AUTO_ANNOYANCES_DISABLED_KEY),
+        getDefaultFilteringMode(),
+    ]);
+    if ( isDurableDirtyMarker(dirty) ) { return true; }
+    if ( defaultMode === MODE_COMPLETE ) {
+        if ( automaticAnnoyancesDisabled === true ) { return false; }
+        const enabledRulesets = Array.isArray(rulesetConfig.enabledRulesets)
+            ? rulesetConfig.enabledRulesets
+            : [];
+        return ANNOYANCE_RULESET_IDS.some(id =>
+            enabledRulesets.includes(id) === false
+        );
+    }
+    return Array.isArray(automaticBaseline);
+}
+
+async function rulesetRuntimeIsVerifiedForOptions() {
+    if ( isEntitled() === false ) { return false; }
+    if ( await filteringSurfaceReconciliationIsPending() ) { return false; }
+    if ( await canReusePersistedInjectableRuntimeState() !== true ) {
+        return false;
+    }
+    return await filteringSurfaceReconciliationIsPending() === false;
+}
+
+async function clearFilteringSurfaceReconciliationToken(token, {
+    verifyRuntime = false,
+} = {}) {
+    if ( typeof token !== 'string' || token === '' ) { return false; }
+    const current = await readLocalStrict(
+        FILTERING_MODE_RECONCILIATION_DIRTY_KEY
+    );
+    if ( filteringSurfaceReconciliationTokenFrom(current) !== token ) {
+        return false;
+    }
+    if (
+        verifyRuntime &&
+        await canReusePersistedInjectableRuntimeState().catch(() => false) !== true
+    ) {
+        return false;
+    }
+    await localRemove(FILTERING_MODE_RECONCILIATION_DIRTY_KEY);
+    return true;
+}
+
+async function broadcastRulesetRuntimeState(runtimeVerified) {
+    const enabledRulesets = await getReportedEnabledRulesets().catch(() =>
+        rulesetConfig.enabledRulesets.slice()
+    );
+    broadcastMessage({
+        enabledRulesets,
+        configRevision: rulesetConfig.configRevision,
+        runtimeVerified: runtimeVerified === true,
+    });
+}
+
+const broadcastVerifiedRulesetRuntimeState = () =>
+    broadcastRulesetRuntimeState(true);
+
+const broadcastUnverifiedRulesetRuntimeState = () =>
+    broadcastRulesetRuntimeState(false);
+
+async function reconcileFilteringModeRuntimeNow({
+    mutationResult,
+    beforeSync,
+    dirtyToken,
+} = {}) {
+    const rulesetSelectionChanged =
+        await ensureAnnoyancesForCompleteDefaultNow();
+    const beforeSyncResult = await beforeSync?.(mutationResult);
+    if ( beforeSyncResult?.error ) {
+        let dnrRetryScheduled = false;
+        await localWrite(DNR_RECONCILIATION_DIRTY_KEY, true);
+        if ( typeof browser.alarms?.create === 'function' ) {
+            await browser.alarms.create(DNR_RECONCILIATION_ALARM, {
+                delayInMinutes: 1,
+            });
+            dnrRetryScheduled = true;
+        }
+        const error = new Error(
+            `filtering surface DNR reconciliation failed: ` +
+            beforeSyncResult.error
+        );
+        error.code = 'filtering_mode_dnr_sync_failed';
+        error.dnrRetryScheduled = dnrRetryScheduled;
+        throw error;
+    }
+    const syncResult = await syncInjectablesAndRefreshTabs({
+        runtimeOnly: false,
+    });
+    assertAuthoritativeInjectableSyncResult(syncResult,
+        'filtering_mode_reconciliation_failed');
+    const dirtyCleared = await clearFilteringSurfaceReconciliationToken(
+        dirtyToken
+    );
+    if ( dirtyCleared === false ) {
+        const error = new Error(
+            'filtering mode runtime verification marker was superseded'
+        );
+        error.code = 'filtering_mode_reconciliation_failed';
+        error.retryScheduled = true;
+        throw error;
+    }
+    await broadcastVerifiedRulesetRuntimeState();
+    return {
+        mutationResult,
+        rulesetSelectionChanged,
+        syncResult,
+        dirtyCleared,
+    };
+}
+
+async function reconcileFilteringModeMutation(operation, {
+    beforeSync,
+} = {}) {
+    if ( typeof operation !== 'function' ) {
+        throw new TypeError('filtering mode mutation callback is required');
+    }
+    if ( beforeSync !== undefined && typeof beforeSync !== 'function' ) {
+        throw new TypeError('filtering mode before-sync callback must be a function');
+    }
+    return enqueueRulesetMutation(async () => {
+        const dirtyToken = createFilteringSurfaceReconciliationToken();
+        await localWrite(FILTERING_MODE_RECONCILIATION_DIRTY_KEY, {
+            schema: 1,
+            token: dirtyToken,
+            kind: 'filtering-mode',
+            markedAt: Date.now(),
+        });
+        let retryScheduled = false;
+        try {
+            await scheduleFilteringModeReconciliationRetry();
+            retryScheduled = true;
+        } catch (reason) {
+            ubolErr(`filtering mode retry schedule/${reason}`);
+        }
+        await broadcastUnverifiedRulesetRuntimeState();
+        try {
+            const mutationResult = await operation();
+            return await reconcileFilteringModeRuntimeNow({
+                mutationResult,
+                beforeSync,
+                dirtyToken,
+            });
+        } catch (reason) {
+            const error = reason instanceof Object
+                ? reason
+                : new Error(`${reason}`);
+            error.retryScheduled =
+                error.retryScheduled === true ||
+                error.dnrRetryScheduled === true ||
+                retryScheduled;
+            throw error;
+        }
+    });
+}
+
+async function prepareFilteringSurfaceReconciliation() {
+    const pending = await filteringSurfaceReconciliationIsPending();
+    if ( pending === false ) { return { pending: false }; }
+    if ( isEntitled() === false ) {
+        return { pending: true, skipped: 'not_entitled' };
+    }
+    return enqueueRulesetMutation(async () => {
+        if ( await filteringSurfaceReconciliationIsPending() === false ) {
+            return { pending: false };
+        }
+        const currentDirty = await readLocalStrict(
+            FILTERING_MODE_RECONCILIATION_DIRTY_KEY
+        );
+        let token = filteringSurfaceReconciliationTokenFrom(currentDirty);
+        const recoveringDirtyMutation = token !== '';
+        if ( token === '' ) {
+            token = createFilteringSurfaceReconciliationToken();
+            await localWrite(FILTERING_MODE_RECONCILIATION_DIRTY_KEY, {
+                schema: 1,
+                token,
+                kind: 'automatic-selection',
+                markedAt: Date.now(),
+            });
+        }
+        let retryScheduled = false;
+        try {
+            await scheduleFilteringModeReconciliationRetry();
+            retryScheduled = true;
+        } catch (reason) {
+            ubolErr(reason);
+        }
+        await broadcastUnverifiedRulesetRuntimeState();
+        let selectionReconciled;
+        if (
+            currentDirty?.kind === 'ruleset' &&
+            Array.isArray(currentDirty.desiredRulesetIds)
+        ) {
+            selectionReconciled =
+                await replayJournaledRulesetMutation(currentDirty);
+        } else {
+            selectionReconciled =
+                await ensureAnnoyancesForCompleteDefaultNow();
+            if ( selectionReconciled === false && recoveringDirtyMutation ) {
+                await applyAutomaticRulesetSelection(
+                    rulesetConfig.enabledRulesets.slice()
+                );
+                selectionReconciled = true;
+            }
+        }
+        const dnrRepairResult = await repairDirtyDnrState();
+        if ( dnrRepairResult?.error ) {
+            const error = new Error(
+                `filtering surface DNR repair failed: ${dnrRepairResult.error}`
+            );
+            error.code = 'filtering_mode_dnr_sync_failed';
+            error.retryScheduled = dnrRepairResult.retryScheduled === true ||
+                retryScheduled;
+            throw error;
+        }
+        return {
+            pending: true,
+            selectionReconciled,
+            token,
+            retryScheduled,
+        };
+    });
+}
+
+const filteringSurfaceRuntimeResultIsVerified = result =>
+    result?.skipped === 'unchanged' || (
+        result?.ok === true &&
+        result?.skipped !== 'not_entitled' &&
+        (
+            result?.sandboxUserScriptsPending !== true ||
+            Number(result?.sandboxCustomFilterCount) === 0
+        )
+    );
+
+async function clearPreparedFilteringSurfaceReconciliation(
+    preparation,
+    runtimeResult
+) {
+    if (
+        preparation?.pending !== true ||
+        preparation?.skipped === 'not_entitled' ||
+        typeof preparation?.token !== 'string' ||
+        isEntitled() === false ||
+        filteringSurfaceRuntimeResultIsVerified(runtimeResult) === false
+    ) {
+        return false;
+    }
+    return enqueueRulesetMutation(async () => {
+        const cleared = await clearFilteringSurfaceReconciliationToken(
+            preparation.token, {
+            verifyRuntime: true,
+        });
+        if ( cleared ) {
+            await broadcastVerifiedRulesetRuntimeState();
+        }
+        return cleared;
+    });
 }
 
 function ensureAnnoyancesForCompleteDefault() {
@@ -8537,11 +8929,9 @@ function ensureAnnoyancesForCompleteDefault() {
 }
 
 async function onPermissionsRemoved() {
-    const modified = await syncWithBrowserPermissions();
-    if (modified === false) { return false; }
-    await ensureAnnoyancesForCompleteDefault().catch(ubolErr);
-    syncInjectablesAndRefreshTabs({ runtimeOnly: false }).catch(ubolErr);
-    return true;
+    const { mutationResult: modified } =
+        await reconcileFilteringModeMutation(syncWithBrowserPermissions);
+    return modified !== false;
 }
 
 // Reconcile browser permission grants after optional permission flows.
@@ -8549,13 +8939,14 @@ async function onPermissionsAdded(permissions) {
     const details = pendingPermissionRequest;
     pendingPermissionRequest = undefined;
     if (details === undefined) {
-        const modified = await syncWithBrowserPermissions();
-        if (modified === false) { return; }
-        await ensureAnnoyancesForCompleteDefault().catch(ubolErr);
-        return Promise.all([
-            updateSessionRules(),
-            syncInjectablesAndRefreshTabs({ runtimeOnly: false }),
-        ]);
+        const { mutationResult: modified, syncResult } =
+            await reconcileFilteringModeMutation(syncWithBrowserPermissions, {
+                beforeSync: updateSessionRules,
+            });
+        if ( modified === false ) {
+            return;
+        }
+        return syncResult;
     }
     const defaultMode = await getDefaultFilteringMode();
     if (defaultMode >= MODE_OPTIMAL) { return; }
@@ -8564,9 +8955,11 @@ async function onPermissionsAdded(permissions) {
     if (hostnames.includes(details.hostname) === false) { return; }
     const beforeLevel = await getFilteringMode(details.hostname);
     if (beforeLevel === details.afterLevel) { return; }
-    const afterLevel = await setFilteringMode(details.hostname, details.afterLevel);
+    const { mutationResult: afterLevel } =
+        await reconcileFilteringModeMutation(() =>
+            setFilteringMode(details.hostname, details.afterLevel)
+        );
     if (afterLevel !== details.afterLevel) { return; }
-    await syncInjectablesAndRefreshTabs({ runtimeOnly: false });
             if (rulesetConfig.autoReload) {
                 self.setTimeout(() => {
                     browser.tabs.update(details.tabId, {
@@ -8670,6 +9063,119 @@ const buildRequestedRulesetState = request => {
     return Array.from(enabled);
 };
 
+async function buildManualRulesetOwnershipPlan(
+    desiredRulesetIds,
+    rawChanged
+) {
+    if ( rawChanged === false ) { return null; }
+    const defaultMode = await getDefaultFilteringMode();
+    if ( defaultMode !== MODE_COMPLETE ) {
+        return { baselineAction: 'remove' };
+    }
+    const hasAllAnnoyances = ANNOYANCE_RULESET_IDS.every(id =>
+        desiredRulesetIds.includes(id)
+    );
+    const existingBaseline = await readLocalStrict(
+        AUTO_ANNOYANCES_BASELINE_KEY
+    );
+    if ( Array.isArray(existingBaseline) && hasAllAnnoyances ) {
+        const annoyanceIdsOwnedBeforeComplete = existingBaseline.filter(id =>
+            ANNOYANCE_RULESET_IDS.includes(id)
+        );
+        const desiredNonAnnoyanceIds = desiredRulesetIds.filter(id =>
+            ANNOYANCE_RULESET_IDS.includes(id) === false
+        );
+        return {
+            baselineAction: 'write',
+            baselineRulesetIds: Array.from(new Set(
+                desiredNonAnnoyanceIds.concat(annoyanceIdsOwnedBeforeComplete)
+            )),
+            annoyancesDisabled: false,
+        };
+    }
+    return {
+        baselineAction: 'remove',
+        annoyancesDisabled: hasAllAnnoyances === false,
+    };
+}
+
+async function applyManualRulesetOwnershipPlan(plan, rulesetDetails) {
+    if ( plan?.baselineAction === 'write' ) {
+        const baselineRulesetIds = sanitizeRulesetIds(
+            plan.baselineRulesetIds
+        );
+        if ( baselineRulesetIds === null ) {
+            throw new Error('invalid journaled ruleset ownership baseline');
+        }
+        await localWrite(
+            AUTO_ANNOYANCES_BASELINE_KEY,
+            baselineRulesetIds.filter(id => rulesetDetails.has(id))
+        );
+    } else if ( plan?.baselineAction === 'remove' ) {
+        await localRemove(AUTO_ANNOYANCES_BASELINE_KEY);
+    }
+    if ( typeof plan?.annoyancesDisabled === 'boolean' ) {
+        await localWrite(
+            AUTO_ANNOYANCES_DISABLED_KEY,
+            plan.annoyancesDisabled
+        );
+    }
+}
+
+async function persistAcceptedRulesetSelection({
+    desiredRulesetIds,
+    ownershipPlan,
+    rulesetDetails,
+    forceSave = false,
+    rawChanged = true,
+    selectionVersionChanged = true,
+}) {
+    await applyManualRulesetOwnershipPlan(ownershipPlan, rulesetDetails);
+    rulesetConfig.rulesetSelectionVersion = RULESET_SELECTION_STATE_VERSION;
+    rulesetConfig.enabledRulesets = desiredRulesetIds.slice();
+    await syncRegionalRulesetOptOutState(desiredRulesetIds);
+    if ( forceSave || rawChanged || selectionVersionChanged ) {
+        await saveRulesetConfig();
+    }
+    const repairResult = await repairDirtyDnrState({ force: true });
+    if ( repairResult?.error ) {
+        const error = new Error(
+            `ruleset reconciliation failed: ${repairResult.error}`
+        );
+        error.code = 'ruleset_dnr_sync_failed';
+        error.retryScheduled = repairResult.retryScheduled === true;
+        throw error;
+    }
+}
+
+async function replayJournaledRulesetMutation(journal) {
+    const desiredRulesetIds = sanitizeRulesetIds(
+        journal?.desiredRulesetIds
+    );
+    if ( desiredRulesetIds === null ) {
+        throw new Error('invalid journaled ruleset selection');
+    }
+    const rulesetDetails = await getRulesetDetails();
+    const availableDesiredRulesetIds = desiredRulesetIds.filter(id =>
+        rulesetDetails.has(id)
+    );
+    const result = await enableRulesets(availableDesiredRulesetIds);
+    if ( result !== undefined && result.staticUpdateSucceeded !== true ) {
+        const error = new Error(
+            result?.error || 'journaled ruleset update was not accepted by Chrome'
+        );
+        error.code = 'ruleset_dnr_sync_failed';
+        throw error;
+    }
+    await persistAcceptedRulesetSelection({
+        desiredRulesetIds: availableDesiredRulesetIds,
+        ownershipPlan: journal.ownershipPlan,
+        rulesetDetails,
+        forceSave: true,
+    });
+    return true;
+}
+
 async function applyRulesetMutation(request) {
     const hasExpectedRevision = Object.hasOwn(request || {}, 'expectedRevision');
     const expectedRevision = request?.expectedRevision;
@@ -8696,50 +9202,121 @@ async function applyRulesetMutation(request) {
     ) === false;
     const selectionVersionChanged =
         rulesetConfig.rulesetSelectionVersion !== RULESET_SELECTION_STATE_VERSION;
-    const result = await enableRulesets(userEnabledRulesets);
+    const ownershipPlan = await buildManualRulesetOwnershipPlan(
+        userEnabledRulesets,
+        rawChanged
+    );
+    const dirtyToken = createFilteringSurfaceReconciliationToken();
+    await localWrite(FILTERING_MODE_RECONCILIATION_DIRTY_KEY, {
+        schema: 1,
+        token: dirtyToken,
+        kind: 'ruleset',
+        desiredRulesetIds: userEnabledRulesets.slice(),
+        ownershipPlan,
+        markedAt: Date.now(),
+    });
+    await scheduleFilteringModeReconciliationRetry();
+    await broadcastUnverifiedRulesetRuntimeState();
+    let result;
+    try {
+        result = await enableRulesets(userEnabledRulesets);
+    } catch (reason) {
+        await localWrite(DNR_RECONCILIATION_DIRTY_KEY, true);
+        await browser.alarms?.create?.(DNR_RECONCILIATION_ALARM, {
+            delayInMinutes: 1,
+        });
+        const error = reason instanceof Object
+            ? reason
+            : new Error(`${reason}`);
+        error.retryScheduled = true;
+        throw error;
+    }
+    if (
+        result?.error &&
+        typeof result.staticUpdateSucceeded !== 'boolean'
+    ) {
+        const dirtyCleared =
+            await clearFilteringSurfaceReconciliationToken(dirtyToken);
+        const runtimeVerified = dirtyCleared &&
+            await rulesetRuntimeIsVerifiedForOptions();
+        if ( runtimeVerified ) {
+            await broadcastVerifiedRulesetRuntimeState();
+        }
+        return {
+            ...result,
+            enabledRulesets: await getReportedEnabledRulesets().catch(() =>
+                rulesetConfig.enabledRulesets.slice()
+            ),
+            configRevision: rulesetConfig.configRevision,
+            changed: false,
+            reconciled: false,
+            runtimeVerified,
+            retryScheduled: false,
+        };
+    }
+    let retryScheduled = true;
     if (
         result?.error &&
         typeof result.staticUpdateSucceeded === 'boolean'
     ) {
-        await browser.alarms?.create?.(DNR_RECONCILIATION_ALARM, {
+        await localWrite(DNR_RECONCILIATION_DIRTY_KEY, true);
+        if ( typeof browser.alarms?.create !== 'function' ) {
+            retryScheduled = true;
+        } else {
+            await browser.alarms.create(DNR_RECONCILIATION_ALARM, {
             delayInMinutes: 1,
-        });
+            });
+        }
     }
     const userIntentAccepted = result === undefined || result.staticUpdateSucceeded === true;
+    let runtimeVerified = false;
     if ( userIntentAccepted ) {
-        const defaultMode = await getDefaultFilteringMode();
-        await localRemove(AUTO_ANNOYANCES_BASELINE_KEY);
-        if ( defaultMode === MODE_COMPLETE ) {
-            const hasAllAnnoyances = ANNOYANCE_RULESET_IDS.every(id =>
-                userEnabledRulesets.includes(id)
-            );
-            await localWrite(AUTO_ANNOYANCES_DISABLED_KEY, hasAllAnnoyances === false);
-        }
-        rulesetConfig.rulesetSelectionVersion = RULESET_SELECTION_STATE_VERSION;
-        rulesetConfig.enabledRulesets = userEnabledRulesets;
-        await syncRegionalRulesetOptOutState(userEnabledRulesets);
-        if ( rawChanged || selectionVersionChanged ) {
-            await saveRulesetConfig();
-        }
-        const repairResult = await repairDirtyDnrState({ force: true });
-        if ( repairResult?.error ) {
-            await browser.alarms?.create?.(DNR_RECONCILIATION_ALARM, {
-                delayInMinutes: 1,
+        try {
+            await persistAcceptedRulesetSelection({
+                desiredRulesetIds: userEnabledRulesets,
+                ownershipPlan,
+                rulesetDetails,
+                rawChanged,
+                selectionVersionChanged,
             });
-            throw new Error(`ruleset reconciliation failed: ${repairResult.error}`);
+            const syncResult = await syncInjectablesAndRefreshTabs({
+                runtimeOnly: false,
+            });
+            assertAuthoritativeInjectableSyncResult(syncResult,
+                'ruleset_runtime_sync_failed');
+            const dirtyCleared =
+                await clearFilteringSurfaceReconciliationToken(dirtyToken);
+            if ( dirtyCleared === false ) {
+                const error = new Error(
+                    'ruleset runtime verification marker was superseded'
+                );
+                error.code = 'ruleset_runtime_sync_failed';
+                throw error;
+            }
+            runtimeVerified = true;
+        } catch (reason) {
+            const error = reason instanceof Object
+                ? reason
+                : new Error(`${reason}`);
+            error.retryScheduled =
+                error.retryScheduled === true || retryScheduled;
+            throw error;
         }
     }
-    if ( result?.staticUpdateSucceeded === true ) {
-        await syncInjectablesAndRefreshTabs({ runtimeOnly: false });
-    }
-    const reportedEnabled = sanitizeRulesetIds(result?.enabledRulesets) ||
-        await getReportedEnabledRulesets().catch(() => userEnabledRulesets);
+    const reportedEnabled = userIntentAccepted
+        ? sanitizeRulesetIds(result?.enabledRulesets) ||
+            await getReportedEnabledRulesets().catch(() => userEnabledRulesets)
+        : await getReportedEnabledRulesets().catch(() =>
+            rulesetConfig.enabledRulesets.slice()
+        );
     return {
         ...(result || {}),
         enabledRulesets: reportedEnabled,
         configRevision: rulesetConfig.configRevision,
         changed: result !== undefined,
         reconciled: userIntentAccepted,
+        runtimeVerified,
+        retryScheduled: userIntentAccepted ? false : retryScheduled,
     };
 }
 
@@ -9451,14 +10028,27 @@ function onMessage(
             }
             enqueueRulesetMutation(() => applyRulesetMutation(request)).then(result => {
                 callback(result);
+                if ( result?.runtimeVerified === true ) {
+                    broadcastMessage({
+                        enabledRulesets: rulesetConfig.enabledRulesets,
+                        configRevision: rulesetConfig.configRevision,
+                        runtimeVerified: true,
+                    });
+                }
             }).catch(reason => {
                 ubolErr(`applyRulesets/${reason}`);
-                callback({ error: `${reason}` });
-            }).finally(() => {
-                broadcastMessage({
+                const response = {
+                    error: typeof reason?.code === 'string'
+                        ? reason.code
+                        : `${reason}`,
                     enabledRulesets: rulesetConfig.enabledRulesets,
                     configRevision: rulesetConfig.configRevision,
-                });
+                    runtimeVerified: false,
+                    retryScheduled: reason?.retryScheduled === true,
+                    detail: `${reason}`,
+                };
+                callback(response);
+                broadcastMessage(response);
             });
             return true;
         }
@@ -9484,6 +10074,7 @@ function onMessage(
                 getReportedEnabledRulesets(),
                 getAdminRulesets(),
                 adminReadEx('disabledFeatures'),
+                rulesetRuntimeIsVerifiedForOptions(),
             ]).then(results => {
                 const hasOmnipotence = results[0]?.status === 'fulfilled'
                     ? results[0].value
@@ -9503,6 +10094,9 @@ function onMessage(
                 const disabledFeatures = results[5]?.status === 'fulfilled'
                     ? results[5].value
                     : [];
+                const runtimeVerified = results[6]?.status === 'fulfilled'
+                    ? results[6].value === true
+                    : false;
                 for ( const result of results ) {
                     if ( result?.status !== 'rejected' ) { continue; }
                     ubolErr(`getOptionsPageData/${result.reason}`);
@@ -9511,6 +10105,7 @@ function onMessage(
                     hasOmnipotence,
                     defaultFilteringMode,
                     enabledRulesets,
+                    runtimeVerified,
                     configRevision: rulesetConfig.configRevision,
                     adminRulesets,
                     maxNumberOfEnabledRulesets: dnr.MAX_NUMBER_OF_ENABLED_STATIC_RULESETS,
@@ -9532,6 +10127,7 @@ function onMessage(
                     hasOmnipotence: true,
                     defaultFilteringMode: MODE_OPTIMAL,
                     enabledRulesets: [],
+                    runtimeVerified: false,
                     configRevision: rulesetConfig.configRevision,
                     adminRulesets: [],
                     maxNumberOfEnabledRulesets: dnr.MAX_NUMBER_OF_ENABLED_STATIC_RULESETS,
@@ -9711,21 +10307,26 @@ function onMessage(
                 callback(MODE_NONE);
                 return true;
             }
-            let changed = false;
-            getFilteringMode(hostname).then(beforeLevel => {
-                if (level === beforeLevel) { return beforeLevel; }
-                changed = true;
-                return setFilteringMode(hostname, level);
-            }).then(async afterLevel => {
-                if ( changed === false ) { return afterLevel; }
-                await syncInjectablesAndRefreshTabs({ runtimeOnly: false })
-                    .catch(ubolErr);
-                return afterLevel;
-            }).then(afterLevel => {
+            (async () => {
+                const { mutationResult: afterLevel } =
+                    await reconcileFilteringModeMutation(
+                        () => setFilteringMode(hostname, level)
+                    );
                 callback(afterLevel);
-            }).catch(reason => {
+            })().catch(async reason => {
                 ubolErr(`setFilteringMode/${reason}`);
-                callback(MODE_NONE);
+                const durableLevel = await getFilteringMode(hostname)
+                    .catch(() => MODE_NONE);
+                callback({
+                    ok: false,
+                    error: 'filtering_mode_runtime_sync_failed',
+                    level: durableLevel,
+                    requestedLevel: level,
+                    runtimeVerified: false,
+                    retryScheduled: reason?.retryScheduled === true,
+                    cause: typeof reason?.code === 'string' ? reason.code : '',
+                    detail: `${reason}`,
+                });
             });
             return true;
         }
@@ -9958,22 +10559,31 @@ function onMessage(
                 callback(MODE_NONE);
                 return true;
             }
-            getDefaultFilteringMode().then(beforeLevel =>
-                setDefaultFilteringMode(level).then(afterLevel =>
-                    ({ beforeLevel, afterLevel })
-                )
-            ).then(({ beforeLevel, afterLevel }) => {
-                if (afterLevel === beforeLevel) {
-                    callback(afterLevel);
-                    return;
+            (async () => {
+                const beforeLevel = await getDefaultFilteringMode();
+                const { mutationResult: afterLevel } =
+                    await reconcileFilteringModeMutation(
+                        () => setDefaultFilteringMode(level)
+                    );
+                broadcastMessage({ defaultFilteringMode: afterLevel });
+                if ( afterLevel !== beforeLevel ) {
+                    await syncToolbarIconsForAllTabs().catch(ubolErr);
                 }
-                ensureAnnoyancesForCompleteDefault()
-                    .catch(ubolErr)
-                    .then(() => syncInjectablesAndRefreshTabs({ runtimeOnly: false }).catch(ubolErr))
-                    .then(() => syncToolbarIconsForAllTabs().catch(ubolErr))
-                    .finally(() => {
-                        callback(afterLevel);
-                    });
+                callback(afterLevel);
+            })().catch(async reason => {
+                ubolErr(`setDefaultFilteringMode/${reason}`);
+                const durableLevel = await getDefaultFilteringMode()
+                    .catch(() => MODE_NONE);
+                callback({
+                    ok: false,
+                    error: 'filtering_mode_runtime_sync_failed',
+                    level: durableLevel,
+                    requestedLevel: level,
+                    runtimeVerified: false,
+                    retryScheduled: reason?.retryScheduled === true,
+                    cause: typeof reason?.code === 'string' ? reason.code : '',
+                    detail: `${reason}`,
+                });
             });
             return true;
         }
@@ -9998,10 +10608,13 @@ function onMessage(
             const expectedRevision = Object.hasOwn(request, 'expectedRevision')
                 ? request.expectedRevision
                 : undefined;
+            const requestedLevel = defaultFilteringLevelFromModes(modes);
             (async () => {
                 const before = await getFilteringModeDetails(true);
                 try {
-                    await setFilteringModeDetails(modes, expectedRevision);
+                    await reconcileFilteringModeMutation(
+                        () => setFilteringModeDetails(modes, expectedRevision)
+                    );
                 } catch (reason) {
                     if ( reason?.code === 'stale_filtering_mode_revision' ) {
                         callback({
@@ -10019,23 +10632,37 @@ function onMessage(
                     }
                     throw reason;
                 }
+                const defaultFilteringMode = await getDefaultFilteringMode();
+                broadcastMessage({ defaultFilteringMode });
                 const after = await getFilteringModeDetails(true);
-                if ( after.configRevision === before.configRevision ) {
-                    callback(after);
-                    return;
+                if ( after.configRevision !== before.configRevision ) {
+                    await syncToolbarIconsForAllTabs().catch(ubolErr);
                 }
-                await ensureAnnoyancesForCompleteDefault();
-                await syncInjectablesAndRefreshTabs({ runtimeOnly: false }).catch(ubolErr);
-                getDefaultFilteringMode().then(defaultFilteringMode => {
-                    broadcastMessage({ defaultFilteringMode });
-                });
-                await syncToolbarIconsForAllTabs().catch(ubolErr);
                 callback(await getFilteringModeDetails(true));
             })().catch(reason => {
                 ubolErr(`setFilteringModeDetails/${reason}`);
                 getFilteringModeDetails(true).then(details => {
-                    callback({ ...details, error: 'filtering_mode_update_failed' });
-                }).catch(() => callback({ error: 'filtering_mode_update_failed' }));
+                    callback({
+                        ...details,
+                        ok: false,
+                        error: 'filtering_mode_runtime_sync_failed',
+                        level: defaultFilteringLevelFromModes(details),
+                        requestedLevel,
+                        runtimeVerified: false,
+                        retryScheduled: reason?.retryScheduled === true,
+                        cause: typeof reason?.code === 'string' ? reason.code : '',
+                        detail: `${reason}`,
+                    });
+                }).catch(() => callback({
+                    ok: false,
+                    error: 'filtering_mode_runtime_sync_failed',
+                    level: MODE_NONE,
+                    requestedLevel,
+                    runtimeVerified: false,
+                    retryScheduled: reason?.retryScheduled === true,
+                    cause: typeof reason?.code === 'string' ? reason.code : '',
+                    detail: `${reason}`,
+                }));
             });
             return true;
         }
@@ -10222,9 +10849,13 @@ function onCommand(command, tab) {
 async function repairDirtyDnrState(options) {
     const result = await repairDnrReconciliation(options);
     if ( result?.error ) {
-        await browser.alarms?.create?.(DNR_RECONCILIATION_ALARM, {
+        if ( typeof browser.alarms?.create !== 'function' ) {
+            return { ...result, retryScheduled: false };
+        }
+        await browser.alarms.create(DNR_RECONCILIATION_ALARM, {
             delayInMinutes: 1,
         });
+        return { ...result, retryScheduled: true };
     } else {
         await browser.alarms?.clear?.(DNR_RECONCILIATION_ALARM);
     }
@@ -10323,7 +10954,6 @@ async function startSession({
         if (enableOptimal === false) {
             const afterLevel = await setDefaultFilteringMode(MODE_BASIC);
             if (afterLevel === MODE_BASIC) {
-                registerInjectablesIfEntitled().catch(ubolErr);
                 await ensureAnnoyancesForCompleteDefault().catch(ubolErr);
             }
         }
@@ -10335,6 +10965,7 @@ async function startSession({
     broadcastMessage({
         enabledRulesets: reportedEnabledRulesets,
         configRevision: rulesetConfig.configRevision,
+        runtimeVerified: false,
     });
     process.firstRun = false;
 
@@ -10735,11 +11366,30 @@ async function startNow({ forcePermissionSync = false } = {}) {
     }
 
     let startupInjectableResult;
+    let filteringSurfaceRetryPending = false;
     try {
+        const filteringSurfacePreparation =
+            await prepareFilteringSurfaceReconciliation();
         startupInjectableResult = await ensureStartupInjectableState();
+        const filteringSurfaceCleared =
+            await clearPreparedFilteringSurfaceReconciliation(
+            filteringSurfacePreparation,
+            startupInjectableResult
+        );
+        filteringSurfaceRetryPending =
+            filteringSurfacePreparation.pending === true &&
+            filteringSurfacePreparation.skipped !== 'not_entitled' &&
+            filteringSurfaceCleared !== true &&
+            await filteringSurfaceReconciliationIsPending();
         startupCoreReady = startupInjectableResultIsReady(startupInjectableResult);
         if ( startupCoreReady === false ) {
             throw new Error('startup injectable state was not verified');
+        }
+        if (
+            filteringSurfaceCleared !== true &&
+            await rulesetRuntimeIsVerifiedForOptions()
+        ) {
+            await broadcastVerifiedRulesetRuntimeState();
         }
         if (
             startupNeedsEntitledRegistration &&
@@ -10757,7 +11407,10 @@ async function startNow({ forcePermissionSync = false } = {}) {
         await scheduleStartupInjectableRetry();
         throw reason;
     }
-    if ( startupInjectableResult?.sandboxUserScriptsPending !== true ) {
+    if (
+        startupInjectableResult?.sandboxUserScriptsPending !== true &&
+        filteringSurfaceRetryPending === false
+    ) {
         observeBestEffortOperation(
             () => browser.alarms?.clear?.(INJECTABLE_STARTUP_RETRY_ALARM),
             'injectable startup retry alarm clear'
@@ -11246,10 +11899,26 @@ async function onAlarmAfterStartup(alarm) {
     }
     if (alarm?.name === INJECTABLE_STARTUP_RETRY_ALARM) {
         let sandboxUserScriptsPending = false;
+        let filteringSurfaceRetryPending = false;
         try {
-            const result = startupComplete && startupCoreReady
-                ? await ensureStartupInjectableState()
-                : await recoverStartupStateForPopup();
+            let result;
+            if ( startupComplete && startupCoreReady ) {
+                const filteringSurfacePreparation =
+                    await prepareFilteringSurfaceReconciliation();
+                result = await ensureStartupInjectableState();
+                const filteringSurfaceCleared =
+                    await clearPreparedFilteringSurfaceReconciliation(
+                    filteringSurfacePreparation,
+                    result
+                );
+                filteringSurfaceRetryPending =
+                    filteringSurfacePreparation.pending === true &&
+                    filteringSurfacePreparation.skipped !== 'not_entitled' &&
+                    filteringSurfaceCleared !== true &&
+                    await filteringSurfaceReconciliationIsPending();
+            } else {
+                result = await recoverStartupStateForPopup();
+            }
             startupCoreReady = startupInjectableResultIsReady(result);
             sandboxUserScriptsPending =
                 result?.sandboxUserScriptsPending === true;
@@ -11261,11 +11930,22 @@ async function onAlarmAfterStartup(alarm) {
                 await clearEntitlementEffectsDirty();
                 await clearEntitlementEffectsRetry().catch(() => {});
             }
+            if (
+                startupCoreReady &&
+                filteringSurfaceRetryPending === false &&
+                await rulesetRuntimeIsVerifiedForOptions()
+            ) {
+                await broadcastVerifiedRulesetRuntimeState();
+            }
         } catch (reason) {
             startupCoreReady = false;
             ubolErr(`alarm/injectable-startup-retry/${reason}`);
         }
-        if ( startupCoreReady && sandboxUserScriptsPending === false ) {
+        if (
+            startupCoreReady &&
+            sandboxUserScriptsPending === false &&
+            filteringSurfaceRetryPending === false
+        ) {
             await browser.alarms?.clear?.(INJECTABLE_STARTUP_RETRY_ALARM);
         } else {
             await scheduleStartupInjectableRetry({

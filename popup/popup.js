@@ -1506,10 +1506,14 @@ async function commitSiteEnabled(enabled) {
       }
     } else {
       const fallbackLevel = defaultFilteringMode === MODE_NONE ? MODE_OPTIMAL : defaultFilteringMode;
-      const afterLevel = Number(await chrome.runtime.sendMessage({
+      const response = await chrome.runtime.sendMessage({
         what: "setDefaultFilteringMode",
         level: fallbackLevel
-      }));
+      });
+      if (response && typeof response === "object" && response.error) {
+        throw new Error(String(response.error));
+      }
+      const afterLevel = Number(response);
       if (!Number.isFinite(afterLevel) || afterLevel === MODE_NONE) {
         throw new Error("Protection could not be enabled");
       }
@@ -1536,15 +1540,28 @@ async function setSiteMode(level) {
   }
   const hostname = currentHost;
   return runFilteringMutation(async () => {
-    const afterLevel = await chrome.runtime.sendMessage({
+    const response = await chrome.runtime.sendMessage({
       what: "setFilteringMode",
       hostname,
       level
     });
-    const normalizedAfterLevel = Number(afterLevel);
+    const normalizedAfterLevel = Number(
+      response && typeof response === "object" ? response.level : response
+    );
     currentSiteLevel = Number.isFinite(normalizedAfterLevel)
       ? normalizedAfterLevel
       : level;
+    if (response && typeof response === "object" && response.error) {
+      await Promise.allSettled([
+        refreshFilteringState(),
+        refreshPopupPanelData()
+      ]);
+      renderAllowedSitesControls();
+      throw new Error(String(response.error));
+    }
+    if (!Number.isFinite(normalizedAfterLevel)) {
+      throw new Error("Filtering mode state is invalid");
+    }
     await refreshFilteringState();
     await refreshPopupPanelData().catch(() => {});
     renderAllowedSitesControls();

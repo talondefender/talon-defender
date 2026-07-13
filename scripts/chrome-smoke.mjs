@@ -515,7 +515,10 @@ const run = async () => {
       hostname: 'example.com',
       level: MODE_NONE,
     });
-    assert(allowSiteLevel === MODE_NONE, `allowed site level was not saved: ${allowSiteLevel}`);
+    assert(
+      allowSiteLevel === MODE_NONE,
+      `allowed site level was not saved: ${JSON.stringify(allowSiteLevel)}`
+    );
 
     const allowedSiteModes = await sendRuntimeMessage(page, { what: 'getFilteringModeDetails' });
     assert(

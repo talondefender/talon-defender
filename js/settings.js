@@ -85,6 +85,26 @@ function renderDefaultMode() {
 
 /******************************************************************************/
 
+function acceptDefaultFilteringModeResponse(response) {
+    const actualLevel = Number(
+        response instanceof Object ? response.level : response
+    );
+    if ( response instanceof Object && response.error ) {
+        if ( Number.isInteger(actualLevel) ) {
+            cachedRulesetData.defaultFilteringMode = actualLevel;
+        }
+        dom.body.dataset.filteringModeRuntimeVerified = 'false';
+        console.error(response.error, response.detail || '');
+        return false;
+    }
+    if ( Number.isInteger(actualLevel) === false ) { return false; }
+    cachedRulesetData.defaultFilteringMode = actualLevel;
+    delete dom.body.dataset.filteringModeRuntimeVerified;
+    return true;
+}
+
+/******************************************************************************/
+
 async function onFilteringModeChange(ev) {
     const input = ev.target;
     const newLevel = parseInt(input.value, 10);
@@ -95,7 +115,7 @@ async function onFilteringModeChange(ev) {
             what: 'setDefaultFilteringMode',
             level: newLevel,
         });
-        cachedRulesetData.defaultFilteringMode = actualLevel;
+        acceptDefaultFilteringModeResponse(actualLevel);
         break;
     }
     case 2:
@@ -108,8 +128,9 @@ async function onFilteringModeChange(ev) {
                 what: 'setDefaultFilteringMode',
                 level: newLevel,
             });
-            cachedRulesetData.defaultFilteringMode = actualLevel;
-            cachedRulesetData.hasOmnipotence = true;
+            if ( acceptDefaultFilteringModeResponse(actualLevel) ) {
+                cachedRulesetData.hasOmnipotence = true;
+            }
         }
         break;
     }
@@ -258,6 +279,22 @@ listen.onmessage = ev => {
     if ( message.enabledRulesets !== undefined ) {
         local.enabledRulesets = message.enabledRulesets;
         render = true;
+    }
+
+    if ( typeof message.runtimeVerified === 'boolean' ) {
+        if ( message.runtimeVerified !== local.runtimeVerified ) {
+            local.runtimeVerified = message.runtimeVerified;
+            render = true;
+        }
+        if ( message.runtimeVerified ) {
+            local.rulesetRuntimeError = '';
+        } else if ( typeof message.error === 'string' ) {
+            local.rulesetRuntimeError = message.error;
+        }
+    }
+
+    if ( Number.isSafeInteger(message.configRevision) ) {
+        local.configRevision = message.configRevision;
     }
 
     if ( render === false ) { return; }

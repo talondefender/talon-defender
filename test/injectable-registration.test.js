@@ -466,6 +466,9 @@ test('injectable registration updates matching ids in place', async () => {
         id: 'prevent-popup',
         js: ['/js/scripting/prevent-popup.js'],
         matches: ['<all_urls>'],
+        includeGlobs: [ '*example*' ],
+        excludeGlobs: [ '*private*' ],
+        unexpectedProperty: true,
         runAt: 'document_start',
       }],
       toRemove: ['prevent-popup'],
@@ -493,6 +496,9 @@ test('injectable registration updates matching ids in place', async () => {
   assert.equal(operations[0].entries[0].allFrames, false);
   assert.equal(operations[0].entries[0].persistAcrossSessions, true);
   assert.equal(operations[0].entries[0].world, 'ISOLATED');
+  assert.equal(Object.hasOwn(operations[0].entries[0], 'includeGlobs'), false);
+  assert.equal(Object.hasOwn(operations[0].entries[0], 'excludeGlobs'), false);
+  assert.equal(Object.hasOwn(operations[0].entries[0], 'unexpectedProperty'), false);
 });
 
 test('injectable registration adds protection before removing obsolete scripts', async () => {
@@ -546,6 +552,14 @@ test('content script equality covers defaults, path normalization, and behaviora
   assert.equal(contentScriptRegistrationsEqual(registered, {
     ...desired,
     matchOriginAsFallback: true,
+  }), false);
+  assert.equal(contentScriptRegistrationsEqual(registered, {
+    ...desired,
+    includeGlobs: [ '*example*' ],
+  }), false);
+  assert.equal(contentScriptRegistrationsEqual(registered, {
+    ...desired,
+    excludeGlobs: [ '*private*' ],
   }), false);
 });
 

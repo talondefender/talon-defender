@@ -84,7 +84,11 @@ function updateNodes(listEntries) {
         const adminCount = qsa$(listEntry, adminSublistSelector).length;
         const fromAdmin = adminCount === totalCount;
         dom.cl.toggle(listEntry, 'fromAdmin', fromAdmin);
-        dom.attr(checkboxInput, 'disabled', fromAdmin ? '' : null);
+        dom.attr(checkboxInput, 'disabled',
+            fromAdmin || cachedRulesetData.runtimeVerified !== true
+                ? ''
+                : null
+        );
     }
 }
 
@@ -118,6 +122,12 @@ function isAdminRuleset(listkey) {
 export function renderFilterLists(rulesetData) {
     cachedRulesetData = rulesetData;
     const { enabledRulesets, rulesetDetails } = cachedRulesetData;
+    const runtimeVerified = cachedRulesetData.runtimeVerified === true;
+    dom.cl.toggle(dom.body, 'rulesetRuntimeUnverified', runtimeVerified === false);
+    dom.text('#dnrError', runtimeVerified
+        ? cachedRulesetData.rulesetRuntimeError || ''
+        : cachedRulesetData.rulesetRuntimeError || i18n$('uiLoading')
+    );
 
     const shouldUpdate = rulesetMap.size !== 0;
 
@@ -144,7 +154,7 @@ export function renderFilterLists(rulesetData) {
         dom.attr(
             qs$(listEntry, '.input.checkbox input'),
             'disabled',
-            fromAdmin ? '' : null
+            fromAdmin || runtimeVerified === false ? '' : null
         );
     };
 
@@ -414,7 +424,17 @@ const applyEnabledRulesets = (( ) => {
                 what: 'applyRulesets',
                 enabledRulesets,
             });
-            dom.text('#dnrError', result?.error || '');
+            if ( Array.isArray(result?.enabledRulesets) ) {
+                cachedRulesetData.enabledRulesets = result.enabledRulesets;
+            }
+            if ( Number.isSafeInteger(result?.configRevision) ) {
+                cachedRulesetData.configRevision = result.configRevision;
+            }
+            if ( typeof result?.runtimeVerified === 'boolean' ) {
+                cachedRulesetData.runtimeVerified = result.runtimeVerified;
+            }
+            cachedRulesetData.rulesetRuntimeError = result?.error || '';
+            renderFilterLists(cachedRulesetData);
         }
 
         dom.cl.remove(dom.body, 'committing');

@@ -199,6 +199,7 @@ const adminSettings = {
     async processBatch(pending) {
         if ( pending.has('rulesets') ) {
             ubolLog('admin setting "rulesets" changed');
+            broadcastMessage({ runtimeVerified: false });
             const rulesetResult = await enableRulesets(rulesetConfig.enabledRulesets);
             if ( rulesetResult?.error ) {
                 throw new Error(`managed ruleset update failed: ${rulesetResult.error}`);
@@ -207,7 +208,10 @@ const adminSettings = {
             if ( repairResult?.error ) {
                 throw new Error(`managed ruleset reconciliation failed: ${repairResult.error}`);
             }
-            await reconcileAdminRuntime();
+            const runtimeResult = await reconcileAdminRuntime();
+            if ( runtimeResult?.runtimeVerified !== true ) {
+                throw new Error('managed ruleset runtime verification failed');
+            }
             const results = await Promise.all([
                 getAdminRulesets(),
                 dnr.getEnabledRulesets(),
@@ -217,20 +221,35 @@ const adminSettings = {
                 adminRulesets,
                 enabledRulesets,
                 configRevision: rulesetConfig.configRevision,
+                runtimeVerified: true,
             });
         }
         if ( pending.has('defaultFiltering') ) {
             ubolLog('admin setting "defaultFiltering" changed');
+            broadcastMessage({ runtimeVerified: false });
             await reconcileFilteringModeDetails();
-            await reconcileAdminRuntime();
+            const runtimeResult = await reconcileAdminRuntime();
+            if ( runtimeResult?.runtimeVerified !== true ) {
+                throw new Error('managed filtering runtime verification failed');
+            }
             const defaultFilteringMode = await getDefaultFilteringMode();
-            broadcastMessage({ defaultFilteringMode });
+            broadcastMessage({
+                defaultFilteringMode,
+                runtimeVerified: true,
+            });
         }
         if ( pending.has('noFiltering') ) {
             ubolLog('admin setting "noFiltering" changed');
+            broadcastMessage({ runtimeVerified: false });
             const filteringModeDetails = await reconcileFilteringModeDetails();
-            await reconcileAdminRuntime();
-            broadcastMessage({ filteringModeDetails });
+            const runtimeResult = await reconcileAdminRuntime();
+            if ( runtimeResult?.runtimeVerified !== true ) {
+                throw new Error('managed filtering runtime verification failed');
+            }
+            broadcastMessage({
+                filteringModeDetails,
+                runtimeVerified: true,
+            });
         }
         if ( pending.has('showBlockedCount') ) {
             ubolLog('admin setting "showBlockedCount" changed');

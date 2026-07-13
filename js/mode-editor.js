@@ -62,6 +62,9 @@ export class ModeEditor {
         const { modes } = modesFromText(editor.getEditorText());
         if ( modes instanceof Object === false ) { return; }
         const modesAfter = await sendMessage({ what: 'setFilteringModeDetails', modes });
+        if ( modesAfter?.error ) {
+            throw new Error(String(modesAfter.error));
+        }
         const text = textFromModes(modesAfter);
         editor.setEditorText(text);
         return true;

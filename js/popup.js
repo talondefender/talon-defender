@@ -89,11 +89,27 @@ async function commitFilteringMode() {
         '#filteringModeText > span:nth-of-type(1)',
         i18n$(`filteringMode${afterLevel}Name`)
     );
-    const actualLevel = await sendMessage({
+    const response = await sendMessage({
         what: 'setFilteringMode',
         hostname: targetHostname,
         level: afterLevel,
     });
+    const actualLevel = Number(
+        response instanceof Object ? response.level : response
+    );
+    if ( response instanceof Object && response.error ) {
+        if ( Number.isInteger(actualLevel) ) {
+            setFilteringMode(actualLevel);
+        } else {
+            setFilteringMode(beforeLevel);
+        }
+        console.error(response.error, response.detail || '');
+        return;
+    }
+    if ( Number.isInteger(actualLevel) === false ) {
+        setFilteringMode(beforeLevel);
+        return;
+    }
     if ( actualLevel !== afterLevel ) {
         setFilteringMode(actualLevel);
     }

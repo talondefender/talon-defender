@@ -307,13 +307,11 @@ const buildSuccessResult = ({
 });
 
 const registrationForUpdate = entry => ({
-    ...entry,
+    id: typeof entry.id === 'string' ? entry.id : '',
     js: Array.isArray(entry.js) ? entry.js : [],
     css: Array.isArray(entry.css) ? entry.css : [],
     matches: Array.isArray(entry.matches) ? entry.matches : [],
     excludeMatches: Array.isArray(entry.excludeMatches) ? entry.excludeMatches : [],
-    includeGlobs: Array.isArray(entry.includeGlobs) ? entry.includeGlobs : [],
-    excludeGlobs: Array.isArray(entry.excludeGlobs) ? entry.excludeGlobs : [],
     allFrames: entry.allFrames === true,
     matchOriginAsFallback: entry.matchOriginAsFallback === true,
     persistAcrossSessions: entry.persistAcrossSessions !== false,

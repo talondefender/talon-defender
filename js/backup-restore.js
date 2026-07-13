@@ -110,15 +110,21 @@ export async function restoreFromObject(targetConfig) {
             enabledRulesets.delete(id);
         }
     }
-    await sendMessage({
+    const rulesetResult = await sendMessage({
         what: 'applyRulesets',
         enabledRulesets: Array.from(enabledRulesets),
     });
+    if ( rulesetResult?.error ) {
+        throw new Error(String(rulesetResult.error));
+    }
 
-    await sendMessage({
+    const filteringModeResult = await sendMessage({
         what: 'setFilteringModeDetails',
         modes: targetConfig.filteringModes ?? defaultConfig.filteringModes,
     });
+    if ( filteringModeResult?.error ) {
+        throw new Error(String(filteringModeResult.error));
+    }
 
     await sendMessage({ what: 'removeAllCustomFilters', hostname: '*' });
     const hostnameMap = new Map();
