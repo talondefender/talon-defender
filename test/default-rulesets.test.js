@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import {
   applyDefaultRulesetFlagsToDetails,
   getDefaultRulesetIdsFromRuleResources,
+  retryTransientStaticRulesetUpdate,
   RULESET_SELECTION_STATE_VERSION,
   reconcileDefaultRulesetPatch,
 } from '../js/default-rulesets.js';
@@ -136,6 +137,118 @@ const getPackagedBundle = () => {
   })();
   return packagedBundlePromise;
 };
+
+test('static ruleset updates retry only Chrome exact potentially transient internal error', async () => {
+  const waits = [];
+  let attempts = 0;
+  const recovered = await retryTransientStaticRulesetUpdate(
+    async () => {
+      attempts += 1;
+      if (attempts === 1) { throw new Error('Internal error.'); }
+    },
+    {
+      retryDelaysMs: [25, 50],
+      wait: async delayMs => waits.push(delayMs),
+    }
+  );
+
+  assert.deepEqual(recovered, { attempts: 2, recovered: true });
+  assert.deepEqual(waits, [25]);
+
+  await assert.rejects(
+    retryTransientStaticRulesetUpdate(
+      async () => { throw new Error('MAX_NUMBER_OF_ENABLED_STATIC_RULESETS exceeded'); },
+      {
+        retryDelaysMs: [25, 50],
+        wait: async delayMs => waits.push(delayMs),
+      }
+    ),
+    /MAX_NUMBER_OF_ENABLED_STATIC_RULESETS/
+  );
+  assert.deepEqual(waits, [25], 'quota and validation failures must not be retried');
+
+  for (const nonExactMessage of [
+    'Internal error',
+    'INTERNAL ERROR.',
+    'Error: Internal error.',
+    'Internal error: bad state',
+    'Invalid ruleset ID',
+    'Permission denied',
+    'MAX_NUMBER_OF_ENABLED_STATIC_RULESETS exceeded',
+    'regex rule limit exceeded',
+  ]) {
+    let nonExactAttempts = 0;
+    await assert.rejects(
+      retryTransientStaticRulesetUpdate(
+        async () => {
+          nonExactAttempts += 1;
+          throw new Error(nonExactMessage);
+        },
+        {
+          retryDelaysMs: [25, 50],
+          wait: async delayMs => waits.push(delayMs),
+        }
+      ),
+      new RegExp(nonExactMessage.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+    );
+    assert.equal(nonExactAttempts, 1, `${nonExactMessage} must not be retried`);
+  }
+  assert.deepEqual(waits, [25]);
+
+  let exhaustedAttempts = 0;
+  const retryDelta = Object.freeze({
+    enableRulesetIds: Object.freeze(['annoyances-ai']),
+    disableRulesetIds: Object.freeze([]),
+  });
+  const exhaustedDeltas = [];
+  await assert.rejects(
+    retryTransientStaticRulesetUpdate(
+      async () => {
+        exhaustedAttempts += 1;
+        exhaustedDeltas.push(retryDelta);
+        throw new Error('Internal error.');
+      },
+      {
+        retryDelaysMs: [10, 20],
+        wait: async delayMs => waits.push(delayMs),
+      }
+    ),
+    /Internal error/
+  );
+  assert.equal(exhaustedAttempts, 3, 'retry count must stay bounded');
+  assert.equal(
+    exhaustedDeltas.every(delta => delta === retryDelta),
+    true,
+    'every attempt must retry the identical atomic delta'
+  );
+  assert.deepEqual(waits, [25, 10, 20]);
+
+  const managerSource = await readText('../js/ruleset-manager.js');
+  assert.match(
+    managerSource,
+    /const updateEnabledRulesetsWithTransientRetry = details =>[\s\S]*retryTransientStaticRulesetUpdate\([\s\S]*dnr\.updateEnabledRulesets\(details\)/
+  );
+  assert.equal(
+    (managerSource.match(/updateEnabledRulesetsWithTransientRetry\(/g) || []).length,
+    2,
+    'both interactive changes and durable recovery must use bounded retry'
+  );
+  assert.match(managerSource, /response\.staticUpdateAttempts = updateResult\.attempts/);
+  const enableStart = managerSource.indexOf('async function enableRulesetsNow');
+  const enableEnd = managerSource.indexOf('function enableRulesets(ids)', enableStart);
+  const enableSource = managerSource.slice(enableStart, enableEnd);
+  assert.ok(enableStart >= 0 && enableEnd > enableStart);
+  assert.ok(
+    enableSource.indexOf('await localWrite(DNR_RECONCILIATION_DIRTY_KEY, true)') <
+      enableSource.indexOf('await updateEnabledRulesetsWithTransientRetry'),
+    'the durable dirty marker must precede the first retryable Chrome mutation'
+  );
+  assert.doesNotMatch(
+    enableSource,
+    /localRemove\(DNR_RECONCILIATION_DIRTY_KEY\)/,
+    'exhausted interactive retries must leave repair authority durable'
+  );
+});
 
 test('canonical default rulesets are derived from manifest rule resources', async () => {
   const manifest = await readJson('../manifest.json');

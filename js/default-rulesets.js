@@ -6,6 +6,54 @@ const normalizeRulesetId = value => {
 
 export const RULESET_SELECTION_STATE_VERSION = 1;
 
+const STATIC_RULESET_UPDATE_RETRY_DELAYS_MS = Object.freeze([ 100, 300 ]);
+
+const isTransientStaticRulesetUpdateError = reason => {
+    const message = reason instanceof Error
+        ? reason.message
+        : `${reason ?? ''}`;
+    return message.trim() === 'Internal error.';
+};
+
+/**
+ * Chrome can reject updateEnabledRulesets() with the generic "Internal error."
+ * message for potentially transient or persistent internal failures. Chrome
+ * specifies that a rejected call leaves the enabled set unchanged, so bounded
+ * retries of the same atomic delta are safe. Do not retry quota, validation,
+ * permission, or other actionable failures.
+ */
+export async function retryTransientStaticRulesetUpdate(update, {
+    retryDelaysMs = STATIC_RULESET_UPDATE_RETRY_DELAYS_MS,
+    wait = delayMs => new Promise(resolve => setTimeout(resolve, delayMs)),
+} = {}) {
+    if ( typeof update !== 'function' ) {
+        throw new TypeError('static ruleset update callback is required');
+    }
+    if ( typeof wait !== 'function' ) {
+        throw new TypeError('static ruleset retry wait callback is required');
+    }
+    const delays = Array.isArray(retryDelaysMs)
+        ? retryDelaysMs.filter(value => Number.isFinite(value) && value >= 0)
+        : [];
+    let attempts = 0;
+    for (;;) {
+        attempts += 1;
+        try {
+            await update();
+            return { attempts, recovered: attempts > 1 };
+        } catch (reason) {
+            const retryIndex = attempts - 1;
+            if (
+                isTransientStaticRulesetUpdateError(reason) === false ||
+                retryIndex >= delays.length
+            ) {
+                throw reason;
+            }
+            await wait(delays[retryIndex]);
+        }
+    }
+}
+
 const uniqueRulesetIds = values => {
     const out = [];
     const seen = new Set();

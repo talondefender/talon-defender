@@ -32,6 +32,7 @@ import {
     getDefaultRulesetIdsFromRuleResources,
     planStaticRulesetQuotaChange,
     reconcileDefaultRulesetPatch,
+    retryTransientStaticRulesetUpdate,
 } from './default-rulesets.js';
 
 import {
@@ -71,6 +72,10 @@ export const DNR_RECONCILIATION_DIRTY_KEY = 'dnrReconciliationDirtyV1';
 const TALON_SITE_FIXES_RUNTIME_BASE_RULE_ID = 7000000;
 const TALON_SITE_FIXES_RUNTIME_RULES_RANGE = 1000;
 let enableRulesetsTail = Promise.resolve();
+const updateEnabledRulesetsWithTransientRetry = details =>
+    retryTransientStaticRulesetUpdate(
+        () => dnr.updateEnabledRulesets(details)
+    );
 const TALON_SITE_FIXES_RUNTIME_PRIORITY = 500000;
 const STRICTBLOCK_PRIORITY = 29;
 const COMMUNITY_RULES_BASE_RULE_ID = 6000000;
@@ -491,11 +496,15 @@ async function reconcileStaticRulesetsToDurableIntent() {
         if ( enableRulesetIds.length === 0 && disableRulesetIds.length === 0 ) {
             return { changed: false };
         }
-        await dnr.updateEnabledRulesets({
+        const updateResult = await updateEnabledRulesetsWithTransientRetry({
             enableRulesetIds,
             disableRulesetIds,
         });
-        return { changed: true };
+        return {
+            changed: true,
+            staticUpdateAttempts: updateResult.attempts,
+            staticUpdateRecovered: updateResult.recovered,
+        };
     } catch (reason) {
         ubolErr(`reconcileStaticRulesetsToDurableIntent/${reason}`);
         return { error: `${reason}` };
@@ -892,10 +901,12 @@ async function enableRulesetsNow(ids) {
 
     await localWrite(DNR_RECONCILIATION_DIRTY_KEY, true);
     try {
-        await dnr.updateEnabledRulesets({
+        const updateResult = await updateEnabledRulesetsWithTransientRetry({
             enableRulesetIds,
             disableRulesetIds,
         });
+        response.staticUpdateAttempts = updateResult.attempts;
+        response.staticUpdateRecovered = updateResult.recovered;
         response.staticUpdateSucceeded = true;
     } catch (reason) {
         ubolErr(`updateEnabledRulesets/${reason}`);

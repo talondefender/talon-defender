@@ -1785,6 +1785,11 @@ test('ad shell prepaint is guarded and excludes broad generic ad-slot selectors'
     managerSource.indexOf('function registerPostHideCleanup'),
     managerSource.indexOf('async function registerInjectables')
   );
+  const baseSelectorsSource = sourceBetween(
+    source,
+    'const BASE_SELECTORS = [',
+    'const HOST_SCOPED_SELECTORS = Object.freeze(['
+  );
 
   assert.match(source, /const BASE_SELECTORS = \[/);
   assert.match(source, /const HOST_SCOPED_SELECTORS = Object\.freeze\(\[/);
@@ -1802,11 +1807,28 @@ test('ad shell prepaint is guarded and excludes broad generic ad-slot selectors'
   assert.match(source, /host: 'sdin\.jp'/);
   assert.match(source, /'aside \.rec3:has\(> ins\.adsbygoogle\)'/);
   assert.match(source, /'main > #vdo3:has\(> #min > #vdo-fourm\)'/);
+  assert.match(source, /host: 'cnn\.com'/);
+  assert.match(source, /'\.ad-slot-header__wrapper'/);
+  assert.match(
+    source,
+    /\.header__wrapper-outer:has\(\.ad-slot-header__wrapper\)[\s\S]*min-height:0!important/
+  );
   assert.match(source, /const applyPrepaint = \(\) => \{[\s\S]*style\.textContent = STYLE_TEXT;[\s\S]*markMatchedShells\(\);/);
   assert.match(source, /blockHints\.noteElement\(node, \{ ancestors: 1 \}\)/);
   assert.match(source, /const MAX_MARKED_SHELLS = 96;/);
   assert.match(source, /document\.querySelectorAll\?\.\(selectors\.join\(','\)\)/);
-  assert.match(source, /const start = \(\) => \{[\s\S]*const readiness = refresh\(\);[\s\S]*self\.TalonAdShellStylesReady = readiness;/);
+  const startSource = sourceBetween(
+    source,
+    'const start = () => {',
+    'if ( document.documentElement ) {'
+  );
+  assert.match(startSource, /applyPrepaint\(\)/);
+  assert.match(startSource, /const readiness = refresh\(\)/);
+  assert.ok(
+    startSource.indexOf('applyPrepaint()') < startSource.indexOf('refresh()'),
+    'document-start CSS must be inserted before asynchronous guard settlement'
+  );
+  assert.match(startSource, /self\.TalonAdShellStylesReady = readiness/);
   assert.match(source, /if \( document\.documentElement \) \{\s*start\(\);/);
   assert.match(source, /document\.addEventListener\('readystatechange', start, \{ once: true \}\);/);
   assert.ok(source.indexOf('await shouldRun()') < source.indexOf('applyPrepaint()'));
@@ -1824,8 +1846,8 @@ test('ad shell prepaint is guarded and excludes broad generic ad-slot selectors'
   assert.match(blockHintsSource, /notifyHintsChanged\(count\);/);
   assert.match(guardSource, /'adShellStyles'/);
   assert.match(autoBackoffSource, /'adShellStyles'/);
-  assert.doesNotMatch(source, /\[data-ad/);
-  assert.doesNotMatch(source, /ad-slot/);
+  assert.doesNotMatch(baseSelectorsSource, /\[data-ad/);
+  assert.doesNotMatch(baseSelectorsSource, /ad-slot/);
   assert.doesNotMatch(source, /NATIONAL_POST_/);
   assert.doesNotMatch(source, /__ubolNationalPostRuntime/);
   assert.doesNotMatch(source, /MutationObserver/);

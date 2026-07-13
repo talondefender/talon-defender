@@ -47,6 +47,22 @@ const HOST_SCOPED_SELECTORS = Object.freeze([
             'main > #vdo3:has(> #min > #vdo-fourm)',
         ],
     },
+    {
+        host: 'cnn.com',
+        selectors: [
+            '.ad-slot-header__wrapper',
+        ],
+    },
+]);
+
+const HOST_SCOPED_STYLES = Object.freeze([
+    {
+        host: 'cnn.com',
+        styles: [
+            '.header__wrapper-outer:has(.ad-slot-header__wrapper)' +
+                '{min-height:0!important;}',
+        ],
+    },
 ]);
 
 const hostname = (self.location?.hostname || '').toLowerCase();
@@ -62,12 +78,18 @@ for ( const entry of HOST_SCOPED_SELECTORS ) {
     if ( matchesHost(entry.host, hostname) === false ) { continue; }
     selectors.push(...entry.selectors);
 }
+const hostScopedStyles = [];
+for ( const entry of HOST_SCOPED_STYLES ) {
+    if ( matchesHost(entry.host, hostname) === false ) { continue; }
+    hostScopedStyles.push(...entry.styles);
+}
 
 const STYLE_TEXT =
     `${selectors.join(',')}` +
     '{display:none!important;visibility:hidden!important;height:0!important;' +
     'min-height:0!important;max-height:0!important;margin:0!important;' +
-    'padding:0!important;border:0!important;overflow:hidden!important;}';
+    'padding:0!important;border:0!important;overflow:hidden!important;}' +
+    hostScopedStyles.join('');
 
 const STYLE_ID = 'ubol-ad-shell-styles';
 const STYLE_MARKER_ATTR = 'data-talon-owned-ad-shell-styles';
@@ -183,6 +205,11 @@ self.TalonAdShellStylesController = {
 };
 
 const start = () => {
+    // These selectors are deliberately conservative and the registration is
+    // already excluded from persisted subsystem backoffs. Insert before the
+    // asynchronous guard waits for DOM classification so this is truly a
+    // prepaint lane; refresh removes the owned sheet if policy later says no.
+    applyPrepaint();
     const readiness = refresh();
     self.TalonAdShellStylesReady = readiness;
     readiness.catch(() => {});
