@@ -107,9 +107,14 @@ const dnrState = {
   failCommunityUpdateCount: 0,
   failUserUpdateCount: 0,
   failSessionUpdateCount: 0,
+  dynamicReadOutcomes: [],
+  dynamicUpdateOutcomes: [],
+  sessionUpdateOutcomes: [],
   enabledRulesets: [],
   reorderReturnedRules: false,
+  dynamicUpdateAttempts: [],
   dynamicUpdateCalls: [],
+  sessionUpdateAttempts: [],
   sessionUpdateCalls: [],
 };
 
@@ -243,9 +248,27 @@ const dnr = {
   MAX_NUMBER_OF_DYNAMIC_RULES: DEFAULT_MAX_NUMBER_OF_DYNAMIC_RULES,
   MAX_NUMBER_OF_REGEX_RULES: DEFAULT_MAX_NUMBER_OF_REGEX_RULES,
   async getDynamicRules(options = {}) {
+    if (dnrState.dynamicReadOutcomes.length !== 0) {
+      const outcome = dnrState.dynamicReadOutcomes.shift();
+      if (outcome instanceof Error) { throw outcome; }
+      if (Array.isArray(outcome)) {
+        return cloneRulesForApi(filterRulesByIds(outcome, options.ruleIds));
+      }
+    }
     return cloneRulesForApi(filterRulesByIds(dnrState.dynamicRules, options.ruleIds));
   },
-  async updateDynamicRules({ addRules = [], removeRuleIds = [] } = {}) {
+  async updateDynamicRules(details = {}) {
+    const { addRules = [], removeRuleIds = [] } = details;
+    dnrState.dynamicUpdateAttempts.push({
+      details,
+      snapshot: clone({ addRules, removeRuleIds }),
+    });
+    if (dnrState.dynamicUpdateOutcomes.length !== 0) {
+      const outcome = dnrState.dynamicUpdateOutcomes.shift();
+      if (outcome !== null && outcome !== undefined) {
+        throw outcome;
+      }
+    }
     const hasCommunityRules = addRules.some(rule => rule.id >= 6000000 && rule.id < 7000000);
     if (hasCommunityRules && dnrState.failCommunityUpdateCount > 0) {
       dnrState.failCommunityUpdateCount -= 1;
@@ -270,6 +293,11 @@ const dnr = {
     return cloneRulesForApi(filterRulesByIds(dnrState.sessionRules, options.ruleIds));
   },
   async updateSessionRules({ addRules = [], removeRuleIds = [] } = {}) {
+    dnrState.sessionUpdateAttempts.push(clone({ addRules, removeRuleIds }));
+    if (dnrState.sessionUpdateOutcomes.length !== 0) {
+      const outcome = dnrState.sessionUpdateOutcomes.shift();
+      if (outcome !== null && outcome !== undefined) { throw outcome; }
+    }
     if (dnrState.failSessionUpdateCount > 0) {
       dnrState.failSessionUpdateCount -= 1;
       throw new Error('simulated session update failure');
@@ -451,7 +479,10 @@ const {
   updateTalonSiteFixRuntimeRules,
   updateUserRules,
 } = await import(new URL('../js/ruleset-manager.js', import.meta.url));
-const { dnr: compatDnr } = await import(new URL('../js/ext-compat.js', import.meta.url));
+const {
+  dnr: compatDnr,
+  retryTransientDynamicRulesUpdate,
+} = await import(new URL('../js/ext-compat.js', import.meta.url));
 
 const signatureBytesB64 = Buffer.alloc(64).toString('base64');
 
@@ -613,9 +644,14 @@ const resetEnvironment = () => {
   dnrState.failCommunityUpdateCount = 0;
   dnrState.failUserUpdateCount = 0;
   dnrState.failSessionUpdateCount = 0;
+  dnrState.dynamicReadOutcomes.length = 0;
+  dnrState.dynamicUpdateOutcomes.length = 0;
+  dnrState.sessionUpdateOutcomes.length = 0;
   dnrState.enabledRulesets.length = 0;
   dnrState.reorderReturnedRules = false;
+  dnrState.dynamicUpdateAttempts.length = 0;
   dnrState.dynamicUpdateCalls.length = 0;
+  dnrState.sessionUpdateAttempts.length = 0;
   dnrState.sessionUpdateCalls.length = 0;
   delete dnr.RuleConditionKeys;
   dnr.MAX_NUMBER_OF_DYNAMIC_RULES = DEFAULT_MAX_NUMBER_OF_DYNAMIC_RULES;
@@ -3038,6 +3074,45 @@ test('DNR dirty-marker read failure performs no repair mutation and retries safe
   assert.equal(dnrState.dynamicUpdateCalls.length, callsAfterRepair);
 });
 
+test('dynamic ruleset retry helper reports third-attempt recovery and honors injected waits', async () => {
+  const retryDelaysMs = [17, 29];
+  const observedWaits = [];
+  let attempts = 0;
+
+  const result = await retryTransientDynamicRulesUpdate(async () => {
+    attempts += 1;
+    if (attempts < 3) {
+      throw new Error('Internal error while updating dynamic rules.');
+    }
+  }, {
+    retryDelaysMs,
+    wait: async delayMs => { observedWaits.push(delayMs); },
+  });
+
+  assert.deepEqual(result, { attempts: 3, recovered: true });
+  assert.deepEqual(observedWaits, retryDelaysMs);
+});
+
+test('setAllowAllRules reports snapshot failures with the base rule ID and performs no writes', { concurrency: false }, async () => {
+  resetEnvironment();
+  dnrState.dynamicReadOutcomes.push(new Error('simulated dynamic snapshot failure'));
+
+  await assert.rejects(
+    compatDnr.setAllowAllRules(
+      8000000,
+      ['news.example'],
+      [],
+      false,
+      2000000
+    ),
+    /setAllowAllRules\(8000000\) state snapshot failed: simulated dynamic snapshot failure/
+  );
+
+  assert.equal(dnrState.dynamicUpdateAttempts.length, 0);
+  assert.equal(dnrState.sessionUpdateAttempts.length, 0);
+  assert.equal(storageData.allowAllRulesDiagnosticsV1, undefined);
+});
+
 test('setAllowAllRules repairs missing session companion rules and records the repair', { concurrency: false }, async () => {
   resetEnvironment();
 
@@ -3190,6 +3265,386 @@ test('setAllowAllRules rolls back partial updates when the session companion wri
     lastRollbackAt: storageData.allowAllRulesDiagnosticsV1.lastRollbackAt,
   });
   assert.equal(typeof storageData.allowAllRulesDiagnosticsV1.lastRollbackAt, 'number');
+});
+
+test('setAllowAllRules retries one exact transient dynamic failure with the identical desired delta', { concurrency: false }, async () => {
+  resetEnvironment();
+  dnrState.dynamicUpdateOutcomes.push(
+    new Error('Internal error while updating dynamic rules.')
+  );
+
+  const modified = await compatDnr.setAllowAllRules(
+    8500000,
+    [],
+    [],
+    true,
+    3000000
+  );
+
+  assert.equal(modified, true);
+  assert.equal(dnrState.dynamicUpdateAttempts.length, 2);
+  assert.strictEqual(
+    dnrState.dynamicUpdateAttempts[0].details,
+    dnrState.dynamicUpdateAttempts[1].details,
+    'the retry must reuse the identical atomic dynamic-rule delta'
+  );
+  assert.equal(dnrState.dynamicUpdateCalls.length, 1);
+  assert.equal(dnrState.dynamicRules[0]?.id, 8500000);
+  assert.equal(dnrState.sessionRules[0]?.id, 8500001);
+});
+
+test('setAllowAllRules rolls back only the dynamic lane when the desired session write rejects', { concurrency: false }, async () => {
+  resetEnvironment();
+  dnrState.dynamicRules.push({
+    id: 8000000,
+    action: { type: 'allowAllRequests' },
+    condition: {
+      resourceTypes: ['main_frame'],
+      requestDomains: ['stored.example'],
+    },
+    priority: 2000000,
+  });
+  dnrState.sessionRules.push({
+    id: 8000001,
+    action: { type: 'allow' },
+    condition: {
+      tabIds: [-1],
+      initiatorDomains: ['stored.example'],
+    },
+    priority: 2000000,
+  });
+  dnrState.dynamicUpdateOutcomes.push(
+    null,
+    new Error('Internal error while updating dynamic rules.'),
+    null
+  );
+  dnrState.failSessionUpdateCount = 1;
+
+  await assert.rejects(
+    compatDnr.setAllowAllRules(
+      8000000,
+      ['news.example'],
+      [],
+      false,
+      2000000
+    ),
+    reason => {
+      assert.match(
+        reason.message,
+        /setAllowAllRules\(8000000\) desired state failed and was rolled back/
+      );
+      assert.match(
+        reason.message,
+        /desired session mutation failed: simulated session update failure/
+      );
+      return true;
+    }
+  );
+
+  assert.equal(dnrState.dynamicUpdateAttempts.length, 3);
+  assert.strictEqual(
+    dnrState.dynamicUpdateAttempts[1].details,
+    dnrState.dynamicUpdateAttempts[2].details,
+    'the rollback retry must reuse the identical atomic delta'
+  );
+  assert.equal(
+    dnrState.dynamicRules[0]?.condition?.requestDomains?.[0],
+    'stored.example',
+    'the dynamic rollback must settle before rejection is reported'
+  );
+  assert.equal(
+    dnrState.sessionRules[0]?.condition?.initiatorDomains?.[0],
+    'stored.example'
+  );
+  assert.equal(
+    dnrState.sessionUpdateAttempts.length,
+    1,
+    'an atomically rejected session write must not be rolled back'
+  );
+  assert.equal(dnrState.sessionUpdateCalls.length, 0);
+});
+
+test('setAllowAllRules does not roll back an already-matching dynamic lane after an atomic session rejection', { concurrency: false }, async () => {
+  resetEnvironment();
+  dnrState.dynamicRules.push({
+    id: 8000000,
+    action: { type: 'allowAllRequests' },
+    condition: {
+      resourceTypes: ['main_frame'],
+      requestDomains: ['news.example'],
+    },
+    priority: 2000000,
+  });
+  dnrState.failSessionUpdateCount = 1;
+
+  await assert.rejects(
+    compatDnr.setAllowAllRules(
+      8000000,
+      ['news.example'],
+      [],
+      false,
+      2000000
+    ),
+    /setAllowAllRules\(8000000\) desired session mutation failed: simulated session update failure/
+  );
+
+  assert.equal(dnrState.dynamicUpdateAttempts.length, 0);
+  assert.equal(dnrState.sessionUpdateAttempts.length, 1);
+  assert.equal(dnrState.sessionUpdateCalls.length, 0);
+  assert.equal(dnrState.dynamicRules[0]?.condition?.requestDomains?.[0], 'news.example');
+  assert.deepEqual(dnrState.sessionRules, []);
+  assert.equal(storageData.allowAllRulesDiagnosticsV1, undefined);
+});
+
+test('setAllowAllRules bounds a legitimate dynamic rollback failure and preserves original phase context', { concurrency: false }, async () => {
+  resetEnvironment();
+  dnrState.dynamicRules.push({
+    id: 8000000,
+    action: { type: 'allowAllRequests' },
+    condition: {
+      resourceTypes: ['main_frame'],
+      requestDomains: ['stored.example'],
+    },
+    priority: 2000000,
+  });
+  dnrState.sessionRules.push({
+    id: 8000001,
+    action: { type: 'allow' },
+    condition: {
+      tabIds: [-1],
+      initiatorDomains: ['stored.example'],
+    },
+    priority: 2000000,
+  });
+  dnrState.dynamicUpdateOutcomes.push(
+    null,
+    new Error('Internal error while updating dynamic rules.'),
+    new Error('Internal error while updating dynamic rules.'),
+    new Error('Internal error while updating dynamic rules.')
+  );
+  dnrState.failSessionUpdateCount = 1;
+
+  await assert.rejects(
+    compatDnr.setAllowAllRules(
+      8000000,
+      ['news.example'],
+      [],
+      false,
+      2000000
+    ),
+    reason => {
+      assert.match(reason.message, /rollback mutation failed \(dynamic mutated\)/);
+      assert.match(reason.message, /dynamic: Internal error while updating dynamic rules\./);
+      assert.match(reason.message, /desired session mutation failed: simulated session update failure/);
+      return true;
+    }
+  );
+
+  assert.equal(dnrState.dynamicUpdateAttempts.length, 4);
+  assert.strictEqual(
+    dnrState.dynamicUpdateAttempts[1].details,
+    dnrState.dynamicUpdateAttempts[2].details
+  );
+  assert.strictEqual(
+    dnrState.dynamicUpdateAttempts[2].details,
+    dnrState.dynamicUpdateAttempts[3].details
+  );
+  assert.equal(
+    dnrState.dynamicRules[0]?.condition?.requestDomains?.[0],
+    'news.example',
+    'the failed rollback must leave the uncertain desired dynamic state observable'
+  );
+  assert.equal(
+    dnrState.sessionRules[0]?.condition?.initiatorDomains?.[0],
+    'stored.example'
+  );
+  assert.equal(storageData.allowAllRulesDiagnosticsV1, undefined);
+});
+
+test('setAllowAllRules reports rollback verification read failures without recording success', { concurrency: false }, async () => {
+  resetEnvironment();
+  dnrState.dynamicRules.push({
+    id: 8000000,
+    action: { type: 'allowAllRequests' },
+    condition: {
+      resourceTypes: ['main_frame'],
+      requestDomains: ['stored.example'],
+    },
+    priority: 2000000,
+  });
+  dnrState.dynamicReadOutcomes.push(
+    null,
+    new Error('simulated rollback verification read failure')
+  );
+  dnrState.failSessionUpdateCount = 1;
+
+  await assert.rejects(
+    compatDnr.setAllowAllRules(
+      8000000,
+      ['news.example'],
+      [],
+      false,
+      2000000
+    ),
+    reason => {
+      assert.match(reason.message, /rollback verification read failed/);
+      assert.match(reason.message, /simulated rollback verification read failure/);
+      assert.match(reason.message, /desired session mutation failed: simulated session update failure/);
+      return true;
+    }
+  );
+
+  assert.equal(
+    dnrState.dynamicRules[0]?.condition?.requestDomains?.[0],
+    'stored.example'
+  );
+  assert.equal(storageData.allowAllRulesDiagnosticsV1, undefined);
+});
+
+test('setAllowAllRules awaits every mutated rollback lane before reporting a rollback failure', { concurrency: false }, async () => {
+  resetEnvironment();
+  dnrState.dynamicRules.push({
+    id: 8000000,
+    action: { type: 'allowAllRequests' },
+    condition: {
+      resourceTypes: ['main_frame'],
+      requestDomains: ['stored.example'],
+    },
+    priority: 2000000,
+  });
+  dnrState.sessionRules.push({
+    id: 8000001,
+    action: { type: 'allow' },
+    condition: {
+      tabIds: [-1],
+      initiatorDomains: ['stored.example'],
+    },
+    priority: 2000000,
+  });
+  dnrState.dynamicReadOutcomes.push(
+    null,
+    []
+  );
+  dnrState.dynamicUpdateOutcomes.push(
+    null,
+    new Error('Internal error while updating dynamic rules.'),
+    null
+  );
+  dnrState.sessionUpdateOutcomes.push(
+    null,
+    new Error('simulated session rollback failure')
+  );
+
+  await assert.rejects(
+    compatDnr.setAllowAllRules(
+      8000000,
+      ['news.example'],
+      [],
+      false,
+      2000000
+    ),
+    reason => {
+      assert.match(reason.message, /setAllowAllRules\(8000000\) rollback failed/);
+      assert.match(reason.message, /session: simulated session rollback failure/);
+      assert.match(reason.message, /desired-state verification failed: state mismatch/);
+      return true;
+    }
+  );
+
+  assert.equal(dnrState.dynamicUpdateAttempts.length, 3);
+  assert.strictEqual(
+    dnrState.dynamicUpdateAttempts[1].details,
+    dnrState.dynamicUpdateAttempts[2].details,
+    'the rollback retry must reuse the identical atomic delta'
+  );
+  assert.equal(
+    dnrState.dynamicRules[0]?.condition?.requestDomains?.[0],
+    'stored.example',
+    'the dynamic rollback must settle even when the session rollback rejects'
+  );
+  assert.equal(
+    dnrState.sessionRules[0]?.condition?.initiatorDomains?.[0],
+    'news.example',
+    'the rejected session rollback must remain observable'
+  );
+});
+
+test('setAllowAllRules does not retry actionable or near-match dynamic failures', { concurrency: false }, async () => {
+  for (const message of [
+    'Rule count exceeded.',
+    'Internal error while updating dynamic rules',
+    'Error: Internal error while updating dynamic rules.',
+  ]) {
+    resetEnvironment();
+    dnrState.dynamicUpdateOutcomes.push(new Error(message));
+
+    await assert.rejects(
+      compatDnr.setAllowAllRules(
+        8500000,
+        [],
+        [],
+        true,
+        3000000
+      ),
+      new RegExp(`setAllowAllRules\\(8500000\\) desired dynamic mutation failed: ${message.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
+    );
+
+    const desiredAttempts = dnrState.dynamicUpdateAttempts.filter(
+      attempt => attempt.snapshot.addRules.some(rule => rule.id === 8500000)
+    );
+    assert.equal(
+      desiredAttempts.length,
+      1,
+      `non-transient failure must not retry: ${message}`
+    );
+    assert.equal(
+      dnrState.dynamicUpdateAttempts.length,
+      1,
+      'an atomically rejected desired write must not trigger rollback traffic'
+    );
+    assert.equal(dnrState.sessionUpdateAttempts.length, 0);
+  }
+});
+
+test('setAllowAllRules bounds a persistent exact desired failure without mutating or rolling back', { concurrency: false }, async () => {
+  resetEnvironment();
+  for (let i = 0; i < 3; i += 1) {
+    dnrState.dynamicUpdateOutcomes.push(
+      new Error('Internal error while updating dynamic rules.')
+    );
+  }
+
+  await assert.rejects(
+    compatDnr.setAllowAllRules(
+      8500000,
+      [],
+      [],
+      true,
+      3000000
+    ),
+    reason => {
+      assert.match(
+        reason.message,
+        /setAllowAllRules\(8500000\) desired dynamic mutation failed: Internal error while updating dynamic rules\./
+      );
+      return true;
+    }
+  );
+
+  assert.equal(dnrState.dynamicUpdateAttempts.length, 3);
+  assert.strictEqual(
+    dnrState.dynamicUpdateAttempts[0].details,
+    dnrState.dynamicUpdateAttempts[1].details
+  );
+  assert.strictEqual(
+    dnrState.dynamicUpdateAttempts[1].details,
+    dnrState.dynamicUpdateAttempts[2].details
+  );
+  assert.equal(dnrState.dynamicUpdateCalls.length, 0);
+  assert.equal(dnrState.sessionUpdateAttempts.length, 0);
+  assert.deepEqual(dnrState.dynamicRules, []);
+  assert.deepEqual(dnrState.sessionRules, []);
+  assert.equal(storageData.allowAllRulesDiagnosticsV1, undefined);
 });
 
 test('community sync accepts packaged signing-key rotation by signature key id', { concurrency: false }, async () => {

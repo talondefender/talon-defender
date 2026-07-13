@@ -44,9 +44,24 @@ test('filtering-mode intent survives DNR failure and read retry repairs before p
   };
   const local = createStorageArea(localData);
   const session = createStorageArea(sessionData);
+  let failNextSessionStorageWrite = false;
+  const writeSessionStorage = session.set.bind(session);
+  session.set = async values => {
+    if (
+      failNextSessionStorageWrite &&
+      Object.hasOwn(values, 'filteringModeDetails')
+    ) {
+      failNextSessionStorageWrite = false;
+      throw new Error('simulated session storage write failure');
+    }
+    await writeSessionStorage(values);
+  };
   let dynamicRules = [];
   let sessionRules = [];
   let failNextDynamicUpdate = true;
+  let failNextSessionUpdate = false;
+  let dynamicUpdateCount = 0;
+  let sessionUpdateCount = 0;
   const selectRules = (rules, options) => {
     const ids = options?.ruleIds;
     return clone(Array.isArray(ids)
@@ -71,6 +86,7 @@ test('filtering-mode intent survives DNR failure and read retry repairs before p
       return selectRules(sessionRules, options);
     },
     async updateDynamicRules(update) {
+      dynamicUpdateCount += 1;
       if (failNextDynamicUpdate) {
         failNextDynamicUpdate = false;
         throw new Error('simulated DNR write failure');
@@ -78,6 +94,11 @@ test('filtering-mode intent survives DNR failure and read retry repairs before p
       dynamicRules = updateRules(dynamicRules, update);
     },
     async updateSessionRules(update) {
+      sessionUpdateCount += 1;
+      if (failNextSessionUpdate) {
+        failNextSessionUpdate = false;
+        throw new Error('simulated session DNR write failure');
+      }
       sessionRules = updateRules(sessionRules, update);
     },
   };
@@ -173,4 +194,66 @@ test('filtering-mode intent survives DNR failure and read retry repairs before p
 
   sessionData.filteringModeDetails = clone(validSessionModes);
   await readFilteringModeDetails(true);
+
+  const dynamicRulesBeforeBrowserRestart = clone(dynamicRules);
+  const dynamicUpdateCountBeforeBrowserRestart = dynamicUpdateCount;
+  const sessionUpdateCountBeforeBrowserRestart = sessionUpdateCount;
+  delete sessionData.filteringModeDetails;
+  sessionRules = [];
+  readFilteringModeDetails.cache = undefined;
+  readFilteringModeDetails.userCache = undefined;
+  failNextSessionUpdate = true;
+
+  await assert.rejects(
+    () => readFilteringModeDetails(),
+    /simulated session DNR write failure/
+  );
+  assert.deepEqual(dynamicRules, dynamicRulesBeforeBrowserRestart);
+  assert.equal(dynamicUpdateCount, dynamicUpdateCountBeforeBrowserRestart);
+  assert.equal(sessionUpdateCount, sessionUpdateCountBeforeBrowserRestart + 1);
+  assert.deepEqual(sessionData.filteringModeDetails, validSessionModes);
+  assert.equal(localData[FILTERING_MODE_DNR_DIRTY_KEY], true);
+  assert.equal(sessionRules.some(rule => rule.id === 8000001), false);
+
+  await readFilteringModeDetails(true);
+  assert.deepEqual(dynamicRules, dynamicRulesBeforeBrowserRestart);
+  assert.equal(
+    dynamicUpdateCount,
+    dynamicUpdateCountBeforeBrowserRestart,
+    'browser-session repair must not rewrite an already-matching dynamic rule'
+  );
+  assert.equal(sessionUpdateCount, sessionUpdateCountBeforeBrowserRestart + 2);
+  assert.equal(sessionRules.some(rule => rule.id === 8000001), true);
+  assert.equal(localData[FILTERING_MODE_DNR_DIRTY_KEY], undefined);
+
+  for (const key of Object.keys(localData)) delete localData[key];
+  for (const key of Object.keys(sessionData)) delete sessionData[key];
+  dynamicRules = [];
+  sessionRules = [];
+  readFilteringModeDetails.cache = undefined;
+  readFilteringModeDetails.userCache = undefined;
+  failNextSessionStorageWrite = true;
+
+  await assert.rejects(
+    () => readFilteringModeDetails(true),
+    /simulated session storage write failure/
+  );
+  assert.deepEqual(localData.filteringModeDetails, {
+    configRevision: 0,
+    none: [],
+    basic: [],
+    optimal: ['all-urls'],
+    complete: [],
+  });
+  assert.equal(localData[FILTERING_MODE_DNR_DIRTY_KEY], true);
+  assert.equal(sessionData.filteringModeDetails, undefined);
+
+  await readFilteringModeDetails(true);
+  assert.deepEqual(
+    sessionData.filteringModeDetails,
+    localData.filteringModeDetails
+  );
+  assert.equal(dynamicRules.some(rule => rule.id === 8000000), true);
+  assert.equal(sessionRules.some(rule => rule.id === 8000001), true);
+  assert.equal(localData[FILTERING_MODE_DNR_DIRTY_KEY], undefined);
 });

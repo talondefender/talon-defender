@@ -11587,6 +11587,20 @@ let isFullyInitialized = startWithBoundedRetry().then(async () => {
     throw reason;
 });
 
+function reconcileOnBrowserStartup() {
+    // Registering runtime.onStartup synchronously makes Chrome wake this MV3
+    // worker when a browser profile starts. Module evaluation has already
+    // launched the normal startup transaction, so observe that single flight
+    // first and enter the existing recovery lane only if it rejects.
+    return Promise.resolve(isFullyInitialized).catch(() =>
+        recoverStartupStateForPopup()
+    ).catch(reason => {
+        ubolErr(`runtime.onStartup/${reason}`);
+    });
+}
+
+runtime.onStartup.addListener(reconcileOnBrowserStartup);
+
 const queueLifecycleRuntimeReconcile = (tabId, url = '') => {
     const readiness = isEntitled() === false || paywallActive
         ? Promise.resolve()

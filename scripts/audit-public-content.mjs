@@ -18,6 +18,7 @@ const allowedTestFiles = new Set([
   "test/default-rulesets.test.js",
   "test/entitlement-regression.test.js",
   "test/injectable-registration.test.js",
+  "test/mode-manager-granular.test.js",
   "test/options-ruleset-toggle-state.test.js",
   "test/permission-reconciliation.test.js",
   "test/popup-ruleset-search.test.js",

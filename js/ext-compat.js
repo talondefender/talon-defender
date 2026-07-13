@@ -23,6 +23,59 @@ export const webext = self.browser || self.chrome;
 export const dnr = webext.declarativeNetRequest || {};
 export const ALLOW_ALL_RULES_DIAGNOSTICS_KEY = 'allowAllRulesDiagnosticsV1';
 
+const DYNAMIC_RULESET_UPDATE_RETRY_DELAYS_MS = Object.freeze([ 100, 300 ]);
+
+const isTransientDynamicRulesetUpdateError = reason => {
+    const message = reason instanceof Error
+        ? reason.message
+        : `${reason ?? ''}`;
+    return message.trim() === 'Internal error while updating dynamic rules.';
+};
+
+/**
+ * Chrome can reject updateDynamicRules() with this exact generic internal
+ * error. A rejected update is atomic and leaves the ruleset unchanged, so a
+ * tightly bounded retry of the identical delta is safe. Actionable quota,
+ * validation, permission, and rule-ID errors must surface immediately.
+ */
+export async function retryTransientDynamicRulesUpdate(update, {
+    retryDelaysMs = DYNAMIC_RULESET_UPDATE_RETRY_DELAYS_MS,
+    wait = delayMs => new Promise(resolve => setTimeout(resolve, delayMs)),
+} = {}) {
+    if ( typeof update !== 'function' ) {
+        throw new TypeError('dynamic ruleset update callback is required');
+    }
+    if ( typeof wait !== 'function' ) {
+        throw new TypeError('dynamic ruleset retry wait callback is required');
+    }
+    const delays = Array.isArray(retryDelaysMs)
+        ? retryDelaysMs.filter(value => Number.isFinite(value) && value >= 0)
+        : [];
+    let attempts = 0;
+    for (;;) {
+        attempts += 1;
+        try {
+            await update();
+            return { attempts, recovered: attempts > 1 };
+        } catch (reason) {
+            const retryIndex = attempts - 1;
+            if (
+                isTransientDynamicRulesetUpdateError(reason) === false ||
+                retryIndex >= delays.length
+            ) {
+                throw reason;
+            }
+            await wait(delays[retryIndex]);
+        }
+    }
+}
+
+const updateDynamicRulesWithTransientRetry = details => {
+    return retryTransientDynamicRulesUpdate(
+        () => dnr.updateDynamicRules(details)
+    );
+};
+
 /******************************************************************************/
 
 const ruleCompare = (a, b) => a.id - b.id;
@@ -124,13 +177,25 @@ export function normalizeDNRRules(rules, ruleIds) {
 /******************************************************************************/
 
 dnr.setAllowAllRules = async function(id, allowed, notAllowed, reverse, priority) {
-    const [
-        beforeDynamicRules,
-        beforeSessionRules,
-    ] = await Promise.all([
-        dnr.getDynamicRules({ ruleIds: [ id+0 ] }),
-        dnr.getSessionRules({ ruleIds: [ id+1 ] }),
-    ]);
+    let beforeDynamicRules;
+    let beforeSessionRules;
+    try {
+        [
+            beforeDynamicRules,
+            beforeSessionRules,
+        ] = await Promise.all([
+            dnr.getDynamicRules({ ruleIds: [ id+0 ] }),
+            dnr.getSessionRules({ ruleIds: [ id+1 ] }),
+        ]);
+    } catch (reason) {
+        const message = reason instanceof Error
+            ? reason.message
+            : String(reason);
+        throw new Error(
+            `setAllowAllRules(${id}) state snapshot failed: ${message}`,
+            { cause: reason }
+        );
+    }
     const addDynamicRules = [];
     const addSessionRules = [];
     if ( reverse || allowed.length || notAllowed.length ) {
@@ -169,6 +234,15 @@ dnr.setAllowAllRules = async function(id, allowed, notAllowed, reverse, priority
     const sessionMatches = isSameRules(addSessionRules, beforeSessionRules);
     if ( dynamicMatches && sessionMatches ) { return false; }
 
+    // A rejected DNR update is atomic. Track only calls which actually
+    // fulfilled so a later failure never "rolls back" an untouched lane and
+    // adds avoidable pressure while Chrome's DNR store is still starting.
+    const mutated = {
+        dynamic: false,
+        session: false,
+    };
+    let desiredPhase = 'prepare';
+
     const verifyState = async (expectedDynamicRules, expectedSessionRules) => {
         const [
             actualDynamicRules,
@@ -182,63 +256,114 @@ dnr.setAllowAllRules = async function(id, allowed, notAllowed, reverse, priority
     };
 
     const restorePreviousState = async () => {
-        await Promise.all([
-            dnr.updateDynamicRules({
+        const rollbackOperations = [];
+        if ( mutated.dynamic ) {
+            const dynamicDelta = {
                 addRules: cloneRules(beforeDynamicRules),
                 removeRuleIds: [ id+0 ],
-            }),
-            dnr.updateSessionRules({
+            };
+            rollbackOperations.push({
+                lane: 'dynamic',
+                run: () => updateDynamicRulesWithTransientRetry(dynamicDelta),
+            });
+        }
+        if ( mutated.session ) {
+            const sessionDelta = {
                 addRules: cloneRules(beforeSessionRules),
                 removeRuleIds: [ id+1 ],
-            }),
-        ]);
-        const restored = await verifyState(beforeDynamicRules, beforeSessionRules);
+            };
+            rollbackOperations.push({
+                lane: 'session',
+                run: () => dnr.updateSessionRules(sessionDelta),
+            });
+        }
+        if ( rollbackOperations.length === 0 ) { return false; }
+        const settlements = await Promise.allSettled(
+            rollbackOperations.map(operation =>
+                Promise.resolve().then(operation.run)
+            )
+        );
+        const failures = settlements.flatMap((settlement, index) => {
+            if ( settlement.status === 'fulfilled' ) { return []; }
+            const message = settlement.reason instanceof Error
+                ? settlement.reason.message
+                : String(settlement.reason);
+            return [ `${rollbackOperations[index].lane}: ${message}` ];
+        });
+        if ( failures.length !== 0 ) {
+            throw new Error(
+                `setAllowAllRules(${id}) rollback mutation failed (${rollbackOperations.map(operation => operation.lane).join(',')} mutated): ${failures.join('; ')}`
+            );
+        }
+        let restored;
+        try {
+            restored = await verifyState(beforeDynamicRules, beforeSessionRules);
+        } catch (reason) {
+            const message = reason instanceof Error
+                ? reason.message
+                : String(reason);
+            throw new Error(
+                `setAllowAllRules(${id}) rollback verification read failed: ${message}`,
+                { cause: reason }
+            );
+        }
         if ( restored !== true ) {
-            throw new Error('setAllowAllRules rollback verification failed');
+            throw new Error(`setAllowAllRules(${id}) rollback verification failed`);
         }
         await recordAllowAllRulesRollback();
+        return true;
     };
 
     try {
         if ( dynamicMatches === false ) {
-            await dnr.updateDynamicRules({
+            desiredPhase = 'desired dynamic mutation';
+            const dynamicDelta = {
                 addRules: cloneRules(addDynamicRules),
                 removeRuleIds: beforeDynamicRules.map(r => r.id),
-            });
+            };
+            await updateDynamicRulesWithTransientRetry(dynamicDelta);
+            mutated.dynamic = true;
         }
         if ( sessionMatches === false ) {
+            desiredPhase = 'desired session mutation';
             await dnr.updateSessionRules({
                 addRules: cloneRules(addSessionRules),
                 removeRuleIds: beforeSessionRules.map(r => r.id),
             });
+            mutated.session = true;
         }
+        desiredPhase = 'desired-state verification';
         const verified = await verifyState(addDynamicRules, addSessionRules);
         if ( verified !== true ) {
-            throw new Error('setAllowAllRules desired-state verification failed');
+            throw new Error('state mismatch');
         }
         if ( dynamicMatches !== sessionMatches ) {
             await recordAllowAllRulesPartialRepair();
         }
         return true;
     } catch (reason) {
+        const originalMessage = reason instanceof Error
+            ? reason.message
+            : String(reason);
+        const contextualMessage =
+            `setAllowAllRules(${id}) ${desiredPhase} failed: ${originalMessage}`;
+        if ( mutated.dynamic === false && mutated.session === false ) {
+            throw new Error(contextualMessage, { cause: reason });
+        }
         try {
             await restorePreviousState();
         } catch (rollbackReason) {
-            const originalMessage = reason instanceof Error
-                ? reason.message
-                : String(reason);
             const rollbackMessage = rollbackReason instanceof Error
                 ? rollbackReason.message
                 : String(rollbackReason);
             throw new Error(
-                `setAllowAllRules rollback failed: ${rollbackMessage}; original error: ${originalMessage}`
+                `setAllowAllRules(${id}) rollback failed: ${rollbackMessage}; original error: ${contextualMessage}`,
+                { cause: reason }
             );
         }
-        const originalMessage = reason instanceof Error
-            ? reason.message
-            : String(reason);
         throw new Error(
-            `setAllowAllRules desired state failed and was rolled back: ${originalMessage}`
+            `setAllowAllRules(${id}) desired state failed and was rolled back: ${contextualMessage}`,
+            { cause: reason }
         );
     }
 };

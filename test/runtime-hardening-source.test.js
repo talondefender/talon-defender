@@ -4326,6 +4326,90 @@ test('injectable retry repairs in place and only the guarded cold-start fallback
   );
 });
 
+test('browser startup synchronously wakes the worker and reuses startup recovery', async () => {
+  const source = await readSource('js/background.js');
+  const handlerSource = sourceBetween(
+    source,
+    'function reconcileOnBrowserStartup()',
+    'runtime.onStartup.addListener(reconcileOnBrowserStartup);'
+  );
+  const initializationOffset = source.indexOf(
+    'let isFullyInitialized = startWithBoundedRetry()'
+  );
+  const listenerOffset = source.indexOf(
+    'runtime.onStartup.addListener(reconcileOnBrowserStartup);'
+  );
+
+  assert.notEqual(initializationOffset, -1);
+  assert.ok(listenerOffset > initializationOffset);
+  assert.equal(
+    countMatches(
+      source,
+      /runtime\.onStartup\.addListener\(reconcileOnBrowserStartup\);/g
+    ),
+    1
+  );
+  assert.match(
+    handlerSource,
+    /Promise\.resolve\(isFullyInitialized\)[\s\S]*recoverStartupStateForPopup\(\)/
+  );
+
+  const buildHandler = new Function('deps', `
+    const {
+      isFullyInitialized,
+      recoverStartupStateForPopup,
+      ubolErr,
+    } = deps;
+    ${handlerSource}
+    return reconcileOnBrowserStartup;
+  `);
+
+  let resolveInitialStartup;
+  const pendingInitialStartup = new Promise(resolve => {
+    resolveInitialStartup = resolve;
+  });
+  let recoveryCount = 0;
+  let errors = [];
+  let handler = buildHandler({
+    isFullyInitialized: pendingInitialStartup,
+    async recoverStartupStateForPopup() {
+      recoveryCount += 1;
+    },
+    ubolErr(reason) { errors.push(String(reason)); },
+  });
+  const observedStartup = handler();
+  await Promise.resolve();
+  assert.equal(recoveryCount, 0);
+  resolveInitialStartup();
+  await observedStartup;
+  assert.equal(recoveryCount, 0);
+  assert.deepEqual(errors, []);
+
+  recoveryCount = 0;
+  errors = [];
+  handler = buildHandler({
+    isFullyInitialized: Promise.reject(new Error('initial startup failed')),
+    async recoverStartupStateForPopup() {
+      recoveryCount += 1;
+      return { ok: true };
+    },
+    ubolErr(reason) { errors.push(String(reason)); },
+  });
+  await handler();
+  assert.equal(recoveryCount, 1);
+  assert.deepEqual(errors, []);
+
+  handler = buildHandler({
+    isFullyInitialized: Promise.reject(new Error('initial startup failed')),
+    async recoverStartupStateForPopup() {
+      throw new Error('recovery failed');
+    },
+    ubolErr(reason) { errors.push(String(reason)); },
+  });
+  await handler();
+  assert.deepEqual(errors, [ 'runtime.onStartup/Error: recovery failed' ]);
+});
+
 test('custom-filter restoration attempts every frame before reporting failures', async () => {
   const source = await readSource('js/background.js');
   const refreshSource = sourceBetween(

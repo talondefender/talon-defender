@@ -494,9 +494,19 @@ export async function readFilteringModeDetails(bypassCache = false) {
     } else {
         storedUserModes = structuredClone(defaultFilteringModes);
     }
+    const sessionReconciliationRequired = hasSession === false;
     filteringModeRevision = modeRevisionFrom(storedUserModes);
     const userModes = unserializeModeDetails(storedUserModes);
     const durableUserData = serializeModeDetails(userModes);
+    if ( sessionReconciliationRequired && dnrDirty === false ) {
+        // chrome.storage.session and session DNR rules are both cleared when
+        // the browser exits. Atomically persist the desired record and retry
+        // marker before rebuilding the paired allow-all session rule. This is
+        // also safe on a pristine profile: interruption can never leave a
+        // dirty marker without the desired mode data needed for recovery.
+        await writeLocalModeIntent(durableUserData);
+        localModes = durableUserData;
+    }
     if ( sameStoredModeDetails(localModes, durableUserData) === false ) {
         await localWrite(FILTERING_MODE_DETAILS_KEY, durableUserData);
     }
@@ -508,7 +518,7 @@ export async function readFilteringModeDetails(bypassCache = false) {
         adminDefaultFiltering,
         adminNoFiltering
     );
-    if ( dnrDirty ) {
+    if ( dnrDirty || sessionReconciliationRequired ) {
         invalidateFilteringModeCache();
         await filteringModesToDNR(effectiveModes);
         await clearFilteringModeDnrDirty();
