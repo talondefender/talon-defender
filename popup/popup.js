@@ -822,11 +822,7 @@ function renderRuntimeNotice() {
   if (!runtimeNoticeVisible) {
     return;
   }
-  runtimeNoticeTextEl.textContent = t(
-    currentReloadNeededReason === "remoteScriptletHotfix"
-      ? "popupRuntimeHotfixReloadNotice"
-      : "popupRuntimeReloadNotice"
-  );
+  runtimeNoticeTextEl.textContent = t("popupRuntimeReloadNotice");
   runtimeNoticeReloadButton.textContent = t("popupRuntimeHotfixReloadButton");
 }
 

@@ -118,6 +118,7 @@ import {
 import {
     PENDING_REMOTE_SCRIPTLET_RELOAD_HINT_KEY,
     REMOTE_SCRIPTLET_RELOAD_REASON,
+    isPackagedStaticScriptletDirectiveId,
     isRemoteScriptletDirectiveId,
     mergeRemoteScriptletReloadHints,
     normalizeRemoteScriptletReloadHint,
@@ -147,6 +148,10 @@ const AUTO_PROMOTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_RULESET_IDS_STORAGE_KEY = 'defaultRulesetIds';
 const PENDING_INSTALL_RULESET_RESET_KEY = 'pendingInstallRulesetResetV1';
 const INJECTABLE_RUNTIME_STATE_KEY = 'injectableRuntimeStateV1';
+const RELOAD_SENSITIVE_REGISTRATION_STATE_KEY =
+    'reloadSensitiveRegistrationStateV1';
+const PENDING_EXTENSION_UPDATE_VERSION_KEY =
+    'pendingExtensionUpdateVersionV1';
 const ENTITLEMENT_EFFECTS_DIRTY_KEY = 'entitlementEffectsDirtyV1';
 const ENTITLEMENT_EFFECTS_RETRY_ALARM = 'entitlement-effects-retry';
 const ENTITLEMENT_EFFECTS_RETRY_DELAY_MINUTES = 1;
@@ -240,7 +245,6 @@ const FRENCH_STREAM_SITE_FIX_HOSTNAMES = Object.freeze([
     'vidzy.cc',
 ]);
 const DEFAULT_ACTION_TITLE = 'Talon Defender';
-const HOTFIX_RELOAD_ACTION_TITLE = 'Talon Defender: Reload tab to apply hotfix';
 const RUNTIME_RELOAD_ACTION_TITLE =
     'Talon Defender: Reload tab to finish protection update';
 const HOTFIX_RELOAD_BADGE_COLOR = '#f59e0b';
@@ -257,7 +261,7 @@ let autoPromotionState = {
 const reloadNeededTabs = new Map();
 const RELOAD_NEEDED_TABS_STORAGE_KEY = 'reloadNeededTabsV1';
 const SANDBOX_USER_SCRIPT_RELOAD_REASON = 'sandbox_user_script_changed';
-const RELOAD_NEEDED_STORAGE_SCHEMA = 2;
+const RELOAD_NEEDED_STORAGE_SCHEMA = 4;
 const MAX_RELOAD_NEEDED_DOCUMENTS_PER_TAB = 8;
 const MAX_RELOAD_SAFE_DOCUMENTS_PER_TAB = 16;
 const RELOAD_SAFE_DOCUMENTS_SESSION_KEY_PREFIX = 'reloadSafeDocumentsV1:';
@@ -273,6 +277,7 @@ const createReloadNeededTabRecord = () => ({
     wildcardUpdatedAt: 0,
     wildcardAllDocuments: false,
     wildcardReloadHint: null,
+    freshNavigationObservedAt: 0,
     revision: 0,
 });
 
@@ -596,6 +601,24 @@ const setActionTitle = options => {
     return Promise.resolve(setter(options)).catch(() => {});
 };
 
+const isLegacyBlanketVersionReloadHint = input => {
+    const hint = normalizeRemoteScriptletReloadHint(input);
+    if (
+        hint === null ||
+        hint.before.length !== 0 ||
+        hint.after.length < 2 ||
+        hint.after.some(directive =>
+            isPackagedStaticScriptletDirectiveId(directive.id) === false &&
+            isRemoteScriptletDirectiveId(directive.id) === false
+        )
+    ) {
+        return false;
+    }
+    const ids = new Set(hint.after.map(directive => directive.id));
+    return ids.has('ublock-filters.main') &&
+        ids.has('ublock-filters.isolated');
+};
+
 const ensureReloadNeededTabsHydrated = () => {
     if ( reloadNeededTabsHydrationPromise instanceof Promise ) {
         return reloadNeededTabsHydrationPromise;
@@ -615,7 +638,21 @@ const ensureReloadNeededTabsHydrated = () => {
             await storage.remove(RELOAD_NEEDED_TABS_STORAGE_KEY);
             return true;
         }
-        const storedTabs = stored.version === RELOAD_NEEDED_STORAGE_SCHEMA &&
+        const storedSchema = Number.isSafeInteger(stored.version)
+            ? stored.version
+            : 0;
+        if (
+            storedSchema !== 0 &&
+            storedSchema !== 2 &&
+            storedSchema !== 3 &&
+            storedSchema !== RELOAD_NEEDED_STORAGE_SCHEMA
+        ) {
+            await storage.remove(RELOAD_NEEDED_TABS_STORAGE_KEY);
+            return true;
+        }
+        const storedTabs = (storedSchema === 2 ||
+            storedSchema === 3 ||
+            storedSchema === RELOAD_NEEDED_STORAGE_SCHEMA) &&
             stored.tabs instanceof Object &&
             Array.isArray(stored.tabs) === false
             ? stored.tabs
@@ -624,6 +661,16 @@ const ensureReloadNeededTabsHydrated = () => {
             const tabId = Number(rawTabId);
             if ( Number.isInteger(tabId) === false || tabId < 0 ) { continue; }
             const record = createReloadNeededTabRecord();
+            const discardLifecycleBlanket = (
+                storedSchema === 2 || storedSchema === 3
+            ) &&
+                rawEntry?.wildcardReason === REMOTE_SCRIPTLET_RELOAD_REASON &&
+                rawEntry?.wildcardAllDocuments !== true &&
+                isLegacyBlanketVersionReloadHint(
+                    rawEntry?.wildcardReloadHint
+                );
+            const retainLegacyScopedWildcard =
+                storedSchema === 2 && discardLifecycleBlanket;
             const rawDocuments = Array.isArray(rawEntry?.documents)
                 ? rawEntry.documents
                 : [ rawEntry ];
@@ -635,6 +682,20 @@ const ensureReloadNeededTabsHydrated = () => {
                     ? rawDocument.documentId
                     : '';
                 if ( reason === '' || documentId === '' ) { continue; }
+                if (
+                    discardLifecycleBlanket &&
+                    reason === REMOTE_SCRIPTLET_RELOAD_REASON
+                ) {
+                    // Schema 2 is released legacy state whose provenance is
+                    // ambiguous, so retain its scoped BFCache wildcard and
+                    // baseline named documents. Schema 3 was created only by
+                    // the unreleased re-registration bug; remove that false
+                    // generation completely so Back/Forward cannot revive it.
+                    if ( retainLegacyScopedWildcard ) {
+                        record.safeDocumentIds.add(documentId);
+                    }
+                    continue;
+                }
                 record.documents.set(documentId, {
                     reason,
                     documentId,
@@ -642,30 +703,50 @@ const ensureReloadNeededTabsHydrated = () => {
                     active: rawDocument?.active !== false,
                 });
             }
-            record.wildcardReason = typeof rawEntry?.wildcardReason === 'string'
-                ? rawEntry.wildcardReason.trim()
-                : '';
-            record.wildcardUpdatedAt = Math.max(
-                0,
-                Number(rawEntry?.wildcardUpdatedAt) || 0
-            );
-            record.wildcardReloadHint =
-                rawEntry?.wildcardReloadHint instanceof Object
-                    ? structuredClone(rawEntry.wildcardReloadHint)
-                    : null;
-            record.wildcardAllDocuments =
-                typeof rawEntry?.wildcardAllDocuments === 'boolean'
-                    ? rawEntry.wildcardAllDocuments
-                    : record.wildcardReason !== '' &&
-                        record.wildcardReloadHint === null;
-            record.revision = Math.max(0, Number(rawEntry?.revision) || 0);
-            record.safeDocumentIds = new Set(
-                Array.isArray(rawEntry?.safeDocumentIds)
-                    ? rawEntry.safeDocumentIds.filter(value =>
-                        typeof value === 'string' && value !== ''
+            if ( discardLifecycleBlanket && storedSchema === 3 ) {
+                record.wildcardReason = '';
+                record.wildcardUpdatedAt = 0;
+                record.wildcardReloadHint = null;
+                record.wildcardAllDocuments = false;
+                record.freshNavigationObservedAt = 0;
+            } else {
+                record.wildcardReason =
+                    typeof rawEntry?.wildcardReason === 'string'
+                    ? rawEntry.wildcardReason.trim()
+                    : '';
+                record.wildcardUpdatedAt = Math.max(
+                    0,
+                    Number(rawEntry?.wildcardUpdatedAt) || 0
+                );
+                record.wildcardReloadHint = retainLegacyScopedWildcard
+                    ? normalizeRemoteScriptletReloadHint(
+                        rawEntry?.wildcardReloadHint
                     )
-                    : []
-            );
+                    : rawEntry?.wildcardReloadHint instanceof Object
+                        ? structuredClone(rawEntry.wildcardReloadHint)
+                        : null;
+                record.wildcardAllDocuments = retainLegacyScopedWildcard
+                    ? false
+                    : typeof rawEntry?.wildcardAllDocuments === 'boolean'
+                        ? rawEntry.wildcardAllDocuments
+                        : record.wildcardReason !== '' &&
+                            record.wildcardReloadHint === null;
+                record.freshNavigationObservedAt = Math.max(
+                    0,
+                    Number(rawEntry?.freshNavigationObservedAt) || 0,
+                    retainLegacyScopedWildcard
+                        ? record.wildcardUpdatedAt + 1
+                        : 0
+                );
+            }
+            record.revision = Math.max(0, Number(rawEntry?.revision) || 0);
+            for ( const value of Array.isArray(rawEntry?.safeDocumentIds)
+                ? rawEntry.safeDocumentIds
+                : [] ) {
+                if ( typeof value === 'string' && value !== '' ) {
+                    record.safeDocumentIds.add(value);
+                }
+            }
             pruneReloadNeededTabRecord(record);
             if (
                 record.documents.size !== 0 ||
@@ -698,13 +779,27 @@ const ensureReloadNeededTabsHydrated = () => {
                     ) {
                         continue;
                     }
-                    record.safeDocumentIds = new Set(
-                        storedSafe.documentIds.filter(value =>
-                            typeof value === 'string' && value !== ''
-                        ).slice(-MAX_RELOAD_SAFE_DOCUMENTS_PER_TAB)
-                    );
+                    for ( const value of storedSafe.documentIds ) {
+                        if ( typeof value === 'string' && value !== '' ) {
+                            record.safeDocumentIds.add(value);
+                        }
+                    }
+                    pruneReloadNeededTabRecord(record);
                 }
             }
+        }
+        if ( storedSchema === 2 || storedSchema === 3 ) {
+            if ( reloadNeededTabs.size === 0 ) {
+                await storage.remove(RELOAD_NEEDED_TABS_STORAGE_KEY);
+            } else {
+                await storage.set({
+                    [RELOAD_NEEDED_TABS_STORAGE_KEY]:
+                        serializeReloadNeededTabs(),
+                });
+            }
+            await Promise.all(Array.from(reloadNeededTabs, ([ tabId, record ]) =>
+                persistReloadSafeDocumentsForTab(tabId, record)
+            ));
         }
         return true;
     })();
@@ -713,6 +808,29 @@ const ensureReloadNeededTabsHydrated = () => {
         throw reason;
     });
     return reloadNeededTabsHydrationPromise;
+};
+
+const serializeReloadNeededTabs = () => {
+    const serialized = { version: RELOAD_NEEDED_STORAGE_SCHEMA, tabs: {} };
+    for ( const [ tabId, record ] of Array.from(reloadNeededTabs)
+        .sort((a, b) => a[0] - b[0]) ) {
+        pruneReloadNeededTabRecord(record);
+        serialized.tabs[tabId] = {
+            wildcardReason: record.wildcardReason,
+            wildcardUpdatedAt: record.wildcardUpdatedAt,
+            wildcardAllDocuments: record.wildcardAllDocuments,
+            wildcardReloadHint: record.wildcardReloadHint,
+            freshNavigationObservedAt: record.freshNavigationObservedAt,
+            revision: record.revision,
+            documents: Array.from(record.documents.values()).map(entry => ({
+                reason: entry.reason,
+                documentId: entry.documentId,
+                updatedAt: entry.updatedAt,
+                active: entry.active === true,
+            })),
+        };
+    }
+    return serialized;
 };
 
 const persistReloadNeededTabs = () => {
@@ -726,26 +844,8 @@ const persistReloadNeededTabs = () => {
             await storage.remove(RELOAD_NEEDED_TABS_STORAGE_KEY);
             return true;
         }
-        const serialized = { version: RELOAD_NEEDED_STORAGE_SCHEMA, tabs: {} };
-        for ( const [ tabId, record ] of Array.from(reloadNeededTabs)
-            .sort((a, b) => a[0] - b[0]) ) {
-            pruneReloadNeededTabRecord(record);
-            serialized.tabs[tabId] = {
-                wildcardReason: record.wildcardReason,
-                wildcardUpdatedAt: record.wildcardUpdatedAt,
-                wildcardAllDocuments: record.wildcardAllDocuments,
-                wildcardReloadHint: record.wildcardReloadHint,
-                revision: record.revision,
-                documents: Array.from(record.documents.values()).map(entry => ({
-                    reason: entry.reason,
-                    documentId: entry.documentId,
-                    updatedAt: entry.updatedAt,
-                    active: entry.active === true,
-                })),
-            };
-        }
         await storage.set({
-            [RELOAD_NEEDED_TABS_STORAGE_KEY]: serialized,
+            [RELOAD_NEEDED_TABS_STORAGE_KEY]: serializeReloadNeededTabs(),
         });
         return true;
     });
@@ -1107,6 +1207,8 @@ const migrateRuntimeLifecycleTabState = async (addedTabId, removedTabId) => {
                     removedRecord.wildcardAllDocuments;
                 addedRecord.wildcardReloadHint =
                     removedRecord.wildcardReloadHint;
+                addedRecord.freshNavigationObservedAt =
+                    removedRecord.freshNavigationObservedAt;
                 addedRecord.safeDocumentIds = new Set(
                     removedRecord.safeDocumentIds
                 );
@@ -1152,6 +1254,7 @@ const migrateRuntimeLifecycleTabState = async (addedTabId, removedTabId) => {
                 // Safe evidence was scoped to one pre-merge wildcard. Clear it
                 // whenever requirements are unioned or broadened.
                 addedRecord.safeDocumentIds.clear();
+                addedRecord.freshNavigationObservedAt = 0;
             }
             addedRecord.revision = Math.max(
                 addedRecord.revision,
@@ -1264,6 +1367,7 @@ const pruneDurableRuntimeLifecycleState = async () => {
             record.wildcardUpdatedAt = 0;
             record.wildcardAllDocuments = false;
             record.wildcardReloadHint = null;
+            record.freshNavigationObservedAt = 0;
             record.safeDocumentIds.clear();
             record.revision += 1;
             reloadChanged = true;
@@ -1289,6 +1393,9 @@ const pruneDurableRuntimeLifecycleState = async () => {
                 record.wildcardReloadHint
             )
         );
+        const freshNavigationProvesCurrentRuntime =
+            record.wildcardUpdatedAt !== 0 &&
+            record.freshNavigationObservedAt >= record.wildcardUpdatedAt;
         for ( const entry of record.documents.values() ) {
             const active = entry.documentId === activeDocumentId;
             if ( entry.active !== active ) {
@@ -1300,6 +1407,7 @@ const pruneDurableRuntimeLifecycleState = async () => {
             activeDocumentId !== '' &&
             record.wildcardReason !== '' &&
             wildcardApplies &&
+            freshNavigationProvesCurrentRuntime === false &&
             record.documents.has(activeDocumentId) === false &&
             record.safeDocumentIds.has(activeDocumentId) === false
         ) {
@@ -1314,7 +1422,10 @@ const pruneDurableRuntimeLifecycleState = async () => {
         } else if (
             activeDocumentId !== '' &&
             record.wildcardReason !== '' &&
-            wildcardApplies === false &&
+            (
+                wildcardApplies === false ||
+                freshNavigationProvesCurrentRuntime
+            ) &&
             record.safeDocumentIds.has(activeDocumentId) === false
         ) {
             // Session-safe evidence is intentionally separate from the local
@@ -1458,9 +1569,7 @@ const refreshReloadNeededBadgeForTab = async (
         setActionBadgeText({ tabId, text: '!' }),
         setActionTitle({
             tabId,
-            title: state.reason === REMOTE_SCRIPTLET_RELOAD_REASON
-                ? HOTFIX_RELOAD_ACTION_TITLE
-                : RUNTIME_RELOAD_ACTION_TITLE,
+            title: RUNTIME_RELOAD_ACTION_TITLE,
         }),
     ]);
     return true;
@@ -1496,15 +1605,20 @@ async function getActiveTopDocumentIdentity(tabId, fallbackUrl = '') {
         )
     );
     if ( top === undefined ) { return null; }
+    const topUrl = typeof top.url === 'string' && top.url !== ''
+        ? top.url
+        : fallbackUrl;
     return {
         tabId,
         documentId: top.documentId,
-        url: typeof top.url === 'string' && top.url !== ''
-            ? top.url
-            : fallbackUrl,
-        frameUrls: Array.from(new Set(frames
-            .map(frame => typeof frame?.url === 'string' ? frame.url : '')
-            .filter(url => /^https?:/i.test(url)))),
+        url: topUrl,
+        frameUrls: [
+            topUrl,
+            ...Array.from(new Set(frames
+                .filter(frame => frame?.frameId !== 0)
+                .map(frame => typeof frame?.url === 'string' ? frame.url : '')
+                .filter(url => /^https?:/i.test(url)))),
+        ],
     };
 }
 
@@ -1517,6 +1631,7 @@ const clearReloadNeededStateForTab = async (
         forwardBack = false,
         outermostPrerender = false,
         prerenderCommittedAt = 0,
+        currentFrameUrls = null,
     } = {}
 ) => {
     if ( Number.isInteger(tabId) === false || tabId < 0 ) { return false; }
@@ -1560,16 +1675,28 @@ const clearReloadNeededStateForTab = async (
     }
     if ( record.wildcardReason !== '' ) {
         const existing = record.documents.get(currentDocumentId);
+        const frameSnapshotUnavailable =
+            currentFrameUrls instanceof Object &&
+            currentFrameUrls.complete === false;
         const wildcardApplies = record.wildcardAllDocuments ||
             record.wildcardReloadHint === null ||
+            // A restored document did not run document_start again. If Chrome
+            // cannot prove its current frame tree, fail closed instead of
+            // permanently recording the document as safe.
+            frameSnapshotUnavailable ||
             shouldReloadForFrameUrls(
-                [ typeof currentUrl === 'string' ? currentUrl : '' ],
+                currentFrameUrls || [
+                    typeof currentUrl === 'string' ? currentUrl : '',
+                ],
                 record.wildcardReloadHint
             );
-        const stalePrerender = outermostPrerender && (
-            Math.max(0, Number(prerenderCommittedAt) || 0) === 0 ||
-            prerenderCommittedAt <= record.wildcardUpdatedAt
+        const normalizedPrerenderCommittedAt = Math.max(
+            0,
+            Number(prerenderCommittedAt) || 0
         );
+        const freshPrerender = outermostPrerender &&
+            normalizedPrerenderCommittedAt > record.wildcardUpdatedAt;
+        const stalePrerender = outermostPrerender && freshPrerender === false;
         const mustReload = existing !== undefined ||
             ((forwardBack || stalePrerender) &&
                 wildcardApplies &&
@@ -1592,6 +1719,18 @@ const clearReloadNeededStateForTab = async (
                 record.safeDocumentIds.add(currentDocumentId);
                 changed = true;
                 safeDocumentsChanged = true;
+            }
+            if (
+                forwardBack === false &&
+                (outermostPrerender === false || freshPrerender) &&
+                record.freshNavigationObservedAt < record.wildcardUpdatedAt
+            ) {
+                record.freshNavigationObservedAt = Math.max(
+                    Date.now(),
+                    record.wildcardUpdatedAt + 1
+                );
+                changed = true;
+                durableChanged = true;
             }
         }
     }
@@ -1650,6 +1789,20 @@ const markReloadNeededForTab = async (
         return false;
     }
     const record = getOrCreateReloadNeededTabRecord(tabId);
+    if (
+        updateWildcard === false &&
+        record.documents.has(normalizedDocumentId) === false &&
+        record.safeDocumentIds.has(normalizedDocumentId)
+    ) {
+        // Replaying an already-journaled generation after a worker failure
+        // must not invalidate proof that this exact document loaded after the
+        // change. A genuinely newer generation clears the safe set when its
+        // wildcard is refreshed before reaching this path.
+        if ( updateBadge ) {
+            await refreshReloadNeededBadgeForTab(tabId, tabGeneration);
+        }
+        return true;
+    }
     const previousUpdatedAt = Math.max(
         Number(record.documents.get(normalizedDocumentId)?.updatedAt) || 0,
         Number(record.wildcardUpdatedAt) || 0
@@ -1669,6 +1822,7 @@ const markReloadNeededForTab = async (
         record.wildcardUpdatedAt = entry.updatedAt;
         record.wildcardAllDocuments = true;
         record.wildcardReloadHint = null;
+        record.freshNavigationObservedAt = 0;
         record.safeDocumentIds.clear();
     }
     record.revision += 1;
@@ -1716,20 +1870,23 @@ const markReloadNeededWildcardForTabs = async (
         if ( record.wildcardAllDocuments && allDocuments === false ) {
             continue;
         }
+        const existingReloadHint = normalizeRemoteScriptletReloadHint(
+            record.wildcardReloadHint
+        );
         const effectiveReloadHint =
             allDocuments === false &&
             normalizedReason === REMOTE_SCRIPTLET_RELOAD_REASON &&
             record.wildcardReason === REMOTE_SCRIPTLET_RELOAD_REASON &&
             record.wildcardAllDocuments === false
                 ? mergeRemoteScriptletReloadHints(
-                    record.wildcardReloadHint,
+                    existingReloadHint,
                     normalizedReloadHint
                 )
                 : normalizedReloadHint;
         const sameWildcard =
             record.wildcardReason === normalizedReason &&
             record.wildcardAllDocuments === (allDocuments === true) &&
-            JSON.stringify(record.wildcardReloadHint) ===
+            JSON.stringify(existingReloadHint) ===
                 JSON.stringify(effectiveReloadHint);
         if ( sameWildcard && refresh === false ) { continue; }
         const updatedAt = Math.max(now, record.wildcardUpdatedAt + 1);
@@ -1739,6 +1896,7 @@ const markReloadNeededWildcardForTabs = async (
         record.wildcardReloadHint = allDocuments
             ? null
             : effectiveReloadHint;
+        record.freshNavigationObservedAt = 0;
         record.safeDocumentIds.clear();
         for ( const entry of record.documents.values() ) {
             entry.reason = normalizedReason;
@@ -1757,21 +1915,28 @@ const markReloadNeededWildcardForTabs = async (
     return changed;
 };
 
-const getTabFrameSnapshot = async (tabId, fallbackUrl = '') => {
-    const urls = new Set();
+const getTabFrameSnapshot = async (
+    tabId,
+    fallbackUrl = '',
+    expectedTopDocumentId = ''
+) => {
+    let topUrl = typeof fallbackUrl === 'string' ? fallbackUrl : '';
+    const childUrls = new Set();
     let topDocumentId = '';
-    if ( typeof fallbackUrl === 'string' && fallbackUrl !== '' ) {
-        urls.add(fallbackUrl);
-    }
     const getAllFrames = browser.webNavigation?.getAllFrames;
     if ( typeof getAllFrames !== 'function' ) {
-        return { urls: Array.from(urls), topDocumentId };
+        return {
+            topUrl,
+            childUrls: [],
+            urls: [ topUrl ],
+            topDocumentId,
+            complete: false,
+        };
     }
     try {
         const frames = await getAllFrames({ tabId });
         for ( const frame of frames || [] ) {
             if ( typeof frame?.url !== 'string' || frame.url === '' ) { continue; }
-            urls.add(frame.url);
             if (
                 frame?.frameId === 0 &&
                 typeof frame?.documentId === 'string' &&
@@ -1782,15 +1947,35 @@ const getTabFrameSnapshot = async (tabId, fallbackUrl = '') => {
                 )
             ) {
                 topDocumentId = frame.documentId;
+                topUrl = frame.url;
+                continue;
             }
+            childUrls.add(frame.url);
         }
     } catch (reason) {
         if ( isRuntimeRefreshTargetUnavailableError(reason) ) {
-            return { urls: [], topDocumentId: '' };
+            return {
+                topUrl: '',
+                childUrls: [],
+                urls: [ '' ],
+                topDocumentId: '',
+                complete: false,
+            };
         }
         throw new Error(`reloadNeeded/getAllFrames/${reason}`);
     }
-    return { urls: Array.from(urls), topDocumentId };
+    childUrls.delete(topUrl);
+    const normalizedChildUrls = Array.from(childUrls);
+    return {
+        topUrl,
+        childUrls: normalizedChildUrls,
+        urls: [ topUrl, ...normalizedChildUrls ],
+        topDocumentId,
+        complete: topDocumentId !== '' && (
+            expectedTopDocumentId === '' ||
+            topDocumentId === expectedTopDocumentId
+        ),
+    };
 };
 
 const listTabFrameUrls = async (tabId, fallbackUrl = '') =>
@@ -1860,7 +2045,7 @@ const markTabsForRemoteScriptletReload = async (
         const tabId = Number.isInteger(tab?.id) ? tab.id : -1;
         if ( tabId < 0 ) { return null; }
         const frameSnapshot = await getTabFrameSnapshot(tabId, tab?.url || '');
-        if ( shouldReloadForFrameUrls(frameSnapshot.urls, reloadHint) === false ) {
+        if ( shouldReloadForFrameUrls(frameSnapshot, reloadHint) === false ) {
             return null;
         }
         return { tabId, topDocumentId: frameSnapshot.topDocumentId };
@@ -1895,7 +2080,7 @@ const markTabsForRemoteScriptletReload = async (
         const current = await getTabFrameSnapshot(candidate.tabId);
         if (
             current.topDocumentId !== '' &&
-            shouldReloadForFrameUrls(current.urls, reloadHint) &&
+            shouldReloadForFrameUrls(current, reloadHint) &&
             await markReloadNeededForTab(
             candidate.tabId,
             REMOTE_SCRIPTLET_RELOAD_REASON,
@@ -2857,8 +3042,6 @@ import {
     updateUserRules,
 } from './ruleset-manager.js';
 
-import { normalizeContentScriptRegistration } from './injectable-registration.js';
-
 import {
     ALARM_NAME as COMMUNITY_ALARM_NAME,
     COMMUNITY_URL_DEFAULT,
@@ -2906,11 +3089,23 @@ import {
     waitForInjectableRegistrationIdle,
 } from './scripting-manager.js';
 import {
+    createReloadSensitiveRegistrationState,
+    diffReloadSensitiveRegistrationStates,
+    getReloadSensitiveRegistrationDirectives,
+    getReloadSensitiveResourcePaths,
     hasTimedOutRegistrationOperations,
+    normalizeContentScriptRegistration,
+    normalizeReloadSensitiveRegistrationState,
+    legacyReloadSensitiveMigrationHint,
     recordPackagedStaticScriptletReloadTransition,
     unregisterAndVerifyManagedRegistrations,
     waitForTimedOutRegistrationOperations,
 } from './injectable-registration.js';
+import {
+    RELOAD_SENSITIVE_ARTIFACT_MANIFEST_FINGERPRINT,
+    RELOAD_SENSITIVE_ARTIFACT_MANIFEST_PATH,
+    RELOAD_SENSITIVE_ARTIFACT_MANIFEST_VERSION,
+} from './reload-sensitive-artifact-meta.js';
 import { setToolbarIcon, toggleToolbarIcon } from './action.js';
 import { createSingleFlightRunner } from './single-flight.js';
 
@@ -6617,6 +6812,144 @@ async function hashRuntimeStateText(serialized) {
     return `fallback-${(hash >>> 0).toString(16)}`;
 }
 
+let reloadSensitiveArtifactManifestPromise;
+
+const normalizeReloadSensitiveArtifactManifest = async input => {
+    if (
+        input instanceof Object === false ||
+        input.version !== RELOAD_SENSITIVE_ARTIFACT_MANIFEST_VERSION ||
+        input.fingerprint !== RELOAD_SENSITIVE_ARTIFACT_MANIFEST_FINGERPRINT ||
+        input.resources instanceof Object === false ||
+        Array.isArray(input.resources)
+    ) {
+        return null;
+    }
+    const entries = Object.entries(input.resources).sort((a, b) =>
+        a[0].localeCompare(b[0])
+    );
+    if ( entries.length === 0 || entries.length > 2048 ) { return null; }
+    const resources = {};
+    for ( const [ path, digest ] of entries ) {
+        if (
+            /^\/(?:js\/scripting\/scriptlet-token|rulesets\/scripting\/scriptlet)\/[a-z0-9._/-]+\.js$/i.test(path) === false ||
+            path.includes('..') ||
+            typeof digest !== 'string' ||
+            /^[0-9a-f]{64}$/.test(digest) === false
+        ) {
+            return null;
+        }
+        resources[path] = digest;
+    }
+    const fingerprint = await hashRuntimeStateText(JSON.stringify(resources));
+    if ( fingerprint !== RELOAD_SENSITIVE_ARTIFACT_MANIFEST_FINGERPRINT ) {
+        return null;
+    }
+    return { resources };
+};
+
+const getReloadSensitiveArtifactManifest = () => {
+    if ( reloadSensitiveArtifactManifestPromise instanceof Promise ) {
+        return reloadSensitiveArtifactManifestPromise;
+    }
+    const operation = (async () => {
+        const url = runtime.getURL(
+            RELOAD_SENSITIVE_ARTIFACT_MANIFEST_PATH.replace(/^\//, '')
+        );
+        const response = await fetch(url);
+        if ( response.ok === false ) {
+            throw new Error(
+                `reload-sensitive artifact manifest fetch failed (${response.status})`
+            );
+        }
+        const normalized = await normalizeReloadSensitiveArtifactManifest(
+            await response.json()
+        );
+        if ( normalized === null ) {
+            throw new Error('invalid reload-sensitive artifact manifest');
+        }
+        return normalized;
+    })();
+    reloadSensitiveArtifactManifestPromise = operation.catch(reason => {
+        reloadSensitiveArtifactManifestPromise = undefined;
+        throw reason;
+    });
+    return reloadSensitiveArtifactManifestPromise;
+};
+
+const getCurrentReloadSensitiveRegistrationState = async registrations => {
+    const manifest = await getReloadSensitiveArtifactManifest();
+    const resourcePaths = getReloadSensitiveResourcePaths(registrations);
+    const resourceDigests = new Map();
+    for ( const path of resourcePaths ) {
+        const digest = manifest.resources[path];
+        if ( typeof digest !== 'string' ) {
+            throw new Error(`missing reload-sensitive artifact digest for ${path}`);
+        }
+        resourceDigests.set(path, digest);
+    }
+    const state = createReloadSensitiveRegistrationState(
+        registrations,
+        resourceDigests
+    );
+    if ( state === null ) {
+        throw new Error('unable to build reload-sensitive registration state');
+    }
+    return state;
+};
+
+const normalizePersistedReloadSensitiveRegistrationState = input => {
+    if (
+        input instanceof Object === false ||
+        input.schema !== 1 ||
+        typeof input.artifactFingerprint !== 'string'
+    ) {
+        return null;
+    }
+    const state = normalizeReloadSensitiveRegistrationState(input.state);
+    return state === null
+        ? null
+        : {
+            schema: 1,
+            artifactFingerprint: input.artifactFingerprint,
+            state,
+        };
+};
+
+const reloadSensitiveStateMatchesRegistrations = (state, registrations) => {
+    const normalized = normalizeReloadSensitiveRegistrationState(state);
+    if ( normalized === null ) { return false; }
+    return JSON.stringify(normalized.registrations.map(entry =>
+        entry.directive
+    )) === JSON.stringify(
+        getReloadSensitiveRegistrationDirectives(registrations)
+    );
+};
+
+const persistReloadSensitiveRegistrationState = async state => {
+    const normalized = normalizeReloadSensitiveRegistrationState(state);
+    if ( normalized === null ) {
+        throw new Error('invalid reload-sensitive registration acknowledgement');
+    }
+    const next = {
+        schema: 1,
+        artifactFingerprint:
+            RELOAD_SENSITIVE_ARTIFACT_MANIFEST_FINGERPRINT,
+        state: normalized,
+        acknowledgedAt: Date.now(),
+    };
+    const before = normalizePersistedReloadSensitiveRegistrationState(
+        await readLocalStrict(RELOAD_SENSITIVE_REGISTRATION_STATE_KEY)
+    );
+    if (
+        before?.artifactFingerprint === next.artifactFingerprint &&
+        JSON.stringify(before?.state) === JSON.stringify(next.state)
+    ) {
+        return false;
+    }
+    await localWrite(RELOAD_SENSITIVE_REGISTRATION_STATE_KEY, next);
+    return true;
+};
+
 async function readLocalStrict(key) {
     if ( browser.storage?.local?.get === undefined ) {
         throw new Error('local storage API unavailable');
@@ -6694,6 +7027,7 @@ async function getRegisteredContentScriptState() {
         .map(normalizeContentScriptRegistration)
         .sort((a, b) => a.id.localeCompare(b.id));
     return {
+        registrations: canonical,
         count: canonical.length,
         fingerprint: await hashRuntimeStateText(JSON.stringify(canonical)),
     };
@@ -6805,9 +7139,9 @@ async function persistInjectableRuntimeState(fingerprint) {
     if (
         before?.version === next.version &&
         before?.fingerprint === next.fingerprint &&
-        before?.registrationCount === next.registrationCount &&
-        before?.registrationFingerprint === next.registrationFingerprint &&
-        before?.managedUserScriptFingerprint === next.managedUserScriptFingerprint &&
+            before?.registrationCount === next.registrationCount &&
+            before?.registrationFingerprint === next.registrationFingerprint &&
+            before?.managedUserScriptFingerprint === next.managedUserScriptFingerprint &&
         JSON.stringify(before?.managedUserScriptIds || []) ===
             JSON.stringify(next.managedUserScriptIds)
     ) {
@@ -6823,6 +7157,7 @@ async function canReusePersistedInjectableRuntimeState() {
     const [
         currentFingerprint,
         storedState,
+        storedReloadSensitiveStateValue,
         registrationState,
         managedUserScriptState,
         sandboxDnrDirty,
@@ -6836,6 +7171,8 @@ async function canReusePersistedInjectableRuntimeState() {
     ] = await Promise.all([
         computeInjectableRuntimeFingerprint(),
         readLocalStrict(INJECTABLE_RUNTIME_STATE_KEY).catch(() => null),
+        readLocalStrict(RELOAD_SENSITIVE_REGISTRATION_STATE_KEY)
+            .catch(() => null),
         getRegisteredContentScriptState().catch(() => null),
         getManagedUserScriptState().catch(() => null),
         readLocalStrict(SANDBOX_DNR_DIRTY_KEY).catch(() => true),
@@ -6872,6 +7209,10 @@ async function canReusePersistedInjectableRuntimeState() {
                     ? 'user.main'
                     : '',
             ].filter(Boolean).sort();
+    const storedReloadSensitiveState =
+        normalizePersistedReloadSensitiveRegistrationState(
+            storedReloadSensitiveStateValue
+        );
     const reusable =
         isDurableDirtyMarker(sandboxDnrDirty) === false &&
         isDurableDirtyMarker(sandboxRegistrationDirty) === false &&
@@ -6892,6 +7233,12 @@ async function canReusePersistedInjectableRuntimeState() {
             mayExistMarker: managedUserScriptsMayExist,
         }) &&
         storedState.version === getCurrentVersion() &&
+        storedReloadSensitiveState?.artifactFingerprint ===
+            RELOAD_SENSITIVE_ARTIFACT_MANIFEST_FINGERPRINT &&
+        reloadSensitiveStateMatchesRegistrations(
+            storedReloadSensitiveState?.state,
+            registrationState.registrations
+        ) &&
         storedState.fingerprint === currentFingerprint &&
         Number(storedState.registrationCount) >= 0 &&
         Number(storedState.registrationCount) === registrationState.count &&
@@ -6978,9 +7325,25 @@ function assertAuthoritativeInjectableSyncResult(
 const applyContentRegistrationReloadHint = async (
     registerResult,
     reloadHint,
-    { refreshWildcard = false } = {}
+    {
+        refreshWildcard = false,
+        acknowledgeRegistrationState,
+    } = {}
 ) => {
     if ( reloadHint instanceof Object === false ) {
+        if (
+            contentRegistrationResultIsVerified(registerResult) &&
+            typeof acknowledgeRegistrationState === 'function'
+        ) {
+            await acknowledgeRegistrationState();
+            // The registration manager journals its raw Chrome mutation plan
+            // before applying it. On an extension reload Chrome may require
+            // identical registrations to be recreated, while the authoritative
+            // digest transition below is empty. Clear that now-stale journal
+            // only after the rebuilt state has been verified and acknowledged.
+            await localRemove(PENDING_REMOTE_SCRIPTLET_RELOAD_HINT_KEY);
+            return { marked: false, acknowledged: true };
+        }
         return { marked: false, acknowledged: false };
     }
     await markTabsForRemoteScriptletReload(reloadHint, { refreshWildcard });
@@ -6990,6 +7353,9 @@ const applyContentRegistrationReloadHint = async (
         // then-current document instead of treating an intervening reload as
         // safe.
         return { marked: true, acknowledged: false };
+    }
+    if ( typeof acknowledgeRegistrationState === 'function' ) {
+        await acknowledgeRegistrationState();
     }
     await localRemove(PENDING_REMOTE_SCRIPTLET_RELOAD_HINT_KEY);
     return { marked: true, acknowledged: true };
@@ -7040,9 +7406,25 @@ async function syncInjectablesAndRefreshTabsNow({
             reloadHint: null,
         };
     }
-    const persistedRuntimeStateBeforeSync = runtimeOnly === false
-        ? await readLocalStrict(INJECTABLE_RUNTIME_STATE_KEY)
-        : null;
+    const [
+        persistedRuntimeStateBeforeSync,
+        persistedReloadSensitiveStateValueBeforeSync,
+        pendingExtensionUpdateVersionValue,
+    ] = runtimeOnly === false
+        ? await Promise.all([
+            readLocalStrict(INJECTABLE_RUNTIME_STATE_KEY),
+            readLocalStrict(RELOAD_SENSITIVE_REGISTRATION_STATE_KEY),
+            readLocalStrict(PENDING_EXTENSION_UPDATE_VERSION_KEY),
+        ])
+        : [ null, null, null ];
+    const persistedReloadSensitiveStateBeforeSync =
+        normalizePersistedReloadSensitiveRegistrationState(
+            persistedReloadSensitiveStateValueBeforeSync
+        );
+    const pendingExtensionUpdateVersion =
+        normalizePendingExtensionUpdateVersion(
+            pendingExtensionUpdateVersionValue
+        );
     let registerResult = true;
     let reloadHint = null;
     let registrationChanged = false;
@@ -7058,6 +7440,7 @@ async function syncInjectablesAndRefreshTabsNow({
     let sandboxLastError = '';
     let sandboxRevision = 0;
     let refreshCustomFilters = false;
+    let currentReloadSensitiveRegistrationState = null;
     if ( runtimeOnly !== true ) {
         const sandboxResult = await ensureUserScriptMessagingWorld()
             .then(() => reconcileSandboxFilters()).then(result => ({
@@ -7137,67 +7520,65 @@ async function syncInjectablesAndRefreshTabsNow({
                 lastError: String(reason || 'register injectables failed'),
             }));
         registerResult = injectableResult;
-        let refreshRegistrationReloadWildcard =
-            registerResult instanceof Object &&
-            registerResult.remoteScriptletReloadHint instanceof Object;
+        let refreshRegistrationReloadWildcard = false;
         registrationChanged = registerResult instanceof Object && registerResult.ok === true && (
             (Number(registerResult.toAddCount) || 0) !== 0 ||
             (Number(registerResult.toUpdateCount) || 0) !== 0 ||
             (Number(registerResult.toRemoveCount) || 0) !== 0 ||
             registerResult.cosmeticDataChanged === true
         );
-        reloadHint = registerResult instanceof Object && registerResult.ok === true
-            ? registerResult.remoteScriptletReloadHint ?? null
-            : null;
-        const pendingReloadHint = await readLocalStrict(
-            PENDING_REMOTE_SCRIPTLET_RELOAD_HINT_KEY
-        );
-        if ( pendingReloadHint instanceof Object ) {
-            reloadHint = mergeRemoteScriptletReloadHints(
-                reloadHint,
-                pendingReloadHint
-            );
-        }
+        // The manager's registration delta is a crash journal, not proof that
+        // live documents saw different code. Chrome recreates identical dynamic
+        // registrations after an unpacked reload/update, which makes that raw
+        // delta look like a blanket add. The persisted desired state plus the
+        // current directive/resource digests below are the authoritative source
+        // for user-facing reload requirements.
         if ( contentRegistrationResultIsUncertain(registerResult) ) {
             scheduleUncertainContentRegistrationReconciliation();
         }
-        const extensionVersionChanged =
-            registerResult instanceof Object &&
-            registerResult.ok === true &&
-            (
-                persistedRuntimeStateBeforeSync instanceof Object === false ||
-                typeof persistedRuntimeStateBeforeSync.version !== 'string' ||
-                persistedRuntimeStateBeforeSync.version !== getCurrentVersion()
-            );
-        if ( extensionVersionChanged ) {
+        if ( registerResult instanceof Object && registerResult.ok === true ) {
             if (
                 typeof browser.scripting?.getRegisteredContentScripts !==
                     'function'
             ) {
                 throw new Error(
-                    'registered content-script API unavailable for update reload'
+                    'registered content-script API unavailable for artifact audit'
                 );
             }
-            const registeredAfterUpdate =
+            const registeredAfterSync =
                 await browser.scripting.getRegisteredContentScripts();
-            if ( Array.isArray(registeredAfterUpdate) === false ) {
+            if ( Array.isArray(registeredAfterSync) === false ) {
                 throw new Error(
-                    'invalid registered content-script update response'
+                    'invalid registered content-script artifact response'
                 );
             }
-            const updateReloadHint =
-                packagedStaticScriptletReloadHintFromRegistrations(
-                    registeredAfterUpdate
+            currentReloadSensitiveRegistrationState =
+                await getCurrentReloadSensitiveRegistrationState(
+                    registeredAfterSync
+                );
+            const previousReloadSensitiveRegistrationState =
+                persistedReloadSensitiveStateBeforeSync?.state ||
+                normalizeReloadSensitiveRegistrationState(
+                    persistedRuntimeStateBeforeSync
+                        ?.reloadSensitiveRegistrationState
+                );
+            let updateReloadHint = previousReloadSensitiveRegistrationState
+                ? diffReloadSensitiveRegistrationStates(
+                    previousReloadSensitiveRegistrationState,
+                    currentReloadSensitiveRegistrationState
+                )
+                : legacyReloadSensitiveMigrationHint(
+                    pendingExtensionUpdateVersion?.to === getCurrentVersion()
+                        ? pendingExtensionUpdateVersion.from
+                        : persistedRuntimeStateBeforeSync?.version,
+                    currentReloadSensitiveRegistrationState
                 );
             if ( updateReloadHint instanceof Object ) {
                 refreshRegistrationReloadWildcard = true;
-                reloadHint = mergeRemoteScriptletReloadHints(
-                    reloadHint,
-                    updateReloadHint
-                );
-                // The version transition is not a registration mutation, so
-                // the manager cannot journal it. Persist before touching tabs;
-                // a worker death must replay the exact document-start hint.
+                reloadHint = updateReloadHint;
+                // A byte-only asset transition is not a registration mutation,
+                // so the manager cannot journal it. Persist before touching
+                // tabs; a worker death must replay the exact scoped hint.
                 await localWrite(
                     PENDING_REMOTE_SCRIPTLET_RELOAD_HINT_KEY,
                     reloadHint
@@ -7206,6 +7587,17 @@ async function syncInjectablesAndRefreshTabsNow({
         }
         await applyContentRegistrationReloadHint(registerResult, reloadHint, {
             refreshWildcard: refreshRegistrationReloadWildcard,
+            acknowledgeRegistrationState:
+                currentReloadSensitiveRegistrationState === null
+                    ? undefined
+                    : async () => {
+                        await persistReloadSensitiveRegistrationState(
+                            currentReloadSensitiveRegistrationState
+                        );
+                        await clearPendingExtensionUpdateVersion(
+                            getCurrentVersion()
+                        );
+                    },
         });
         const [
             sandboxAppliedRevisionValue,
@@ -7253,12 +7645,13 @@ async function syncInjectablesAndRefreshTabsNow({
         registrationChanged === true ||
         refreshCustomFilters === true ||
         runtimeFingerprint !== lastInjectableRuntimeFingerprint;
-    // `refreshOpenTabs: false` avoids work on an ordinary worker wake, but it
-    // must not suppress the one-time live migration after an extension update
-    // or a previously failed reconciliation.
-    const shouldRefreshOpenTabs = runtimeStateChanged && (
-        refreshOpenTabs === true || runtimeOnly === false
-    );
+    // Startup/update registration repair is for future documents. Existing
+    // pages keep their current runtime until natural navigation, matching MV3
+    // lifecycle semantics and avoiding a full-tab scan or customer-facing
+    // reload prompt merely because Chrome recreated identical registrations.
+    // Explicit settings, permission, and recovery flows opt in with true.
+    const shouldRefreshOpenTabs =
+        runtimeStateChanged && refreshOpenTabs === true;
     let runtimeRefreshSucceeded = true;
     if ( shouldRefreshOpenTabs ) {
         try {
@@ -8545,6 +8938,58 @@ function enforceEntitlement(options) {
 function getCurrentVersion() {
     return runtime.getManifest().version;
 }
+
+const normalizeExtensionVersion = value =>
+    typeof value === 'string' && /^\d+\.\d+\.\d+(?:[.-][0-9A-Za-z.-]+)?$/.test(value)
+        ? value
+        : '';
+
+const normalizePendingExtensionUpdateVersion = value => {
+    if ( value?.schema !== 1 ) { return null; }
+    const from = normalizeExtensionVersion(value.from);
+    const to = normalizeExtensionVersion(value.to);
+    return from !== '' && to !== '' && from !== to
+        ? { schema: 1, from, to }
+        : null;
+};
+
+let extensionUpdateVersionJournalTail = Promise.resolve();
+
+const rememberPendingExtensionUpdateVersion = (fromValue, toValue) => {
+    const from = normalizeExtensionVersion(fromValue);
+    const to = normalizeExtensionVersion(toValue);
+    if ( from === '' || to === '' || from === to ) {
+        return Promise.resolve(false);
+    }
+    const run = extensionUpdateVersionJournalTail.catch(() => {}).then(async () => {
+        const before = normalizePendingExtensionUpdateVersion(
+            await readLocalStrict(PENDING_EXTENSION_UPDATE_VERSION_KEY)
+        );
+        const next = {
+            schema: 1,
+            from: before?.from || from,
+            to,
+            queuedAt: Date.now(),
+        };
+        if ( before?.from === next.from && before?.to === next.to ) {
+            return false;
+        }
+        await localWrite(PENDING_EXTENSION_UPDATE_VERSION_KEY, next);
+        return true;
+    });
+    extensionUpdateVersionJournalTail = run;
+    return run;
+};
+
+const clearPendingExtensionUpdateVersion = async expectedTo => {
+    await extensionUpdateVersionJournalTail.catch(() => {});
+    const before = normalizePendingExtensionUpdateVersion(
+        await readLocalStrict(PENDING_EXTENSION_UPDATE_VERSION_KEY)
+    );
+    if ( before === null || before.to !== expectedTo ) { return false; }
+    await localRemove(PENDING_EXTENSION_UPDATE_VERSION_KEY);
+    return true;
+};
 
 /******************************************************************************/
 
@@ -10895,6 +11340,10 @@ async function startSession({
     // The default rulesets may have changed, find out new ruleset to enable,
     // obsolete ruleset to remove.
     if (isNewVersion) {
+        await rememberPendingExtensionUpdateVersion(
+            rulesetConfig.version,
+            currentVersion
+        );
         ubolLog(`Version change: ${rulesetConfig.version} => ${currentVersion}`);
         rulesetConfig.version = currentVersion;
     }
@@ -11693,6 +12142,13 @@ browser.webNavigation?.onCommitted?.addListener(details => {
             documentId
         );
         const outermostPrerender = prerenderRecord instanceof Object;
+        const currentFrameUrls = forwardBack || outermostPrerender
+            ? await getTabFrameSnapshot(
+                details.tabId,
+                details.url || '',
+                documentId
+            )
+            : null;
         await Promise.all([
             clearReloadNeededStateForTab(details.tabId, {
                 currentDocumentId: documentId,
@@ -11701,6 +12157,7 @@ browser.webNavigation?.onCommitted?.addListener(details => {
                 forwardBack,
                 outermostPrerender,
                 prerenderCommittedAt: Number(prerenderRecord?.committedAt) || 0,
+                currentFrameUrls,
             }),
             clearReplacedDeferredRuntimeDocuments(details.tabId, documentId),
         ]);
@@ -11838,6 +12295,12 @@ async function openInstallWelcomeAfterAllowlistReady(url) {
 
 runtime.onInstalled.addListener((details) => {
     configureUninstallURL(`extension_${details?.reason || 'install'}`);
+    if ( details?.reason === 'update' ) {
+        rememberPendingExtensionUpdateVersion(
+            details.previousVersion,
+            getCurrentVersion()
+        ).catch(ubolErr);
+    }
     if (details?.reason !== 'install') { return; }
     const url = INSTALL_WELCOME_URL;
     const installResetQueued = localWrite(PENDING_INSTALL_RULESET_RESET_KEY, {

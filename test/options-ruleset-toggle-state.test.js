@@ -235,7 +235,7 @@ test('customer-facing locale additions are valid and contain no replacement ques
     assert.equal(messages.optionsFilterExtraProtectionLabel.message, label);
     assert.equal(messages.uiPartial.message, partial);
     assert.doesNotMatch(messages.optionsFilterExtraProtectionNote.message, /\?/);
-    assert.ok(messages.popupRuntimeHotfixReloadNotice.message.length > 10);
+    assert.ok(messages.popupRuntimeReloadNotice.message.length > 10);
     assert.ok(messages.popupRuntimeHotfixReloadButton.message.length > 2);
   }
 
@@ -247,7 +247,7 @@ test('customer-facing locale additions are valid and contain no replacement ques
     const messages = JSON.parse(raw);
     assert.doesNotMatch(messages.optionsFilterExtraProtectionLabel.message, /\?/);
     assert.doesNotMatch(messages.optionsFilterExtraProtectionNote.message, /\?/);
-    assert.ok(messages.popupRuntimeHotfixReloadNotice.message.length > 10);
+    assert.ok(messages.popupRuntimeReloadNotice.message.length > 10);
     assert.ok(messages.popupRuntimeHotfixReloadButton.message.length > 2);
   }
 
@@ -257,8 +257,9 @@ test('customer-facing locale additions are valid and contain no replacement ques
   );
   assert.match(
     popupSource,
-    /t\([\s\S]{0,160}"popupRuntimeHotfixReloadNotice"[\s\S]{0,160}"popupRuntimeReloadNotice"/
+    /runtimeNoticeTextEl\.textContent = t\("popupRuntimeReloadNotice"\)/
   );
+  assert.doesNotMatch(popupSource, /t\("popupRuntimeHotfixReloadNotice"\)/);
   assert.match(popupSource, /t\("popupRuntimeHotfixReloadButton"\)/);
   assert.doesNotMatch(
     popupSource,

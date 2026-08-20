@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
+import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -261,6 +262,30 @@ const getAllSessionRules = page =>
     });
   }));
 
+const getTabIdForUrl = (page, url) =>
+  page.evaluate(targetUrl => new Promise((resolve, reject) => {
+    chrome.tabs.query({ url: targetUrl }, tabs => {
+      const err = chrome.runtime.lastError;
+      if (err) {
+        reject(new Error(err.message));
+        return;
+      }
+      resolve(Number.isInteger(tabs?.[0]?.id) ? tabs[0].id : -1);
+    });
+  }), url);
+
+const getRegisteredContentScriptCount = page =>
+  page.evaluate(() => new Promise((resolve, reject) => {
+    chrome.scripting.getRegisteredContentScripts(entries => {
+      const err = chrome.runtime.lastError;
+      if (err) {
+        reject(new Error(err.message));
+        return;
+      }
+      resolve(Array.isArray(entries) ? entries.length : -1);
+    });
+  }));
+
 const waitForOptionsStartup = page =>
   waitFor('extension startup', async () => {
     const response = await sendRuntimeMessage(page, { what: 'getOptionsPageData' });
@@ -316,6 +341,20 @@ const run = async () => {
   assert(extensionIdFromKey !== '', 'packaged manifest is missing a stable extension key');
 
   const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'talon-chrome-smoke-'));
+  const lifecycleServer = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end('<!doctype html><title>Talon lifecycle smoke</title>');
+  });
+  await new Promise((resolve, reject) => {
+    lifecycleServer.once('error', reject);
+    lifecycleServer.listen(0, '127.0.0.1', resolve);
+  });
+  const lifecycleAddress = lifecycleServer.address();
+  assert(
+    lifecycleAddress && typeof lifecycleAddress === 'object',
+    'lifecycle smoke server did not expose an address'
+  );
+  const lifecycleUrl = `http://127.0.0.1:${lifecycleAddress.port}/`;
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath: browserPath,
     headless: headed === false,
@@ -411,6 +450,78 @@ const run = async () => {
       startupErrors.length === 0,
       `background startup errors: ${startupErrors.join(' | ')}`
     );
+
+    const lifecyclePage = await context.newPage();
+    await lifecyclePage.goto(lifecycleUrl, { waitUntil: 'domcontentloaded' });
+    let lifecycleTabId = await getTabIdForUrl(page, lifecycleUrl);
+    assert(lifecycleTabId >= 0, 'lifecycle smoke tab was not discoverable');
+    const reloadStateBefore = await sendRuntimeMessage(page, {
+      what: 'getTabReloadNeededState',
+      tabId: lifecycleTabId,
+    });
+    assert(
+      reloadStateBefore?.reason === '',
+      `fresh install unexpectedly requested a tab reload: ${JSON.stringify(reloadStateBefore)}`
+    );
+
+    // An unpacked-extension reload/update makes Chrome rebuild dynamic
+    // content-script registrations. Exercise the same startup repair path in
+    // this isolated profile without disabling the command-line-loaded test
+    // extension itself.
+    const registeredCountBeforeRepair =
+      await getRegisteredContentScriptCount(page);
+    assert(
+      registeredCountBeforeRepair > 0,
+      'lifecycle smoke had no registered content scripts to repair'
+    );
+    await page.evaluate(() => new Promise((resolve, reject) => {
+      chrome.scripting.unregisterContentScripts(() => {
+        const err = chrome.runtime.lastError;
+        if (err) {
+          reject(new Error(err.message));
+          return;
+        }
+        chrome.alarms.create('injectable-startup-retry', {
+          when: Date.now() + 100,
+        });
+        resolve(true);
+      });
+    }));
+    await waitFor('startup registration repair', async () => {
+      const count = await getRegisteredContentScriptCount(page);
+      return count === registeredCountBeforeRepair ? true : null;
+    }, { timeoutMs: 45000 });
+    await waitFor('startup registration journal settlement', async () => {
+      const state = await getLocalStorage(page, [
+        'pendingRemoteScriptletReloadHintV1',
+      ]);
+      return state?.pendingRemoteScriptletReloadHintV1 === undefined
+        ? true
+        : null;
+    }, { timeoutMs: 45000 });
+    lifecycleTabId = await getTabIdForUrl(page, lifecycleUrl);
+    assert(lifecycleTabId >= 0, 'lifecycle smoke tab disappeared after extension reload');
+    const reloadStateAfter = await sendRuntimeMessage(page, {
+      what: 'getTabReloadNeededState',
+      tabId: lifecycleTabId,
+    });
+    assert(
+      reloadStateAfter?.reason === '',
+      `same-version registration repair requested a tab reload: ${JSON.stringify(reloadStateAfter)}`
+    );
+    const reloadLedgerAfter = await getLocalStorage(page, [
+      'reloadNeededTabsV1',
+      'pendingRemoteScriptletReloadHintV1',
+    ]);
+    assert(
+      reloadLedgerAfter?.reloadNeededTabsV1 === undefined,
+      `same-version registration repair left a reload ledger: ${JSON.stringify(reloadLedgerAfter)}`
+    );
+    assert(
+      reloadLedgerAfter?.pendingRemoteScriptletReloadHintV1 === undefined,
+      `same-version registration repair left a pending journal: ${JSON.stringify(reloadLedgerAfter)}`
+    );
+    await lifecyclePage.close();
 
     const wakeStateBefore = await getLocalStorage(page, [
       'injectableSyncDiagnosticsV1',
@@ -567,6 +678,7 @@ const run = async () => {
     console.log(`Chrome smoke passed with ${path.basename(browserPath)} and extension ${extensionIdFromKey}.`);
   } finally {
     await context.close().catch(() => {});
+    await new Promise(resolve => lifecycleServer.close(resolve));
     await fs.rm(userDataDir, { recursive: true, force: true }).catch(() => {});
   }
 };

@@ -1,10 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
+    createReloadSensitiveRegistrationState,
     contentScriptRegistrationsEqual,
+    diffReloadSensitiveRegistrationStates,
+    getReloadSensitiveResourcePaths,
     isPackagedStaticScriptletRegistration,
+    isReloadSensitiveScriptletRegistration,
+    legacyReloadSensitiveMigrationHint,
+    normalizeReloadSensitiveRegistrationState,
     recordPackagedStaticScriptletReloadTransition,
     runInjectableRegistrationFlow,
     unregisterAndVerifyManagedRegistrations,
@@ -14,6 +23,11 @@ import {
   normalizeRemoteScriptletReloadHint,
   shouldReloadForFrameUrls,
 } from '../js/remote-scriptlet-hotfix.js';
+import {
+  RELOAD_SENSITIVE_ARTIFACT_MANIFEST_FINGERPRINT,
+  RELOAD_SENSITIVE_ARTIFACT_MANIFEST_PATH,
+  RELOAD_SENSITIVE_ARTIFACT_MANIFEST_VERSION,
+} from '../js/reload-sensitive-artifact-meta.js';
 
 test('injectable registration retries once after a failed register and reports recovery', async () => {
   let buildPlanCalls = 0;
@@ -612,6 +626,7 @@ test('enabling a packaged static scriptlet records matching live documents for r
       id: 'annoyances-overlays.main',
       matches: ['*://*.example.com/*'],
       excludeMatches: ['*://account.example.com/*'],
+      allFrames: true,
     }],
   });
   assert.equal(
@@ -661,6 +676,7 @@ test('disabling a packaged static scriptlet records old matches and excludes Tal
       id: 'annoyances-overlays.isolated',
       matches: ['*://*.example.com/*'],
       excludeMatches: [],
+      allFrames: true,
     }],
     after: [],
   });
@@ -689,11 +705,265 @@ test('Talon site-fixes MAIN registration participates in the static scriptlet re
       id: 'talon-site-fixes-main',
       matches: ['*://french-stream.one/*'],
       excludeMatches: [],
+      allFrames: true,
     }],
   });
   assert.equal(
     shouldReloadForFrameUrls([['https', '://', 'french-stream.one', '/watch'].join('')], hint),
     true
+  );
+});
+
+test('reload-sensitive artifact state ignores version-only updates and scopes byte changes', () => {
+  const target = {
+    id: 'annoyances-overlays.main',
+    js: ['/rulesets/scripting/scriptlet/main/annoyances-overlays.js'],
+    matches: ['*://*.example.com/*'],
+    excludeMatches: [],
+    allFrames: true,
+    runAt: 'document_start',
+    world: 'MAIN',
+  };
+  const unrelated = {
+    id: 'remote-scriptlet.isolated.example-token',
+    js: ['/js/scripting/scriptlet-token/example-token.js'],
+    matches: ['*://*.example.org/*'],
+    excludeMatches: [],
+    allFrames: true,
+    runAt: 'document_start',
+    world: 'ISOLATED',
+  };
+  const youtube = {
+    id: 'talon-youtube-ad-skip',
+    js: ['/js/scripting/youtube-ad-skip.js'],
+    matches: ['*://*.youtube.com/*'],
+    excludeMatches: [],
+    runAt: 'document_start',
+  };
+  const beforeDigests = new Map([
+    [target.js[0], '1'.repeat(64)],
+    [unrelated.js[0], '2'.repeat(64)],
+  ]);
+  const unchanged = createReloadSensitiveRegistrationState(
+    [target, unrelated, youtube],
+    beforeDigests
+  );
+  const sameVersionOnlyState = createReloadSensitiveRegistrationState(
+    [target, unrelated, youtube],
+    beforeDigests
+  );
+
+  assert.ok(normalizeReloadSensitiveRegistrationState(unchanged));
+  assert.equal(
+    diffReloadSensitiveRegistrationStates(unchanged, sameVersionOnlyState),
+    null
+  );
+  assert.equal(isReloadSensitiveScriptletRegistration(youtube), false);
+  assert.deepEqual(getReloadSensitiveResourcePaths([target, unrelated, youtube]), [
+    unrelated.js[0],
+    target.js[0],
+  ]);
+
+  const changed = createReloadSensitiveRegistrationState(
+    [target, unrelated, youtube],
+    new Map([
+      [target.js[0], '3'.repeat(64)],
+      [unrelated.js[0], '2'.repeat(64)],
+    ])
+  );
+  const hint = diffReloadSensitiveRegistrationStates(unchanged, changed);
+  assert.deepEqual(hint.before.map(entry => entry.id), [target.id]);
+  assert.deepEqual(hint.after.map(entry => entry.id), [target.id]);
+  assert.equal(
+    shouldReloadForFrameUrls(['https://www.example.com/article'], hint),
+    true
+  );
+  assert.equal(
+    shouldReloadForFrameUrls(['https://www.example.org/article'], hint),
+    false
+  );
+});
+
+test('reload-sensitive state diffs registration additions, removals, and scope changes', () => {
+  const pathName = '/rulesets/scripting/scriptlet/main/ublock-filters.js';
+  const digest = new Map([[pathName, 'a'.repeat(64)]]);
+  const beforeDirective = {
+    id: 'ublock-filters.main',
+    js: [pathName],
+    matches: ['*://*.before.example/*'],
+    excludeMatches: [],
+    runAt: 'document_start',
+    world: 'MAIN',
+  };
+  const afterDirective = {
+    ...beforeDirective,
+    matches: ['*://*.after.example/*'],
+  };
+  const before = createReloadSensitiveRegistrationState([beforeDirective], digest);
+  const after = createReloadSensitiveRegistrationState([afterDirective], digest);
+  const changed = diffReloadSensitiveRegistrationStates(before, after);
+  assert.deepEqual(changed.before.map(entry => entry.matches), [beforeDirective.matches]);
+  assert.deepEqual(changed.after.map(entry => entry.matches), [afterDirective.matches]);
+
+  const empty = createReloadSensitiveRegistrationState([], new Map());
+  assert.deepEqual(
+    diffReloadSensitiveRegistrationStates(before, empty).before.map(entry => entry.id),
+    [beforeDirective.id]
+  );
+  assert.deepEqual(
+    diffReloadSensitiveRegistrationStates(empty, after).after.map(entry => entry.id),
+    [afterDirective.id]
+  );
+});
+
+test('reload hints honor top-frame-only scriptlet scope', () => {
+  const topFrameOnly = {
+    before: [],
+    after: [{
+      id: 'remote-scriptlet.main.trusted-prevent-dom-bypass',
+      matches: ['*://*.example.com/*'],
+      excludeMatches: [],
+      allFrames: false,
+    }],
+  };
+  const frameScope = {
+    topUrl: 'https://www.example.org/article',
+    childUrls: [['https', '://', 'player.example.com', '/embed'].join('')],
+  };
+  assert.equal(shouldReloadForFrameUrls(frameScope, topFrameOnly), false);
+  assert.equal(shouldReloadForFrameUrls(frameScope, {
+    before: [],
+    after: [{ ...topFrameOnly.after[0], allFrames: true }],
+  }), true);
+});
+
+test('legacy digest migration is exact for every shipped pre-digest family', () => {
+  const staticDirective = {
+    id: 'ublock-filters.main',
+    js: ['/rulesets/scripting/scriptlet/main/ublock-filters.js'],
+    matches: ['*://*/*'],
+    excludeMatches: [
+      '*://*.youtube.com/*',
+      '*://*.youtube-nocookie.com/*',
+    ],
+    allFrames: true,
+    runAt: 'document_start',
+    world: 'MAIN',
+  };
+  const frenchStreamDirective = {
+    id: 'talon-site-fixes-main',
+    js: ['/rulesets/scripting/scriptlet/main/talon-site-fixes.js'],
+    matches: ['*://french-stream.one/*'],
+    excludeMatches: [],
+    allFrames: true,
+    runAt: 'document_start',
+    world: 'MAIN',
+  };
+  const remoteDirective = {
+    id: 'remote-scriptlet.isolated.example-token',
+    js: ['/js/scripting/scriptlet-token/ublock-filters.set-constant.js'],
+    matches: ['*://*.example.net/*'],
+    excludeMatches: [],
+    allFrames: true,
+    runAt: 'document_start',
+    world: 'ISOLATED',
+  };
+  const state = createReloadSensitiveRegistrationState(
+    [staticDirective, frenchStreamDirective, remoteDirective],
+    new Map([
+      [staticDirective.js[0], '1'.repeat(64)],
+      [frenchStreamDirective.js[0], '2'.repeat(64)],
+      [remoteDirective.js[0], '3'.repeat(64)],
+    ])
+  );
+  const ids = version => legacyReloadSensitiveMigrationHint(version, state)
+    ?.after.map(directive => directive.id).sort() || [];
+
+  assert.deepEqual(ids('0.1.5'), [
+    'remote-scriptlet.isolated.example-token',
+    'talon-site-fixes-main',
+    'ublock-filters.main',
+  ]);
+  for (const version of ['0.1.6', '0.1.7']) {
+    assert.deepEqual(ids(version), [
+      'talon-site-fixes-main',
+      'ublock-filters.main',
+    ]);
+  }
+  for (const version of ['0.1.8', '0.1.9', '0.1.10']) {
+    assert.deepEqual(ids(version), ['talon-site-fixes-main']);
+  }
+  assert.deepEqual(ids('0.1.11'), []);
+  assert.deepEqual(ids('0.1.14'), []);
+
+  const changed = createReloadSensitiveRegistrationState(
+    [staticDirective],
+    new Map([[staticDirective.js[0], '4'.repeat(64)]])
+  );
+  const updateHint = diffReloadSensitiveRegistrationStates(
+    createReloadSensitiveRegistrationState(
+      [staticDirective],
+      new Map([[staticDirective.js[0], '1'.repeat(64)]])
+    ),
+    changed
+  );
+  assert.equal(shouldReloadForFrameUrls([
+    ['https', '://', 'www.youtube.com', '/watch?v=placeholder'].join(''),
+  ], updateHint), false);
+  assert.equal(shouldReloadForFrameUrls([
+    ['https', '://', 'www.youtube-nocookie.com', '/embed/placeholder'].join(''),
+  ], updateHint), false);
+});
+
+test('reload-sensitive artifact inventory exactly hashes the packaged scriptlet surface', async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const manifest = JSON.parse(await fs.readFile(
+    path.join(root, RELOAD_SENSITIVE_ARTIFACT_MANIFEST_PATH.replace(/^\//, '')),
+    'utf8'
+  ));
+  assert.equal(manifest.version, RELOAD_SENSITIVE_ARTIFACT_MANIFEST_VERSION);
+  assert.equal(
+    manifest.fingerprint,
+    RELOAD_SENSITIVE_ARTIFACT_MANIFEST_FINGERPRINT
+  );
+  const entries = Object.entries(manifest.resources);
+  assert.deepEqual(entries.map(([resourcePath]) => resourcePath),
+    entries.map(([resourcePath]) => resourcePath).slice().sort());
+  assert.ok(entries.length > 500);
+  for (const [resourcePath, expectedDigest] of entries) {
+    assert.match(
+      resourcePath,
+      /^\/(?:js\/scripting\/scriptlet-token|rulesets\/scripting\/scriptlet)\/[a-z0-9._/-]+\.js$/i
+    );
+    assert.equal(resourcePath.includes('..'), false);
+    const bytes = await fs.readFile(path.join(root, resourcePath.slice(1)));
+    assert.equal(
+      createHash('sha256')
+        .update(bytes.toString('utf8').replace(/\r\n?/g, '\n'))
+        .digest('hex'),
+      expectedDigest,
+      resourcePath
+    );
+  }
+  const expectedPaths = [];
+  const collect = async relativeDir => {
+    const dir = path.join(root, relativeDir);
+    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+      const child = path.join(relativeDir, entry.name);
+      if (entry.isDirectory()) {
+        await collect(child);
+      } else if (entry.isFile() && entry.name.endsWith('.js')) {
+        expectedPaths.push(`/${child.replaceAll('\\', '/')}`);
+      }
+    }
+  };
+  await collect('js/scripting/scriptlet-token');
+  await collect('rulesets/scripting/scriptlet');
+  expectedPaths.sort();
+  assert.deepEqual(entries.map(([resourcePath]) => resourcePath), expectedPaths);
+  assert.equal(
+    createHash('sha256').update(JSON.stringify(manifest.resources)).digest('hex'),
+    manifest.fingerprint
   );
 });
 

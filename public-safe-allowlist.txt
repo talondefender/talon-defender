@@ -378,6 +378,7 @@ js/prevent-popup.js
 js/punycode.js
 js/redirect-resources.js
 js/regional-rulesets.js
+js/reload-sensitive-artifact-meta.js
 js/remote-scriptlet-hotfix.js
 js/report.js
 js/resources/attribute.js
@@ -1048,6 +1049,7 @@ rulesets/regex/ublock-badware.json
 rulesets/regex/ublock-filters.json
 rulesets/regex/ukr-0.json
 rulesets/regex/vie-1.json
+rulesets/reload-sensitive-artifacts.json
 rulesets/ruleset-details.json
 rulesets/ruleset-license-policy.json
 rulesets/scripting/generic/adguard-mobile.js
@@ -1339,6 +1341,7 @@ scripts/audit-public-content.mjs
 scripts/audit-public-safe.mjs
 scripts/audit-release-hygiene.mjs
 scripts/chrome-smoke.mjs
+scripts/generate-reload-sensitive-artifacts.mjs
 scripts/package-edge-extension.mjs
 scripts/package-extension.mjs
 scripts/package-public-source.ps1

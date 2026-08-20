@@ -42,6 +42,227 @@ export const isPackagedStaticScriptletRegistration = entry =>
     typeof entry.js[0] === 'string' &&
     PACKAGED_STATIC_SCRIPTLET_PATH_RE.test(entry.js[0]);
 
+const REMOTE_SCRIPTLET_ID_PREFIX = 'remote-scriptlet.';
+export const RELOAD_SENSITIVE_REGISTRATION_STATE_SCHEMA = 1;
+const MAX_RELOAD_SENSITIVE_REGISTRATIONS = 1024;
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
+
+export const isReloadSensitiveScriptletRegistration = entry =>
+    isPackagedStaticScriptletRegistration(entry) || (
+        entry instanceof Object &&
+        typeof entry.id === 'string' &&
+        entry.id.startsWith(REMOTE_SCRIPTLET_ID_PREFIX)
+    );
+
+export const getReloadSensitiveResourcePaths = registrations => {
+    if ( Array.isArray(registrations) === false ) { return []; }
+    const paths = new Set();
+    for ( const entry of registrations ) {
+        if ( isReloadSensitiveScriptletRegistration(entry) === false ) {
+            continue;
+        }
+        const normalized = normalizeContentScriptRegistration(entry);
+        for ( const path of normalized.js ) {
+            if ( typeof path === 'string' && path !== '' ) {
+                paths.add(path);
+            }
+        }
+    }
+    return Array.from(paths).sort();
+};
+
+export const getReloadSensitiveRegistrationDirectives = registrations =>
+    Array.isArray(registrations)
+        ? registrations
+            .filter(isReloadSensitiveScriptletRegistration)
+            .map(normalizeContentScriptRegistration)
+            .sort((a, b) => a.id.localeCompare(b.id))
+        : [];
+
+const normalizeResourceDigestMap = input => {
+    const source = input instanceof Map
+        ? input
+        : input instanceof Object && Array.isArray(input) === false
+            ? new Map(Object.entries(input))
+            : null;
+    if ( source === null ) { return null; }
+    const out = new Map();
+    for ( const [ path, digest ] of source ) {
+        const normalizedPath = typeof path === 'string' && path !== ''
+            ? path.startsWith('/') ? path : `/${path}`
+            : '';
+        if (
+            normalizedPath === '' ||
+            typeof digest !== 'string' ||
+            SHA256_HEX_RE.test(digest) === false
+        ) {
+            return null;
+        }
+        out.set(normalizedPath, digest);
+    }
+    return out;
+};
+
+export const createReloadSensitiveRegistrationState = (
+    registrations,
+    resourceDigests
+) => {
+    if ( Array.isArray(registrations) === false ) { return null; }
+    const normalizedDigests = normalizeResourceDigestMap(resourceDigests);
+    if ( normalizedDigests === null ) { return null; }
+    const entries = [];
+    for ( const entry of registrations ) {
+        if ( isReloadSensitiveScriptletRegistration(entry) === false ) {
+            continue;
+        }
+        const directive = normalizeContentScriptRegistration(entry);
+        const resources = [];
+        for ( const path of directive.js ) {
+            const sha256 = normalizedDigests.get(path);
+            if ( sha256 === undefined ) { return null; }
+            resources.push({ path, sha256 });
+        }
+        entries.push({ directive, resources });
+    }
+    if ( entries.length > MAX_RELOAD_SENSITIVE_REGISTRATIONS ) { return null; }
+    entries.sort((a, b) => a.directive.id.localeCompare(b.directive.id));
+    const ids = new Set();
+    for ( const entry of entries ) {
+        if ( entry.directive.id === '' || ids.has(entry.directive.id) ) {
+            return null;
+        }
+        ids.add(entry.directive.id);
+    }
+    return {
+        version: RELOAD_SENSITIVE_REGISTRATION_STATE_SCHEMA,
+        registrations: entries,
+    };
+};
+
+export const normalizeReloadSensitiveRegistrationState = input => {
+    if (
+        input instanceof Object === false ||
+        input.version !== RELOAD_SENSITIVE_REGISTRATION_STATE_SCHEMA ||
+        Array.isArray(input.registrations) === false ||
+        input.registrations.length > MAX_RELOAD_SENSITIVE_REGISTRATIONS
+    ) {
+        return null;
+    }
+    const registrations = [];
+    const resourceDigests = new Map();
+    for ( const entry of input.registrations ) {
+        if (
+            entry instanceof Object === false ||
+            entry.directive instanceof Object === false ||
+            Array.isArray(entry.resources) === false
+        ) {
+            return null;
+        }
+        registrations.push(entry.directive);
+        for ( const resource of entry.resources ) {
+            if (
+                resource instanceof Object === false ||
+                typeof resource.path !== 'string' ||
+                typeof resource.sha256 !== 'string' ||
+                SHA256_HEX_RE.test(resource.sha256) === false
+            ) {
+                return null;
+            }
+            const normalizedPath = resource.path.startsWith('/')
+                ? resource.path
+                : `/${resource.path}`;
+            const before = resourceDigests.get(normalizedPath);
+            if ( before !== undefined && before !== resource.sha256 ) {
+                return null;
+            }
+            resourceDigests.set(normalizedPath, resource.sha256);
+        }
+    }
+    return createReloadSensitiveRegistrationState(
+        registrations,
+        resourceDigests
+    );
+};
+
+export const diffReloadSensitiveRegistrationStates = (before, after) => {
+    const normalizedBefore = normalizeReloadSensitiveRegistrationState(before);
+    const normalizedAfter = normalizeReloadSensitiveRegistrationState(after);
+    if ( normalizedBefore === null || normalizedAfter === null ) { return null; }
+    const beforeById = new Map(normalizedBefore.registrations.map(
+        entry => [ entry.directive.id, entry ]
+    ));
+    const afterById = new Map(normalizedAfter.registrations.map(
+        entry => [ entry.directive.id, entry ]
+    ));
+    const hint = { before: [], after: [] };
+    const ids = Array.from(new Set([
+        ...beforeById.keys(),
+        ...afterById.keys(),
+    ])).sort();
+    for ( const id of ids ) {
+        const previous = beforeById.get(id);
+        const current = afterById.get(id);
+        if ( JSON.stringify(previous) === JSON.stringify(current) ) { continue; }
+        if ( previous ) { hint.before.push(previous.directive); }
+        if ( current ) { hint.after.push(current.directive); }
+    }
+    return hint.before.length === 0 && hint.after.length === 0
+        ? null
+        : hint;
+};
+
+const LEGACY_ALL_SCRIPTLET_MIGRATION_VERSIONS = new Set([
+    '0.1.0',
+    '0.1.1',
+    '0.1.2',
+    '0.1.3',
+    '0.1.4',
+    '0.1.5',
+]);
+const LEGACY_STATIC_SCRIPTLET_MIGRATION_VERSIONS = new Set([
+    '0.1.6',
+    '0.1.7',
+]);
+const LEGACY_FRENCH_STREAM_MIGRATION_VERSIONS = new Set([
+    '0.1.8',
+    '0.1.9',
+    '0.1.10',
+]);
+
+export const legacyReloadSensitiveMigrationHint = (
+    previousVersion,
+    currentState
+) => {
+    const normalized = normalizeReloadSensitiveRegistrationState(currentState);
+    if ( normalized === null || typeof previousVersion !== 'string' ) {
+        return null;
+    }
+    let entries = [];
+    if ( LEGACY_ALL_SCRIPTLET_MIGRATION_VERSIONS.has(previousVersion) ) {
+        entries = normalized.registrations;
+    } else if (
+        LEGACY_STATIC_SCRIPTLET_MIGRATION_VERSIONS.has(previousVersion)
+    ) {
+        entries = normalized.registrations.filter(entry =>
+            entry.resources.some(resource =>
+                resource.path.startsWith('/rulesets/scripting/scriptlet/')
+            )
+        );
+    } else if (
+        LEGACY_FRENCH_STREAM_MIGRATION_VERSIONS.has(previousVersion)
+    ) {
+        entries = normalized.registrations.filter(entry =>
+            entry.directive.id === 'talon-site-fixes-main'
+        );
+    }
+    return entries.length === 0
+        ? null
+        : {
+            before: [],
+            after: entries.map(entry => entry.directive),
+        };
+};
+
 export const recordPackagedStaticScriptletReloadTransition = (
     hint,
     before,

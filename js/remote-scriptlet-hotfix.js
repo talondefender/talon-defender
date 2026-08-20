@@ -50,6 +50,10 @@ const normalizeDirective = input => {
         id,
         matches,
         excludeMatches,
+        // Pre-schema hints did not retain this field. Treat those as
+        // all-frame for compatibility/fail-closed migration; every newly
+        // generated canonical registration supplies an explicit boolean.
+        allFrames: input.allFrames !== false,
     };
 };
 
@@ -146,6 +150,31 @@ export const urlMatchesRemoteScriptletReloadHint = (url, hint) => {
 };
 
 export const shouldReloadForFrameUrls = (frameUrls, hint) => {
-    if ( Array.isArray(frameUrls) === false ) { return false; }
-    return frameUrls.some(url => urlMatchesRemoteScriptletReloadHint(url, hint));
+    const normalizedHint = normalizeRemoteScriptletReloadHint(hint);
+    if ( normalizedHint === null ) { return false; }
+    let topUrl = '';
+    let childUrls = [];
+    if ( Array.isArray(frameUrls) ) {
+        [ topUrl = '', ...childUrls ] = frameUrls;
+    } else if ( frameUrls instanceof Object ) {
+        topUrl = typeof frameUrls.topUrl === 'string' ? frameUrls.topUrl : '';
+        childUrls = Array.isArray(frameUrls.childUrls)
+            ? frameUrls.childUrls
+            : [];
+    } else {
+        return false;
+    }
+    const allUrls = [ topUrl, ...childUrls ];
+    for ( const directive of [
+        ...normalizedHint.before,
+        ...normalizedHint.after,
+    ] ) {
+        const urls = directive.allFrames === false
+            ? [ topUrl ]
+            : allUrls;
+        if ( urls.some(url => directiveMatchesUrl(directive, url)) ) {
+            return true;
+        }
+    }
+    return false;
 };

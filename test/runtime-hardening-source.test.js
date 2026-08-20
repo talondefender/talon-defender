@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import vm from 'node:vm';
 
 import {
+  isPackagedStaticScriptletDirectiveId,
   isRemoteScriptletDirectiveId,
   mergeRemoteScriptletReloadHints,
   normalizeRemoteScriptletReloadHint,
@@ -436,7 +437,7 @@ test('custom-filter DNR state remains dirty until Chrome confirms reconciliation
   assert.match(backgroundSource, /sandboxRegistrationSucceeded && sandboxDnrSucceeded/);
   assert.match(backgroundSource, /isDurableDirtyMarker\(sandboxLiveStateDirty\) \|\|[\s\S]*sandboxAppliedRevision !== sandboxRevision/);
   const fingerprintPersist = backgroundSource.indexOf(
-    'await persistInjectableRuntimeState(runtimeFingerprint)'
+    'await persistInjectableRuntimeState('
   );
   const liveRevisionAcknowledge = backgroundSource.indexOf(
     'SANDBOX_REGISTRATION_APPLIED_REVISION_KEY',
@@ -1676,7 +1677,7 @@ test('extension source keeps only bounded static runtime lanes', async () => {
     new RegExp(`${privateComparatorToken} Break|${privateComparatorToken}-break|youtube ${privateComparatorToken} break|C:\\\\dev`, 'i')
   );
 });
-test('startup reuses persisted registrations without refreshing open tabs on worker wake', async () => {
+test('startup registration repair never refreshes already-open tabs unless the caller opts in', async () => {
   const source = await readSource('js/background.js');
   const startBlock = source.slice(
     source.indexOf('async function startNow({ forcePermissionSync = false } = {}) {'),
@@ -1687,12 +1688,34 @@ test('startup reuses persisted registrations without refreshing open tabs on wor
     countMatches(startBlock, /syncInjectablesAndRefreshTabs\(\{ runtimeOnly: false \}\)\.catch\(ubolErr\)/g),
     0
   );
+  const startupInjectableSource = sourceBetween(
+    source,
+    'async function ensureStartupInjectableState()',
+    'function registerInjectablesIfEntitled()'
+  );
+  const syncSource = sourceBetween(
+    source,
+    'async function syncInjectablesAndRefreshTabsNow',
+    'function syncInjectablesAndRefreshTabs'
+  );
   assert.match(startBlock, /const startSessionRequired = process\.wakeupRun === false[\s\S]*if \( startSessionRequired \) \{[\s\S]*await startSession\(\{/);
   assert.match(startBlock, /startupInjectableResult = await ensureStartupInjectableState\(\);/);
   assert.match(startBlock, /await scheduleStartupInjectableRetry\(\);[\s\S]*throw reason;/);
   assert.doesNotMatch(startBlock, /registerInjectablesIfEntitled\(\)\.catch\(ubolErr\);/);
   assert.doesNotMatch(startBlock, /syncYouTubeWatchControlCookies/);
   assert.doesNotMatch(startBlock, /syncPrivateYouTubeRuntimeLaneRules/);
+  assert.match(
+    startupInjectableSource,
+    /runtimeOnly: false,[\s\S]*refreshOpenTabs: false/
+  );
+  assert.match(
+    syncSource,
+    /const shouldRefreshOpenTabs =\s*runtimeStateChanged && refreshOpenTabs === true;/
+  );
+  assert.doesNotMatch(
+    syncSource,
+    /refreshOpenTabs === true \|\| runtimeOnly === false/
+  );
   assert.doesNotMatch(source, /requestCompatibilityBackoff/);
   assert.doesNotMatch(source, /runtime\.onConnect\.addListener/);
 });
@@ -2267,6 +2290,7 @@ test('tab closure during getAllFrames counts as a successful open-tab refresh pa
       deferRuntimeDocuments,
       deferredRuntimeDocuments,
       ensureDeferredRuntimeDocumentsHydrated,
+      getTabFrameSnapshot,
       FRENCH_STREAM_SITE_FIX_HOSTNAME,
       getActiveTopDocumentIdentity,
       getFilteringMode,
@@ -2315,6 +2339,12 @@ test('tab closure during getAllFrames counts as a successful open-tab refresh pa
     deferRuntimeDocuments: async () => true,
     deferredRuntimeDocuments: new Map(),
     ensureDeferredRuntimeDocumentsHydrated: async () => true,
+    getTabFrameSnapshot: async (_tabId, url) => ({
+      topUrl: url,
+      childUrls: [testHttpsUrl('restored-child.example')],
+      urls: [url, testHttpsUrl('restored-child.example')],
+      topDocumentId: 'restored-document',
+    }),
     FRENCH_STREAM_SITE_FIX_HOSTNAME: 'french-stream.one',
     getActiveTopDocumentIdentity: async () => null,
     getFilteringMode: async () => 2,
@@ -3027,6 +3057,7 @@ test('unfreeze, activation fallback, and BFCache restore queue authoritative rec
       clearReplacedDeferredRuntimeDocuments,
       deferredFrozenRuntimeTabIds,
       ensureDeferredRuntimeDocumentsHydrated,
+      getTabFrameSnapshot,
       lifecycleRuntimeRefreshSuspendedForPaywall,
       isEntitled,
       isFullyInitialized,
@@ -3053,6 +3084,15 @@ test('unfreeze, activation fallback, and BFCache restore queue authoritative rec
     },
     deferredFrozenRuntimeTabIds,
     ensureDeferredRuntimeDocumentsHydrated: async () => true,
+    getTabFrameSnapshot: async (_tabId, url) => ({
+      topUrl: url,
+      childUrls: [testHttpsUrl('restored-child.example')],
+      urls: [
+        url,
+        testHttpsUrl('restored-child.example'),
+      ],
+      topDocumentId: 'restored-document',
+    }),
     lifecycleRuntimeRefreshSuspendedForPaywall: false,
     isEntitled: () => true,
     isFullyInitialized: Promise.resolve(),
@@ -3123,6 +3163,7 @@ test('unfreeze, activation fallback, and BFCache restore queue authoritative rec
         forwardBack: false,
         outermostPrerender: false,
         prerenderCommittedAt: 0,
+        currentFrameUrls: null,
       },
     },
     {
@@ -3156,6 +3197,15 @@ test('unfreeze, activation fallback, and BFCache restore queue authoritative rec
         forwardBack: true,
         outermostPrerender: false,
         prerenderCommittedAt: 0,
+        currentFrameUrls: {
+          topUrl: testHttpsUrl('restored.example'),
+          childUrls: [testHttpsUrl('restored-child.example')],
+          urls: [
+            testHttpsUrl('restored.example'),
+            testHttpsUrl('restored-child.example'),
+          ],
+          topDocumentId: 'restored-document',
+        },
       },
     },
     {
@@ -3515,7 +3565,7 @@ test('entitled restore is bounded and drains suspended lifecycle intent after re
   );
 });
 
-test('remote scriptlet reload intent remains durable until exact-document marking succeeds', async () => {
+test('registration reload intent uses authoritative digests and clears stale Chrome re-registration journals', async () => {
   const background = await readSource('js/background.js');
   const manager = await readSource('js/scripting-manager.js');
   const markerSource = sourceBetween(
@@ -3528,6 +3578,11 @@ test('remote scriptlet reload intent remains durable until exact-document markin
     'async function syncInjectablesAndRefreshTabsNow',
     'setAdminRuntimeReconciler'
   );
+  const applySource = sourceBetween(
+    background,
+    'const applyContentRegistrationReloadHint',
+    'function scheduleUncertainContentRegistrationReconciliation'
+  );
   assert.match(
     manager,
     /browser\.storage\.local\.get\([\s\S]*PENDING_REMOTE_SCRIPTLET_RELOAD_HINT_KEY[\s\S]*mergeRemoteScriptletReloadHints\([\s\S]*browser\.storage\.local\.set\(markerPatch\)/
@@ -3537,13 +3592,27 @@ test('remote scriptlet reload intent remains durable until exact-document markin
   assert.match(markerSource, /persist: false,[\s\S]*updateBadge: false,[\s\S]*updateWildcard: false/);
   assert.equal(countMatches(markerSource, /persistReloadNeededTabs\(\)/g), 1);
   assertOrderedIncludes(syncSource, [
-    'readLocalStrict(\n            PENDING_REMOTE_SCRIPTLET_RELOAD_HINT_KEY',
+    'await getCurrentReloadSensitiveRegistrationState(',
+    'diffReloadSensitiveRegistrationStates(',
     'await applyContentRegistrationReloadHint(registerResult, reloadHint, {',
-    'await persistInjectableRuntimeState(runtimeFingerprint);',
-  ], 'durable remote reload handoff');
+    'await persistInjectableRuntimeState(',
+  ], 'content-derived reload handoff');
+  assert.doesNotMatch(
+    syncSource,
+    /reloadHint\s*=\s*registerResult[\s\S]{0,200}remoteScriptletReloadHint/
+  );
+  assert.doesNotMatch(
+    syncSource,
+    /mergeRemoteScriptletReloadHints\(\s*reloadHint,\s*pendingReloadHint/
+  );
+  assertOrderedIncludes(applySource, [
+    'contentRegistrationResultIsVerified(registerResult)',
+    'await acknowledgeRegistrationState();',
+    'await localRemove(PENDING_REMOTE_SCRIPTLET_RELOAD_HINT_KEY);',
+  ], 'stale registration journal acknowledgement');
 });
 
-test('packaged scriptlet reload intent survives updates, paywall removal, and navigation races', async () => {
+test('packaged scriptlet reload intent is content-derived and survives paywall/navigation races', async () => {
   const source = await readSource('js/background.js');
   const reloadHintHelperSource = sourceBetween(
     source,
@@ -3590,15 +3659,25 @@ test('packaged scriptlet reload intent survives updates, paywall removal, and na
   assert.match(paywallSource, /\.\.\.packagedScriptletReloadResults/);
 
   assertOrderedIncludes(syncSource, [
-    'const extensionVersionChanged =',
     'await browser.scripting.getRegisteredContentScripts();',
-    'packagedStaticScriptletReloadHintFromRegistrations(',
+    'await getCurrentReloadSensitiveRegistrationState(',
+    'diffReloadSensitiveRegistrationStates(',
     'PENDING_REMOTE_SCRIPTLET_RELOAD_HINT_KEY,',
     'await applyContentRegistrationReloadHint(registerResult, reloadHint, {',
-  ], 'extension-update packaged-scriptlet handoff');
+  ], 'content-derived packaged-scriptlet handoff');
+  assert.doesNotMatch(syncSource, /const extensionVersionChanged\s*=/);
+  assert.doesNotMatch(
+    syncSource,
+    /packagedStaticScriptletReloadHintFromRegistrations\(\s*registeredAfter/
+  );
   assert.match(reuseSource, /CONTENT_SCRIPT_REGISTRATION_MUTATION_JOURNAL_KEY/);
   assert.match(reuseSource, /isDurableDirtyMarker\(contentScriptRegistrationMutationJournal\) === false/);
-  assert.match(markerSource, /const current = await getTabFrameSnapshot\(candidate\.tabId\);[\s\S]*shouldReloadForFrameUrls\(current\.urls, reloadHint\)[\s\S]*markReloadNeededForTab/);
+  assert.match(
+    reuseSource,
+    /storedReloadSensitiveState\?\.artifactFingerprint[\s\S]*RELOAD_SENSITIVE_ARTIFACT_MANIFEST_FINGERPRINT/
+  );
+  assert.match(reuseSource, /reloadSensitiveStateMatchesRegistrations\(/);
+  assert.match(markerSource, /const current = await getTabFrameSnapshot\(candidate\.tabId\);[\s\S]*shouldReloadForFrameUrls\(current, reloadHint\)[\s\S]*markReloadNeededForTab/);
 
   const buildReloadHintHelper = new Function('deps', `
     const {
@@ -3630,11 +3709,57 @@ test('packaged scriptlet reload intent survives updates, paywall removal, and na
   );
   assert.deepEqual(paywallRemovalHint.after, []);
 
-  const versionTransitionHint = buildReloadHint([remoteRegistration]);
-  assert.deepEqual(versionTransitionHint.before, []);
+});
+
+test('extension update provenance survives startup races until digest acknowledgement', async () => {
+  const source = await readSource('js/background.js');
+  const journalSource = sourceBetween(
+    source,
+    'const normalizeExtensionVersion',
+    '/******************************************************************************/'
+  );
+  const syncSource = sourceBetween(
+    source,
+    'async function syncInjectablesAndRefreshTabsNow',
+    'function syncInjectablesAndRefreshTabs'
+  );
+  const stored = new Map();
+  const buildHarness = new Function('deps', `
+    const { localRemove, localWrite, readLocalStrict,
+      PENDING_EXTENSION_UPDATE_VERSION_KEY } = deps;
+    ${journalSource}
+    return {
+      clearPendingExtensionUpdateVersion,
+      normalizePendingExtensionUpdateVersion,
+      rememberPendingExtensionUpdateVersion,
+    };
+  `);
+  const harness = buildHarness({
+    PENDING_EXTENSION_UPDATE_VERSION_KEY: 'pendingVersion',
+    readLocalStrict: async key => stored.get(key),
+    localWrite: async (key, value) => { stored.set(key, structuredClone(value)); },
+    localRemove: async key => { stored.delete(key); },
+  });
+
+  // startSession and runtime.onInstalled can report different immediate
+  // predecessors. The earliest unacknowledged version must win so skipped
+  // releases receive the full exact migration.
+  await Promise.all([
+    harness.rememberPendingExtensionUpdateVersion('0.1.8', '0.1.14'),
+    harness.rememberPendingExtensionUpdateVersion('0.1.13', '0.1.14'),
+  ]);
   assert.deepEqual(
-    versionTransitionHint.after.map(entry => entry.id),
-    [remoteRegistration.id]
+    harness.normalizePendingExtensionUpdateVersion(stored.get('pendingVersion')),
+    { schema: 1, from: '0.1.8', to: '0.1.14' }
+  );
+  assert.equal(await harness.clearPendingExtensionUpdateVersion('0.1.13'), false);
+  assert.equal(stored.has('pendingVersion'), true);
+  assert.equal(await harness.clearPendingExtensionUpdateVersion('0.1.14'), true);
+  assert.equal(stored.has('pendingVersion'), false);
+
+  assert.match(
+    syncSource,
+    /pendingExtensionUpdateVersion\?\.to === getCurrentVersion\(\)[\s\S]*pendingExtensionUpdateVersion\.from[\s\S]*persistedRuntimeStateBeforeSync\?\.version/
   );
 });
 
@@ -4956,7 +5081,7 @@ test('reload markers and deferred document intent are durable and document-bound
   const buildHarness = new Function('browser', `
     const reloadNeededTabs = new Map();
     const RELOAD_NEEDED_TABS_STORAGE_KEY = 'reloadNeededTabsV1';
-    const RELOAD_NEEDED_STORAGE_SCHEMA = 2;
+    const RELOAD_NEEDED_STORAGE_SCHEMA = 4;
     const MAX_RELOAD_NEEDED_DOCUMENTS_PER_TAB = 8;
     const MAX_RELOAD_SAFE_DOCUMENTS_PER_TAB = 16;
     const RELOAD_SAFE_DOCUMENTS_SESSION_KEY_PREFIX = 'reloadSafeDocumentsV1:';
@@ -4966,7 +5091,8 @@ test('reload markers and deferred document intent are durable and document-bound
     const createReloadNeededTabRecord = () => ({
       documents: new Map(), safeDocumentIds: new Set(),
       wildcardReason: '', wildcardUpdatedAt: 0,
-      wildcardAllDocuments: false, wildcardReloadHint: null, revision: 0,
+      wildcardAllDocuments: false, wildcardReloadHint: null,
+      freshNavigationObservedAt: 0, revision: 0,
     });
     const pruneReloadNeededTabRecord = record => {
       const documents = Array.from(record.documents.values())
@@ -5037,6 +5163,339 @@ test('reload markers and deferred document intent are durable and document-bound
   );
 });
 
+test('schema-2/3 migration baselines lifecycle blanket documents and preserves real reload requirements', async () => {
+  const source = await readSource('js/background.js');
+  const legacyHelperSource = sourceBetween(
+    source,
+    'const isLegacyBlanketVersionReloadHint',
+    'const ensureReloadNeededTabsHydrated'
+  );
+  const reloadSource = sourceBetween(
+    source,
+    'const ensureReloadNeededTabsHydrated',
+    'const deferredRuntimeDocumentKey'
+  );
+  const markerSource = sourceBetween(
+    source,
+    'const markReloadNeededForTab = async (',
+    'const markReloadNeededWildcardForTabs'
+  );
+  const stored = {
+    reloadNeededTabsV1: {
+      version: 2,
+      tabs: {
+        12: {
+          wildcardReason: 'remoteScriptletHotfix',
+          wildcardUpdatedAt: Date.now(),
+          wildcardAllDocuments: false,
+          wildcardReloadHint: {
+            before: [],
+            after: [
+              'ublock-filters.main',
+              'ublock-filters.isolated',
+            ].map(id => ({
+              id,
+              matches: ['*://*/*'],
+              excludeMatches: [],
+            })).concat({
+              id: 'remote-scriptlet.isolated.ublock-filters.set-constant',
+              matches: ['*://*.example.com/*'],
+              excludeMatches: [],
+            }),
+          },
+          revision: 1,
+          documents: [{
+            reason: 'remoteScriptletHotfix',
+            documentId: 'legacy-blanket-document',
+            updatedAt: Date.now(),
+            active: true,
+          }, {
+            reason: 'sandbox_user_script_changed',
+            documentId: 'legitimate-sandbox-document',
+            updatedAt: Date.now() + 1,
+            active: false,
+          }],
+        },
+        13: {
+          wildcardReason: 'sandbox_user_script_changed',
+          wildcardUpdatedAt: Date.now(),
+          wildcardAllDocuments: true,
+          wildcardReloadHint: null,
+          revision: 2,
+          documents: [{
+            reason: 'sandbox_user_script_changed',
+            documentId: 'active-sandbox-document',
+            updatedAt: Date.now(),
+            active: true,
+          }],
+        },
+        14: {
+          wildcardReason: 'remoteScriptletHotfix',
+          wildcardUpdatedAt: Date.now(),
+          wildcardAllDocuments: false,
+          wildcardReloadHint: {
+            before: [],
+            after: [
+              'ublock-filters.main',
+              'ublock-filters.isolated',
+            ].map(id => ({
+              id,
+              matches: ['*://*/*'],
+              excludeMatches: [],
+            })),
+          },
+          revision: 1,
+          documents: [{
+            reason: 'remoteScriptletHotfix',
+            documentId: 'minimal-blanket-document',
+            updatedAt: Date.now(),
+            active: true,
+          }, {
+            reason: 'sandbox_user_script_changed',
+            documentId: 'minimal-blanket-sandbox-document',
+            updatedAt: Date.now() + 1,
+            active: false,
+          }],
+        },
+      },
+    },
+  };
+  const browser = {
+    storage: {
+      local: {
+        async get(key) { return { [key]: stored[key] }; },
+        async set(patch) { Object.assign(stored, patch); },
+        async remove(key) { delete stored[key]; },
+      },
+    },
+  };
+  const buildHarness = new Function('deps', `
+    const {
+      browser,
+      isPackagedStaticScriptletDirectiveId,
+      isRemoteScriptletDirectiveId,
+      normalizeRemoteScriptletReloadHint,
+    } = deps;
+    const REMOTE_SCRIPTLET_RELOAD_REASON = 'remoteScriptletHotfix';
+    const reloadNeededTabs = new Map();
+    const RELOAD_NEEDED_TABS_STORAGE_KEY = 'reloadNeededTabsV1';
+    const RELOAD_NEEDED_STORAGE_SCHEMA = 4;
+    const MAX_RELOAD_NEEDED_DOCUMENTS_PER_TAB = 8;
+    const MAX_RELOAD_SAFE_DOCUMENTS_PER_TAB = 16;
+    const RELOAD_SAFE_DOCUMENTS_SESSION_KEY_PREFIX = 'reloadSafeDocumentsV1:';
+    const reloadSafeDocumentsSessionKey = tabId =>
+      RELOAD_SAFE_DOCUMENTS_SESSION_KEY_PREFIX + tabId;
+    const persistReloadSafeDocumentsForTab = async () => true;
+    const createReloadNeededTabRecord = () => ({
+      documents: new Map(), safeDocumentIds: new Set(),
+      wildcardReason: '', wildcardUpdatedAt: 0,
+      wildcardAllDocuments: false, wildcardReloadHint: null,
+      freshNavigationObservedAt: 0, revision: 0,
+    });
+    const pruneReloadNeededTabRecord = () => {};
+    let reloadNeededTabsHydrationPromise;
+    let reloadNeededTabsPersistenceTail = Promise.resolve();
+    ${legacyHelperSource}
+    ${reloadSource}
+    return {
+      ensureReloadNeededTabsHydrated,
+      reloadNeededTabs,
+    };
+  `);
+  const harness = buildHarness({
+    browser,
+    isPackagedStaticScriptletDirectiveId,
+    isRemoteScriptletDirectiveId,
+    normalizeRemoteScriptletReloadHint,
+  });
+  await harness.ensureReloadNeededTabsHydrated();
+  assert.match(
+    reloadSource,
+    /storedSchema === 2 \|\|\s*storedSchema === 3/
+  );
+  assert.equal(harness.reloadNeededTabs.size, 3);
+  const migratedBlanketTab = harness.reloadNeededTabs.get(12);
+  assert.equal(migratedBlanketTab.wildcardReason, 'remoteScriptletHotfix');
+  assert.deepEqual(
+    Array.from(migratedBlanketTab.documents.keys()),
+    ['legitimate-sandbox-document']
+  );
+  assert.equal(
+    migratedBlanketTab.safeDocumentIds.has('legacy-blanket-document'),
+    true
+  );
+  assert.ok(
+    migratedBlanketTab.freshNavigationObservedAt >
+      migratedBlanketTab.wildcardUpdatedAt
+  );
+  assert.equal(
+    harness.reloadNeededTabs.get(13).wildcardReason,
+    'sandbox_user_script_changed'
+  );
+  const migratedMinimalBlanketTab = harness.reloadNeededTabs.get(14);
+  assert.equal(
+    migratedMinimalBlanketTab.wildcardReason,
+    'remoteScriptletHotfix'
+  );
+  assert.deepEqual(
+    Array.from(migratedMinimalBlanketTab.documents.keys()),
+    ['minimal-blanket-sandbox-document']
+  );
+  assert.equal(
+    migratedMinimalBlanketTab.safeDocumentIds.has('minimal-blanket-document'),
+    true
+  );
+  assert.equal(stored.reloadNeededTabsV1.version, 4);
+  assert.deepEqual(
+    stored.reloadNeededTabsV1.tabs[12].documents.map(entry => entry.documentId),
+    ['legitimate-sandbox-document']
+  );
+  assert.equal(
+    stored.reloadNeededTabsV1.tabs[12].wildcardReason,
+    'remoteScriptletHotfix'
+  );
+
+  // Replaying the matching legacy pending hint after a worker crash must not
+  // recreate an exact marker for a document the migration already baselined.
+  const buildMarkerHarness = new Function('deps', `
+    const {
+      ensureReloadNeededTabsHydrated,
+      getActiveTopDocumentIdentity,
+      getOrCreateReloadNeededTabRecord,
+      getRuntimeTabLifecycleGeneration,
+      isRuntimeRefreshTargetUnavailableError,
+      persistReloadNeededTabs,
+      persistReloadSafeDocumentsForTab,
+      pruneReloadNeededTabRecord,
+      refreshReloadNeededBadgeForTab,
+      runtimeTabLifecycleMatches,
+    } = deps;
+    ${markerSource}
+    return markReloadNeededForTab;
+  `);
+  const replayMarker = buildMarkerHarness({
+    ensureReloadNeededTabsHydrated: async () => true,
+    getActiveTopDocumentIdentity: async () => ({
+      documentId: 'legacy-blanket-document',
+    }),
+    getOrCreateReloadNeededTabRecord: () => migratedBlanketTab,
+    getRuntimeTabLifecycleGeneration: () => 1,
+    isRuntimeRefreshTargetUnavailableError: () => false,
+    persistReloadNeededTabs: async () => true,
+    persistReloadSafeDocumentsForTab: async () => true,
+    pruneReloadNeededTabRecord: () => {},
+    refreshReloadNeededBadgeForTab: async () => true,
+    runtimeTabLifecycleMatches: () => true,
+  });
+  assert.equal(await replayMarker(
+    12,
+    'remoteScriptletHotfix',
+    'legacy-blanket-document',
+    { persist: false, updateBadge: false, updateWildcard: false }
+  ), true);
+  assert.equal(
+    migratedBlanketTab.documents.has('legacy-blanket-document'),
+    false
+  );
+
+  const schema3Stored = {
+    reloadNeededTabsV1: {
+      version: 3,
+      tabs: {
+        21: {
+          wildcardReason: 'remoteScriptletHotfix',
+          wildcardUpdatedAt: Date.now(),
+          wildcardAllDocuments: false,
+          wildcardReloadHint: {
+            before: [],
+            after: [
+              'ublock-filters.main',
+              'ublock-filters.isolated',
+            ].map(id => ({
+              id,
+              matches: ['*://*/*'],
+              excludeMatches: [],
+            })),
+          },
+          revision: 1,
+          documents: [{
+            reason: 'remoteScriptletHotfix',
+            documentId: 'schema3-false-document',
+            updatedAt: Date.now(),
+            active: true,
+          }, {
+            reason: 'sandbox_user_script_changed',
+            documentId: 'schema3-real-sandbox-document',
+            updatedAt: Date.now() + 1,
+            active: false,
+          }],
+        },
+        22: {
+          wildcardReason: 'remoteScriptletHotfix',
+          wildcardUpdatedAt: Date.now(),
+          wildcardAllDocuments: false,
+          wildcardReloadHint: {
+            before: [],
+            after: [
+              'ublock-filters.main',
+              'ublock-filters.isolated',
+            ].map(id => ({
+              id,
+              matches: ['*://*/*'],
+              excludeMatches: [],
+            })),
+          },
+          revision: 1,
+          documents: [{
+            reason: 'remoteScriptletHotfix',
+            documentId: 'schema3-only-false-document',
+            updatedAt: Date.now(),
+            active: true,
+          }],
+        },
+      },
+    },
+  };
+  const schema3Browser = {
+    storage: {
+      local: {
+        async get(key) { return { [key]: schema3Stored[key] }; },
+        async set(patch) { Object.assign(schema3Stored, patch); },
+        async remove(key) { delete schema3Stored[key]; },
+      },
+    },
+  };
+  const schema3Harness = buildHarness({
+    browser: schema3Browser,
+    isPackagedStaticScriptletDirectiveId,
+    isRemoteScriptletDirectiveId,
+    normalizeRemoteScriptletReloadHint,
+  });
+  await schema3Harness.ensureReloadNeededTabsHydrated();
+  const migratedSchema3Tab = schema3Harness.reloadNeededTabs.get(21);
+  assert.ok(migratedSchema3Tab);
+  assert.equal(migratedSchema3Tab.wildcardReason, '');
+  assert.equal(migratedSchema3Tab.wildcardReloadHint, null);
+  assert.deepEqual(
+    Array.from(migratedSchema3Tab.documents.keys()),
+    ['schema3-real-sandbox-document']
+  );
+  assert.equal(
+    migratedSchema3Tab.safeDocumentIds.has('schema3-false-document'),
+    false
+  );
+  assert.equal(schema3Harness.reloadNeededTabs.has(22), false);
+  assert.equal(schema3Stored.reloadNeededTabsV1.version, 4);
+  assert.equal(
+    schema3Stored.reloadNeededTabsV1.tabs[21].wildcardReason,
+    ''
+  );
+  assert.equal(
+    schema3Stored.reloadNeededTabsV1.tabs[21].wildcardReloadHint,
+    null
+  );
+});
+
 test('startup pruning cannot delete a newer navigation ledger generation', async () => {
   const source = await readSource('js/background.js');
   const reloadSource = sourceBetween(
@@ -5104,7 +5563,7 @@ test('startup pruning cannot delete a newer navigation ledger generation', async
     } = deps;
     const reloadNeededTabs = new Map();
     const RELOAD_NEEDED_TABS_STORAGE_KEY = 'reloadNeededTabsV1';
-    const RELOAD_NEEDED_STORAGE_SCHEMA = 2;
+    const RELOAD_NEEDED_STORAGE_SCHEMA = 4;
     const MAX_RELOAD_NEEDED_DOCUMENTS_PER_TAB = 8;
     const MAX_RELOAD_SAFE_DOCUMENTS_PER_TAB = 16;
     const RELOAD_SAFE_DOCUMENTS_SESSION_KEY_PREFIX = 'reloadSafeDocumentsV1:';
@@ -5115,7 +5574,8 @@ test('startup pruning cannot delete a newer navigation ledger generation', async
     const createReloadNeededTabRecord = () => ({
       documents: new Map(), safeDocumentIds: new Set(),
       wildcardReason: '', wildcardUpdatedAt: 0,
-      wildcardAllDocuments: false, wildcardReloadHint: null, revision: 0,
+      wildcardAllDocuments: false, wildcardReloadHint: null,
+      freshNavigationObservedAt: 0, revision: 0,
     });
     const pruneReloadNeededTabRecord = record => {
       const documents = Array.from(record.documents.values())
@@ -5213,6 +5673,7 @@ test('startup pruning cannot delete a newer navigation ledger generation', async
       }],
       after: [],
     },
+    freshNavigationObservedAt: 0,
     revision: 1,
   };
   harness.reloadNeededTabs.set(12, scopedRecord);
@@ -5246,9 +5707,30 @@ test('startup pruning cannot delete a newer navigation ledger generation', async
     'remoteScriptletHotfix'
   );
 
+  // Once a normal post-update navigation or reload has committed, losing the
+  // session-only safe-document IDs on browser restart must not resurrect the
+  // warning on the newly restored document.
+  scopedRecord.documents.clear();
+  scopedRecord.safeDocumentIds.clear();
+  scopedRecord.freshNavigationObservedAt = scopedRecord.wildcardUpdatedAt + 1;
+  scopedRecord.revision += 1;
+  nextIdentity = {
+    tabId: 12,
+    documentId: 'document-after-restart',
+    url: testHttpsUrl('target.example'),
+    frameUrls: [testHttpsUrl('target.example')],
+  };
+  await harness.pruneDurableRuntimeLifecycleState();
+  assert.equal(scopedRecord.documents.size, 0);
+  assert.equal(
+    scopedRecord.safeDocumentIds.has('document-after-restart'),
+    true
+  );
+
   // An all-document wildcard is deliberately stronger and remains unchanged.
   scopedRecord.documents.clear();
   scopedRecord.safeDocumentIds.clear();
+  scopedRecord.freshNavigationObservedAt = 0;
   scopedRecord.wildcardAllDocuments = true;
   scopedRecord.wildcardReloadHint = null;
   scopedRecord.revision += 1;
@@ -5307,6 +5789,206 @@ test('startup reload-hint classification checks every live child-frame URL', asy
     }],
     after: [],
   }), true);
+});
+
+test('restored-document frame snapshots expose completeness and document identity', async () => {
+  const source = await readSource('js/background.js');
+  const snapshotSource = sourceBetween(
+    source,
+    'const getTabFrameSnapshot = async (',
+    'const listTabFrameUrls'
+  );
+  const buildHarness = new Function('deps', `
+    const { browser, isRuntimeRefreshTargetUnavailableError } = deps;
+    ${snapshotSource}
+    return getTabFrameSnapshot;
+  `);
+  const frames = [{
+    frameId: 0,
+    documentId: 'active-document',
+    documentLifecycle: 'active',
+    url: testHttpsUrl('top.example'),
+  }, {
+    frameId: 1,
+    documentId: 'child-document',
+    documentLifecycle: 'active',
+    url: testHttpsUrl('child.example'),
+  }];
+  const getSnapshot = buildHarness({
+    browser: {
+      webNavigation: {
+        async getAllFrames() { return frames; },
+      },
+    },
+    isRuntimeRefreshTargetUnavailableError: () => false,
+  });
+  assert.equal(
+    (await getSnapshot(12, '', 'active-document')).complete,
+    true
+  );
+  assert.equal(
+    (await getSnapshot(12, '', 'replaced-document')).complete,
+    false
+  );
+
+  const unavailableSnapshot = buildHarness({
+    browser: {
+      webNavigation: {
+        async getAllFrames() { throw new Error('tab disappeared'); },
+      },
+    },
+    isRuntimeRefreshTargetUnavailableError: () => true,
+  });
+  const unavailable = await unavailableSnapshot(
+    12,
+    testHttpsUrl('fallback.example'),
+    'active-document'
+  );
+  assert.equal(unavailable.complete, false);
+  assert.equal(unavailable.topDocumentId, '');
+});
+
+test('fresh reload proof survives restart without weakening BFCache reload intent', async () => {
+  const source = await readSource('js/background.js');
+  const clearSource = sourceBetween(
+    source,
+    'const clearReloadNeededStateForTab = async (',
+    'const markReloadNeededForTab = async ('
+  );
+  const record = {
+    documents: new Map([['document-before-reload', {
+      reason: 'remoteScriptletHotfix',
+      documentId: 'document-before-reload',
+      updatedAt: 101,
+      active: true,
+    }]]),
+    safeDocumentIds: new Set(),
+    wildcardReason: 'remoteScriptletHotfix',
+    wildcardUpdatedAt: 100,
+    wildcardAllDocuments: false,
+    wildcardReloadHint: {
+      before: [{
+        id: 'remote-scriptlet.reload-proof',
+        matches: ['*://*.target.example/*'],
+        excludeMatches: [],
+      }],
+      after: [],
+    },
+    freshNavigationObservedAt: 0,
+    revision: 1,
+  };
+  const reloadNeededTabs = new Map([[12, record]]);
+  let durableWrites = 0;
+  const buildHarness = new Function('deps', `
+    const {
+      ensureReloadNeededTabsHydrated,
+      persistReloadNeededTabs,
+      persistReloadSafeDocumentsForTab,
+      pruneReloadNeededTabRecord,
+      refreshReloadNeededBadgeForTab,
+      reloadNeededTabs,
+      shouldReloadForFrameUrls,
+    } = deps;
+    ${clearSource}
+    return clearReloadNeededStateForTab;
+  `);
+  const clearReloadState = buildHarness({
+    ensureReloadNeededTabsHydrated: async () => true,
+    persistReloadNeededTabs: async () => { durableWrites += 1; },
+    persistReloadSafeDocumentsForTab: async () => true,
+    pruneReloadNeededTabRecord: () => {},
+    refreshReloadNeededBadgeForTab: async () => true,
+    reloadNeededTabs,
+    shouldReloadForFrameUrls,
+  });
+
+  await clearReloadState(12, {
+    currentDocumentId: 'document-after-reload',
+    currentUrl: testHttpsUrl('target.example'),
+    transitionType: 'reload',
+  });
+  assert.equal(record.documents.size, 0);
+  assert.ok(record.freshNavigationObservedAt > record.wildcardUpdatedAt);
+  assert.equal(record.safeDocumentIds.has('document-after-reload'), true);
+  assert.ok(durableWrites > 0);
+
+  // A dormant pre-update document restored from BFCache did not execute a new
+  // document_start registration, so forward/back activation still wins over
+  // the tab-level fresh-navigation proof.
+  await clearReloadState(12, {
+    currentDocumentId: 'document-from-bfcache',
+    currentUrl: testHttpsUrl('target.example'),
+    transitionType: 'link',
+    forwardBack: true,
+  });
+  assert.equal(
+    record.documents.get('document-from-bfcache')?.reason,
+    'remoteScriptletHotfix'
+  );
+
+  // A prerender committed after the scriptlet transition already ran the new
+  // document_start registrations. Its proof must be durable so clearing
+  // storage.session during a browser restart cannot resurrect the banner.
+  record.documents.clear();
+  record.safeDocumentIds.clear();
+  record.freshNavigationObservedAt = 0;
+  await clearReloadState(12, {
+    currentDocumentId: 'fresh-prerender-document',
+    currentUrl: testHttpsUrl('unrelated.example'),
+    outermostPrerender: true,
+    prerenderCommittedAt: record.wildcardUpdatedAt + 1,
+    currentFrameUrls: {
+      topUrl: testHttpsUrl('unrelated.example'),
+      childUrls: [testHttpsUrl('child.target.example')],
+    },
+  });
+  assert.equal(record.documents.size, 0);
+  assert.equal(record.safeDocumentIds.has('fresh-prerender-document'), true);
+  assert.ok(record.freshNavigationObservedAt > record.wildcardUpdatedAt);
+
+  // A prerender committed before the transition did not execute the new
+  // registration and remains fail-closed, including child-frame-only scope.
+  record.documents.clear();
+  record.safeDocumentIds.clear();
+  record.freshNavigationObservedAt = 0;
+  await clearReloadState(12, {
+    currentDocumentId: 'stale-prerender-document',
+    currentUrl: testHttpsUrl('unrelated.example'),
+    outermostPrerender: true,
+    prerenderCommittedAt: record.wildcardUpdatedAt,
+    currentFrameUrls: {
+      topUrl: testHttpsUrl('unrelated.example'),
+      childUrls: [testHttpsUrl('child.target.example')],
+    },
+  });
+  assert.equal(
+    record.documents.get('stale-prerender-document')?.reason,
+    'remoteScriptletHotfix'
+  );
+
+  // Chrome can transiently fail frame enumeration during BFCache activation.
+  // Unknown scope is not affirmative safety for a restored stale document.
+  record.documents.clear();
+  record.safeDocumentIds.clear();
+  record.freshNavigationObservedAt = record.wildcardUpdatedAt + 1;
+  await clearReloadState(12, {
+    currentDocumentId: 'unverified-bfcache-document',
+    currentUrl: testHttpsUrl('unrelated.example'),
+    forwardBack: true,
+    currentFrameUrls: {
+      topUrl: '',
+      childUrls: [],
+      complete: false,
+    },
+  });
+  assert.equal(
+    record.documents.get('unverified-bfcache-document')?.reason,
+    'remoteScriptletHotfix'
+  );
+  assert.equal(
+    record.safeDocumentIds.has('unverified-bfcache-document'),
+    false
+  );
 });
 
 test('session-safe reload evidence cannot be overwritten by an older storage write', async () => {
@@ -5397,6 +6079,7 @@ test('a fresh same-scope scriptlet update invalidates prior safe documents', asy
     wildcardUpdatedAt: 100,
     wildcardAllDocuments: false,
     wildcardReloadHint: structuredClone(reloadHint),
+    freshNavigationObservedAt: 101,
     revision: 1,
   };
   const reloadNeededTabs = new Map([[12, record]]);
@@ -5405,6 +6088,7 @@ test('a fresh same-scope scriptlet update invalidates prior safe documents', asy
       ensureReloadNeededTabsHydrated,
       getOrCreateReloadNeededTabRecord,
       mergeRemoteScriptletReloadHints,
+      normalizeRemoteScriptletReloadHint,
       persistReloadNeededTabs,
       persistReloadSafeDocumentsForTab,
       reloadNeededTabs,
@@ -5417,6 +6101,7 @@ test('a fresh same-scope scriptlet update invalidates prior safe documents', asy
     ensureReloadNeededTabsHydrated: async () => true,
     getOrCreateReloadNeededTabRecord: tabId => reloadNeededTabs.get(tabId),
     mergeRemoteScriptletReloadHints,
+    normalizeRemoteScriptletReloadHint,
     persistReloadNeededTabs: async () => true,
     persistReloadSafeDocumentsForTab: async () => true,
     reloadNeededTabs,
@@ -5436,6 +6121,7 @@ test('a fresh same-scope scriptlet update invalidates prior safe documents', asy
     { allDocuments: false, reloadHint, refresh: true }
   ), true);
   assert.equal(record.safeDocumentIds.size, 0);
+  assert.equal(record.freshNavigationObservedAt, 0);
   assert.ok(record.wildcardUpdatedAt > 100);
 });
 
@@ -5559,15 +6245,18 @@ test('late content-script mutation re-marks a document loaded during uncertainty
   `);
   let currentDocumentId = 'document-before-timeout';
   const markedDocumentIds = [];
+  const handoffEvents = [];
   let acknowledgeCount = 0;
   const harness = buildHarness({
     PENDING_REMOTE_SCRIPTLET_RELOAD_HINT_KEY: 'pendingReloadHint',
     async markTabsForRemoteScriptletReload() {
       markedDocumentIds.push(currentDocumentId);
+      handoffEvents.push('mark-tabs');
     },
     async localRemove(key) {
       assert.equal(key, 'pendingReloadHint');
       acknowledgeCount += 1;
+      handoffEvents.push('remove-pending-hint');
     },
   });
   const reloadHint = {
@@ -5591,7 +6280,12 @@ test('late content-script mutation re-marks a document loaded during uncertainty
   currentDocumentId = 'document-loaded-before-late-unregister';
   const reconciled = await harness.applyContentRegistrationReloadHint(
     { ok: true, uncertain: false },
-    reloadHint
+    reloadHint,
+    {
+      async acknowledgeRegistrationState() {
+        handoffEvents.push('acknowledge-digest');
+      },
+    }
   );
   assert.deepEqual(reconciled, { marked: true, acknowledged: true });
   assert.deepEqual(markedDocumentIds, [
@@ -5599,6 +6293,50 @@ test('late content-script mutation re-marks a document loaded during uncertainty
     'document-loaded-before-late-unregister',
   ]);
   assert.equal(acknowledgeCount, 1);
+  assert.deepEqual(handoffEvents, [
+    'mark-tabs',
+    'mark-tabs',
+    'acknowledge-digest',
+    'remove-pending-hint',
+  ]);
+
+  // A version-only update or same-version Chrome re-registration with
+  // identical bytes has no authoritative reload hint. It acknowledges the
+  // digest and clears the stale raw registration journal without marking a tab.
+  const versionOnly = await harness.applyContentRegistrationReloadHint(
+    { ok: true, uncertain: false },
+    null,
+    {
+      async acknowledgeRegistrationState() {
+        handoffEvents.push('acknowledge-version-only-digest');
+      },
+    }
+  );
+  assert.deepEqual(versionOnly, { marked: false, acknowledged: true });
+  assert.equal(markedDocumentIds.length, 2);
+  assert.equal(acknowledgeCount, 2);
+  assert.deepEqual(handoffEvents.slice(-2), [
+    'acknowledge-version-only-digest',
+    'remove-pending-hint',
+  ]);
+
+  // If the digest acknowledgement fails after exact markers are durable, the
+  // pending hint remains available for the next authoritative reconciliation.
+  await assert.rejects(
+    harness.applyContentRegistrationReloadHint(
+      { ok: true, uncertain: false },
+      reloadHint,
+      {
+        async acknowledgeRegistrationState() {
+          handoffEvents.push('failed-digest-acknowledgement');
+          throw new Error('simulated digest write failure');
+        },
+      }
+    ),
+    /simulated digest write failure/
+  );
+  assert.equal(acknowledgeCount, 2);
+  assert.equal(handoffEvents.at(-1), 'failed-digest-acknowledgement');
   assert.equal(
     harness.contentRegistrationResultIsVerified({ ok: false, uncertain: false }),
     false

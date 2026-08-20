@@ -11,6 +11,7 @@ Core verification:
 - `npm run parity:watch -- --baseline-tag <current-upstream-tag>` for read-only latest uBO Lite release detection
 - `npm run parity:audit -- --upstream-dir <path-to-pinned-ubol-chromium>` for read-only uBO Lite drift reports
 - `npm run parity:status -- --report <audit-report.json>` for non-developer ship/no-ship parity summaries
+- `npm run generate:reload-sensitive-artifacts` after changing packaged static or signed-token scriptlet JavaScript; `npm test` and MV3 package validation reject stale generated hashes
 - update `public-safe-allowlist.txt` whenever a new tracked public file is intentionally added
 
 Packaging:
