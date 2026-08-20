@@ -644,14 +644,5 @@
   },
   "uiPartial": {
     "message": "Gedeeltelijk actief"
-  },
-  "popupRuntimeHotfixReloadNotice": {
-    "message": "Laad dit tabblad opnieuw om de nieuwste Talon Defender-hotfix toe te passen."
-  },
-  "popupRuntimeReloadNotice": {
-    "message": "Laad dit tabblad opnieuw om de nieuwste beveiligingswijzigingen van Talon Defender volledig toe te passen."
-  },
-  "popupRuntimeHotfixReloadButton": {
-    "message": "Tabblad opnieuw laden"
   }
 }

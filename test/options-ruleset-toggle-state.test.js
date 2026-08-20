@@ -219,7 +219,7 @@ test('Pop-ups and Extra protection own disjoint rulesets', async () => {
   assert.doesNotMatch(source, /enabledRulesets: next/);
 });
 
-test('customer-facing locale additions are valid and contain no replacement question marks', async () => {
+test('customer locales stay valid and internal hotfix refresh state stays out of customer UI', async () => {
   const localeExpectations = new Map([
     ['ja', ['追加保護', '一部有効']],
     ['ko', ['추가 보호', '일부 활성화']],
@@ -235,8 +235,9 @@ test('customer-facing locale additions are valid and contain no replacement ques
     assert.equal(messages.optionsFilterExtraProtectionLabel.message, label);
     assert.equal(messages.uiPartial.message, partial);
     assert.doesNotMatch(messages.optionsFilterExtraProtectionNote.message, /\?/);
-    assert.ok(messages.popupRuntimeReloadNotice.message.length > 10);
-    assert.ok(messages.popupRuntimeHotfixReloadButton.message.length > 2);
+    assert.equal(messages.popupRuntimeHotfixReloadNotice, undefined);
+    assert.equal(messages.popupRuntimeReloadNotice, undefined);
+    assert.equal(messages.popupRuntimeHotfixReloadButton, undefined);
   }
 
   for (const locale of ['da', 'de', 'en', 'es', 'fr', 'it', 'nb', 'nl', 'no']) {
@@ -247,24 +248,44 @@ test('customer-facing locale additions are valid and contain no replacement ques
     const messages = JSON.parse(raw);
     assert.doesNotMatch(messages.optionsFilterExtraProtectionLabel.message, /\?/);
     assert.doesNotMatch(messages.optionsFilterExtraProtectionNote.message, /\?/);
-    assert.ok(messages.popupRuntimeReloadNotice.message.length > 10);
-    assert.ok(messages.popupRuntimeHotfixReloadButton.message.length > 2);
+    assert.equal(messages.popupRuntimeHotfixReloadNotice, undefined);
+    assert.equal(messages.popupRuntimeReloadNotice, undefined);
+    assert.equal(messages.popupRuntimeHotfixReloadButton, undefined);
   }
 
   const popupSource = await readFile(
     new URL('../popup/popup.js', import.meta.url),
     'utf8'
   );
-  assert.match(
-    popupSource,
-    /runtimeNoticeTextEl\.textContent = t\("popupRuntimeReloadNotice"\)/
+  const popupHtml = await readFile(
+    new URL('../popup/popup.html', import.meta.url),
+    'utf8'
   );
-  assert.doesNotMatch(popupSource, /t\("popupRuntimeHotfixReloadNotice"\)/);
-  assert.match(popupSource, /t\("popupRuntimeHotfixReloadButton"\)/);
-  assert.doesNotMatch(
-    popupSource,
-    /Reload this tab to apply the latest Talon Defender hotfix\./
+  const popupCss = await readFile(
+    new URL('../popup/popup.css', import.meta.url),
+    'utf8'
   );
+  const backgroundSource = await readFile(
+    new URL('../js/background.js', import.meta.url),
+    'utf8'
+  );
+  const badgeSyncStart = backgroundSource.indexOf(
+    'const refreshReloadNeededBadgeForTab = async ('
+  );
+  const badgeSyncEnd = backgroundSource.indexOf(
+    'const refreshReloadNeededBadges = async () =>',
+    badgeSyncStart
+  );
+  assert.ok(badgeSyncStart >= 0 && badgeSyncEnd > badgeSyncStart);
+  const badgeSyncSource = backgroundSource.slice(badgeSyncStart, badgeSyncEnd);
+
+  assert.doesNotMatch(popupSource, /runtimeNotice|popupRuntimeHotfix|popupRuntimeReloadNotice/);
+  assert.doesNotMatch(popupHtml, /runtimeNotice|Reload this tab to finish applying/);
+  assert.doesNotMatch(popupCss, /\.runtime-notice/);
+  assert.doesNotMatch(backgroundSource, /RUNTIME_RELOAD_ACTION_TITLE|HOTFIX_RELOAD_BADGE_COLOR/);
+  assert.doesNotMatch(badgeSyncSource, /setActionBadgeBackgroundColor|setActionBadgeTextColor|text: '!'/);
+  assert.match(badgeSyncSource, /setActionBadgeText\(\{ tabId, text: '' \}\)/);
+  assert.match(badgeSyncSource, /setActionTitle\(\{ tabId, title: DEFAULT_ACTION_TITLE \}\)/);
 });
 
 test('planStaticRulesetQuotaChange preserves current state when Chrome static rule quota is too small', () => {

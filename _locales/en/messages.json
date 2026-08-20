@@ -644,14 +644,5 @@
   },
   "uiPartial": {
     "message": "Partially active"
-  },
-  "popupRuntimeHotfixReloadNotice": {
-    "message": "Reload this tab to apply the latest Talon Defender hotfix."
-  },
-  "popupRuntimeReloadNotice": {
-    "message": "Reload this tab to finish applying Talon Defender protection changes."
-  },
-  "popupRuntimeHotfixReloadButton": {
-    "message": "Reload tab"
   }
 }

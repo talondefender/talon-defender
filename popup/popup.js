@@ -30,10 +30,6 @@ const dynamicHostLabelEl = document.getElementById("dynamicHostLabel");
 const dynamicStatusEl = document.getElementById("dynamicStatus");
 const blockDomainButton = document.getElementById("blockDomain");
 const allowDomainButton = document.getElementById("allowDomain");
-const runtimeNoticeEl = document.getElementById("runtimeNotice");
-const runtimeNoticeTextEl = document.getElementById("runtimeNoticeText");
-const runtimeNoticeReloadButton = document.getElementById("runtimeNoticeReload");
-
 const subscriptionCardEl = document.getElementById("subscriptionCard");
 const subscriptionStatusEl = document.getElementById("subscriptionStatus");
 const subscriptionSubstatusEl = document.getElementById("subscriptionSubstatus");
@@ -75,7 +71,6 @@ let entitlementStatus = null;
 let paywalled = false;
 let licenseEntryVisible = false;
 let expiredKeyEntryVisible = false;
-let currentReloadNeededReason = "";
 let toggleChangeInFlight = false;
 let pendingFilteringMutations = 0;
 const filteringMutationQueue = createSerializedActionQueue();
@@ -140,9 +135,7 @@ function clearCurrentTabState() {
   currentTabId = null;
   currentTabUrl = "";
   currentSiteLevel = defaultFilteringMode;
-  currentReloadNeededReason = "";
   renderAllowedSitesControls();
-  renderRuntimeNotice();
 }
 
 async function reloadCurrentTab(context, reloadProperties = null) {
@@ -193,8 +186,7 @@ async function init() {
         console.warn("Popup panel data refresh failed", error);
         await Promise.allSettled([
           refreshEntitlement(),
-          refreshFilteringState(),
-          refreshRuntimeNoticeState()
+          refreshFilteringState()
         ]);
       });
     await Promise.allSettled([
@@ -645,23 +637,6 @@ function wireEvents() {
     });
   }
 
-  if (runtimeNoticeReloadButton) {
-    runtimeNoticeReloadButton.addEventListener("click", async () => {
-      runtimeNoticeReloadButton.disabled = true;
-      try {
-        const reloaded = await reloadCurrentTab("reload tab for hotfix");
-        if (!reloaded) {
-          return;
-        }
-        currentReloadNeededReason = "";
-        renderRuntimeNotice();
-        window.close();
-      } finally {
-        runtimeNoticeReloadButton.disabled = false;
-      }
-    });
-  }
-
   if (licenseFormEl) {
     licenseFormEl.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -807,44 +782,6 @@ async function resolveActiveHost() {
   }
 
   renderAllowedSitesControls();
-  renderRuntimeNotice();
-}
-
-function renderRuntimeNotice() {
-  if (!runtimeNoticeEl || !runtimeNoticeTextEl || !runtimeNoticeReloadButton) {
-    return;
-  }
-  const runtimeNoticeVisible = Number.isInteger(currentTabId) &&
-    currentTabId >= 0 &&
-    !paywalled &&
-    currentReloadNeededReason !== "";
-  runtimeNoticeEl.hidden = !runtimeNoticeVisible;
-  if (!runtimeNoticeVisible) {
-    return;
-  }
-  runtimeNoticeTextEl.textContent = t("popupRuntimeReloadNotice");
-  runtimeNoticeReloadButton.textContent = t("popupRuntimeHotfixReloadButton");
-}
-
-async function refreshRuntimeNoticeState() {
-  if (Number.isInteger(currentTabId) === false || currentTabId < 0) {
-    currentReloadNeededReason = "";
-    renderRuntimeNotice();
-    return;
-  }
-  try {
-    const state = await sendRuntimeMessageWithTimeout({
-      what: "getTabReloadNeededState",
-      tabId: currentTabId
-    });
-    currentReloadNeededReason = typeof state?.reason === "string"
-      ? state.reason
-      : "";
-  } catch (error) {
-    console.warn("Failed to read tab reload-needed state", error);
-    currentReloadNeededReason = "";
-  }
-  renderRuntimeNotice();
 }
 
 async function refreshPopupPanelData() {
@@ -877,10 +814,6 @@ async function refreshPopupPanelData() {
   }
   renderAllowedSitesControls();
 
-  currentReloadNeededReason = typeof panelData?.reloadNeededState?.reason === "string"
-    ? panelData.reloadNeededState.reason
-    : "";
-  renderRuntimeNotice();
 }
 
 function formatRemaining(ms) {
@@ -1184,7 +1117,6 @@ function applyEntitlementStatus(status) {
   setPaywalledUI(paywalled);
   renderExpiredOverlay(entitlementStatus, { canReplaceDevice });
   renderAllowedSitesControls();
-  renderRuntimeNotice();
 
   if (subscribeNowButton) {
     subscribeNowButton.style.display = isPaid ? "none" : "";

@@ -245,9 +245,6 @@ const FRENCH_STREAM_SITE_FIX_HOSTNAMES = Object.freeze([
     'vidzy.cc',
 ]);
 const DEFAULT_ACTION_TITLE = 'Talon Defender';
-const RUNTIME_RELOAD_ACTION_TITLE =
-    'Talon Defender: Reload tab to finish protection update';
-const HOTFIX_RELOAD_BADGE_COLOR = '#f59e0b';
 const PUBLIC_SAFE_REGIONAL_RULESET_ID_SET = new Set(getPublicSafeRegionalRulesetIds());
 
 const autoBackoffCounts = new Map();
@@ -1556,23 +1553,14 @@ const refreshReloadNeededBadgeForTab = async (
     if ( runtimeTabLifecycleMatches(tabId, expectedTabGeneration) === false ) {
         return false;
     }
-    if ( state.reason === '' ) {
-        await Promise.all([
-            setActionBadgeText({ tabId, text: '' }),
-            setActionTitle({ tabId, title: DEFAULT_ACTION_TITLE }),
-        ]);
-        return false;
-    }
+    // Reload-needed state is operational bookkeeping only. Keep the customer
+    // action surface quiet, including clearing badges/titles left by an older
+    // extension version, while preserving entitlement warning presentation.
     await Promise.all([
-        setActionBadgeBackgroundColor({ tabId, color: HOTFIX_RELOAD_BADGE_COLOR }),
-        setActionBadgeTextColor({ tabId, color: '#111827' }),
-        setActionBadgeText({ tabId, text: '!' }),
-        setActionTitle({
-            tabId,
-            title: RUNTIME_RELOAD_ACTION_TITLE,
-        }),
+        setActionBadgeText({ tabId, text: '' }),
+        setActionTitle({ tabId, title: DEFAULT_ACTION_TITLE }),
     ]);
-    return true;
+    return state.reason !== '';
 };
 
 const refreshReloadNeededBadges = async () => {

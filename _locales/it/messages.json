@@ -644,14 +644,5 @@
   },
   "uiPartial": {
     "message": "Parzialmente attivo"
-  },
-  "popupRuntimeHotfixReloadNotice": {
-    "message": "Ricarica questa scheda per applicare l'ultima correzione di Talon Defender."
-  },
-  "popupRuntimeReloadNotice": {
-    "message": "Ricarica questa scheda per completare l'applicazione delle ultime modifiche alla protezione di Talon Defender."
-  },
-  "popupRuntimeHotfixReloadButton": {
-    "message": "Ricarica scheda"
   }
 }

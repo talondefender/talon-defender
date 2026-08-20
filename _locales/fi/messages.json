@@ -644,14 +644,5 @@
   },
   "uiPartial": {
     "message": "Osittain käytössä"
-  },
-  "popupRuntimeHotfixReloadNotice": {
-    "message": "Ota Talon Defenderin uusin pikakorjaus käyttöön lataamalla tämä välilehti uudelleen."
-  },
-  "popupRuntimeReloadNotice": {
-    "message": "Lataa tämä välilehti uudelleen, jotta Talon Defenderin uusimmat suojausmuutokset tulevat kokonaan voimaan."
-  },
-  "popupRuntimeHotfixReloadButton": {
-    "message": "Lataa välilehti uudelleen"
   }
 }
