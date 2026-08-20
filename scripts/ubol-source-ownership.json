@@ -40,6 +40,7 @@
     "localExtra": {
       "automation/directives.json": "Talon-owned packaged heuristic directives.",
       "automation/native-heuristics.json": "Talon-owned packaged native-ad heuristic vocabulary.",
+      "web_accessible_resources/click2load.html": "Retained for Talon's entitlement-gated custom-filter redirect compiler; current uBO Lite no longer exposes this redirect target from its manifest.",
       "js/scripting/youtube-player-guard.js": "Talon-owned YouTube page-world guard exposed only to YouTube hosts."
     },
     "upstreamExtra": {
@@ -48,11 +49,20 @@
   },
   "runtimeCapabilityExceptions": {
     "localExtra": {
+      "js/offscreen/compile-filters.js": "Talon-approved adapter keeps the authenticated request-scoped compiler protocol and durable entitlement-gated registration transaction while using the current upstream parser, cosmetic compiler, and scriptlet compiler.",
+      "js/offscreen/css-compiled.template.js": "Talon-approved fail-closed cosmetic-template guard is preserved across the upstream css-sandbox to css-compiled rename.",
+      "js/prevent-popup.js": "Talon-approved registration reconciliation and normalized popup-mode persistence prevent duplicate or stale dynamic registrations.",
+      "js/scripting/css-api.js": "Talon-owned bounded CSS mutation queue and scoped ownership support live entitlement teardown and recovery.",
+      "js/scripting/css-generic.js": "Talon-owned generic-cosmetic teardown and reload reconciliation are layered on the upstream compiled data.",
+      "js/scripting/css-procedural-api.js": "Talon-owned procedural-cosmetic teardown and bounded mutation behavior support live entitlement changes.",
       "js/scripting/css-specific.js": "Talon-approved fail-closed guard around the injected procedural cosmetic API constructor. Keep this hardening when importing upstream css-specific.js updates.",
+      "js/scripting/isolated-api.js": "Talon-approved empty-frame-context guards keep compiler-generated cosmetic code fail-closed on opaque or unavailable ancestors.",
       "js/scripting/youtube-ad-skip.js": "Talon-owned YouTube ad-skip lane. Do not import or copy uBO Lite's YouTube scriptlet/runtime strategy into this path; upstream uBO scriptlets are intentionally excluded from YouTube hosts.",
       "js/scripting/youtube-player-guard.js": "Talon-owned YouTube page-world guard: leaves YouTube player ad metadata intact, shields targeted enforcement/reset paths, and corrects SSAP restart loops without remote analytics or web-accessible script injection."
     },
-    "upstreamExtra": {}
+    "upstreamExtra": {
+      "js/offscreen/fetch-list.js": "Talon intentionally omits uBO Lite's imported-list fetch lane; custom filters remain local, entitlement-gated text compiled through the authenticated offscreen request protocol."
+    }
   },
   "talonOwnedPaths": [
     "automation/**",

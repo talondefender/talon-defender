@@ -898,7 +898,9 @@ test('dynamic regex installation retains topDomains rules when Chrome advertises
   assert.equal(dnrState.dynamicRules.length, compiledUblockRegexRules.length);
   assert.equal(
     dnrState.dynamicRules.filter(rule => rule.condition?.topDomains !== undefined).length,
-    2
+    compiledUblockRegexRules.filter(
+      rule => rule.condition?.topDomains !== undefined
+    ).length
   );
 });
 

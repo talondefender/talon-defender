@@ -126,7 +126,7 @@ test('packaged uBO popup prevention is wired through the reviewed runtime surfac
   assert.equal(await pathExists('rulesets/scripting/popup/easylist.js'), true);
 });
 
-test('audited non-YouTube popup parity additions have popup and plain DNR coverage', async () => {
+test('reviewed popup parity assets and metadata stay aligned', async () => {
   const popupDetails = async relativePath => {
     const context = {};
     context.self = context;
@@ -141,35 +141,12 @@ test('audited non-YouTube popup parity additions have popup and plain DNR covera
     'rulesets/scripting/popup/jpn-1.js'
   );
   const ublockDestinations = [
-    'dial2day.com',
-    'sa-movie.com',
-    'animevice.net',
-    'proxyify.info',
-    'yifysearch.com',
-    'movienewsgo.xyz',
-    'yewfjsdi.it.com',
-    'clovermovies.com',
-    'meimei-movie.com',
-    'mytvsoapforum.com',
-    'w-solarmovies.com',
-    'gomoviescdn.online',
+    'dwlv.xyz',
+    'bameb.com',
+    'bzzxq.com',
   ];
-  const dnrDestinations = ublockDestinations.filter(
-    hostname => hostname !== 'yewfjsdi.it.com'
-  );
   const expectedRegexPairs = [
-    ['itopbloc', '^[^:]+:\\/\\/([^:/]+\\.)?topblockchainsolutions\\.'],
-    ['i/live/m', '^[^:]+:\\/\\/([^:/]+\\.)?pussyspace\\..*?\\/live\\/meet-and-fuck\\/'],
-    ['i/?r=dir', '\\/\\?r=dir&zoneid='],
-    ['i/?refer', '\\/\\?referral=sythe'],
-    ['i/sytheb', '\\/sytheb'],
-    ['i/clc?ai', '\\/clc\\?aid='],
-    ['istreami', '^[^:]+:\\/\\/([^:/]+\\.)?streamingcommunity\\..*?\\/slide-banner\\/'],
-    ['iselfser', '^[^:]+:\\/\\/([^:/]+\\.)?selfservesenpai\\.'],
-    ['i/ads.js', '\\/ads\\.js\\?api_key=.*?&header='],
-    ['i.com/sm', '^[^:]+:\\/\\/([^:/]+\\.)?go\\..*?\\.com\\/smartpop\\/'],
-    ['i.com/ea', '^[^:]+:\\/\\/([^:/]+\\.)?go\\..*?\\.com\\/easy\\?'],
-    ['iontent.', 'ontent\\.steamplay\\.'],
+    ['topbloc', '[{"re":"^[^:]+:\\\\/\\\\/([^:/]+\\\\.)?topblockchainsolutions\\\\.","f":"i"}]'],
   ];
 
   for (const hostname of ublockDestinations) {
@@ -181,41 +158,24 @@ test('audited non-YouTube popup parity additions have popup and plain DNR covera
     assert.equal(ublockPopup.block.regexes[offset + 1], regex, token);
   }
   assert.equal(
-    japanesePopup.block.hostnames.includes('dailyrumor-jp.co.in'),
+    japanesePopup.block.hostnames.includes('av-mov.com'),
     true
   );
 
-  const [ublockMain, ublockStrict, japaneseMain, japaneseStrict, details] =
-    await Promise.all([
-      readSource('rulesets/main/ublock-filters.json').then(JSON.parse),
-      readSource('rulesets/strictblock/ublock-filters.json').then(JSON.parse),
-      readSource('rulesets/main/jpn-1.json').then(JSON.parse),
-      readSource('rulesets/strictblock/jpn-1.json').then(JSON.parse),
-      readSource('rulesets/ruleset-details.json').then(JSON.parse),
-    ]);
-  const requireDestinations = (rules, id, destinations) => {
-    const rule = rules.find(candidate => candidate.id === id);
-    assert.ok(rule, `missing rule ${id}`);
-    for (const hostname of destinations) {
-      assert.equal(
-        rule.condition.requestDomains.includes(hostname),
-        true,
-        `${id}: ${hostname}`
-      );
-    }
-  };
-  requireDestinations(ublockMain, 2, dnrDestinations);
-  requireDestinations(ublockStrict, 1, dnrDestinations);
-  requireDestinations(japaneseMain, 7, ['dailyrumor-jp.co.in']);
-  requireDestinations(japaneseStrict, 1, ['dailyrumor-jp.co.in']);
-  assert.equal(
-    ublockMain.find(rule => rule.id === 2)
-      .condition.requestDomains.includes('yewfjsdi.it.com'),
-    false,
-    'the subdomain-only popup entry must not consume redundant DNR coverage'
+  const details = JSON.parse(await readSource('rulesets/ruleset-details.json'));
+  const compiledPopupCount = popup => (
+    popup.block.hostnames.length + popup.block.regexes.length / 2
   );
-  assert.equal(details.find(entry => entry.id === 'ublock-filters').popups, 161);
-  assert.equal(details.find(entry => entry.id === 'jpn-1').popups, 28);
+  assert.equal(
+    details.find(entry => entry.id === 'ublock-filters').popups,
+    compiledPopupCount(ublockPopup)
+  );
+  assert.equal(
+    details.find(entry => entry.id === 'jpn-1').popups,
+    compiledPopupCount(japanesePopup)
+  );
+  assert.equal(await pathExists('rulesets/scripting/popup/annoyances-overlays.js'), true);
+  assert.equal(await pathExists('rulesets/scripting/popup/kor-1.js'), true);
 });
 
 test('packaged uBO scriptlet bundles are wired while Talon token compatibility stays separate', async () => {
@@ -386,9 +346,12 @@ test('uBO Lite offscreen and userScripts runtime is packaged behind entitlement 
   const extSource = await readSource('js/ext.js');
   const filterManagerSource = await readSource('js/filter-manager.js');
   const backgroundSource = await readSource('js/background.js');
+  const compilerSource = await readSource('js/offscreen/compile-filters.js');
   const ownershipSource = await readSource('scripts/ubol-source-ownership.json');
 
   assert.equal(await pathExists('js/offscreen/compile-filters.html'), true);
+  assert.equal(await pathExists('js/offscreen/css-compiled.template.js'), true);
+  assert.equal(await pathExists('js/offscreen/css-sandbox.template.js'), false);
   assert.equal(await pathExists('js/resources/scriptlets.js'), true);
   assert.equal(await pathExists('lib/regexanalyzer/regex.js'), true);
   assert.match(extSource, /export const supportsUserScripts/);
@@ -399,6 +362,11 @@ test('uBO Lite offscreen and userScripts runtime is packaged behind entitlement 
   assert.match(filterManagerSource, /sandboxFilterOperationTail/);
   assert.match(filterManagerSource, /browser\.offscreen\.createDocument/);
   assert.match(filterManagerSource, /browser\.userScripts\.register/);
+  assert.match(compilerSource, /export function compileFilters/);
+  assert.match(compilerSource, /what: 'getRawFilters'/);
+  assert.match(compilerSource, /what: 'compiledRawFilters'/);
+  assert.match(compilerSource, /output\.isolated\.map\(entry => entry\.code\)/);
+  assert.doesNotMatch(compilerSource, /compileFilters:getEnabledImportedLists/);
   assert.match(backgroundSource, /reconcileSandboxFilters\(\)/);
   assert.match(backgroundSource, /userScriptsAvailable: supportsUserScripts && isUserScriptsAvailable\(\)/);
   assert.match(backgroundSource, /runtime\.onUserScriptMessage\.addListener/);

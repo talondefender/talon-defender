@@ -19,32 +19,69 @@
     Home: https://github.com/gorhill/uBlock
 */
 
-import * as makeScriptlet from './make-scriptlets.js';
+import * as makeScriptlets from './make-scriptlets.js';
 import * as sfp from '../static-filtering-parser.js';
-
-import {
-    minimizeRules,
-    minimizeRuleset,
-    parseNetworkFilter,
-    validateRules,
-} from '../ubo-parser.js';
-
+import { minimizeRules, minimizeRuleset, validateRules } from '../ubo-parser.js';
 import { makeCosmeticScripts } from './make-cosmetic-filters.js';
+import { parseNetworkFilter } from '../ubo-parser.js';
 import { safeReplace } from './safe-replace.js';
 
 /******************************************************************************/
 
-const parser = new sfp.AstFilterParser({
-    localSource: true,
-    trustedSource: true,
-});
-const specificCosmeticDetails = new Map();
-const scriptletDetails = new Map();
-const dnrRules = [];
+const browser = (self.browser || self.chrome);
+
+const resourceTypes = Object.values(
+    browser.declarativeNetRequest?.ResourceType ?? {}
+);
 
 /******************************************************************************/
 
-function compileScriptletFilter(parser) {
+function parseExpires(s) {
+    const matches = s.match(/(\d+)\s*([wdhm]?)/i);
+    if ( matches === null ) { return; }
+    let updateAfter = parseInt(matches[1], 10);
+    if ( updateAfter === 0 ) { return; }
+    if ( matches[2] === 'w' ) {
+        updateAfter *= 7 * 24;
+    } else if ( matches[2] === 'h' ) {
+        updateAfter = Math.max(updateAfter, 4) / 24;
+    } else if ( matches[2] === 'm' ) {
+        updateAfter = Math.max(updateAfter, 240) / 1440;
+    }
+    return updateAfter;
+}
+
+/******************************************************************************/
+
+function extractMetadataFromList(content, fields) {
+    const out = {};
+    const head = content.slice(0, 1024);
+    for ( let field of fields ) {
+        field = field.replace(/\s+/g, '-');
+        const re = new RegExp(`^(?:! *|# +)${field.replace(/-/g, '(?: +|-)')}: *(.+)$`, 'im');
+        const match = re.exec(head);
+        let value = match && match[1].trim() || undefined;
+        if ( value !== undefined && value.startsWith('%') ) {
+            value = undefined;
+        }
+        field = field.toLowerCase().replace(
+            /-[a-z]/g, s => s.charAt(1).toUpperCase()
+        );
+        out[field] = value;
+    }
+    // Pre-process known fields
+    if ( out.lastModified ) {
+        out.lastModified = (new Date(out.lastModified)).getTime() || 0;
+    }
+    if ( out.expires ) {
+        out.expires = parseExpires(out.expires);
+    }
+    return out;
+}
+
+/******************************************************************************/
+
+function compileScriptletFilter(parser, output) {
     if ( parser.hasOptions() === false ) { return; }
     const exception = parser.isException();
     const args = parser.getScriptletArgs();
@@ -52,11 +89,11 @@ function compileScriptletFilter(parser) {
     for ( const { hn, not, bad } of parser.getExtFilterDomainIterator() ) {
         if ( bad ) { continue; }
         if ( exception ) { continue; }
-        const details = scriptletDetails.get(argsToken) ?? {};
+        const details = output.get(argsToken) ?? {};
         if ( details.args === undefined ) {
             details.args = args;
-            details.trustedSource = true;
-            scriptletDetails.set(argsToken, details);
+            details.trustedSource = parser.options.trustedSource;
+            output.set(argsToken, details);
         }
         if ( not ) {
             details.excludeMatches ??= [];
@@ -64,18 +101,18 @@ function compileScriptletFilter(parser) {
             continue;
         }
         details.matches ??= [];
-        if ( details.matches.includes('*') ) { continue; }
-        if ( hn === '*' ) {
+        if ( details.matches[0] === '*' ) { continue; }
+        if ( hn !== '*' ) {
+            details.matches.push(hn);
+        } else if ( parser.options.trustedSource ) {
             details.matches = [ '*' ];
-            continue;
         }
-        details.matches.push(hn);
     }
 }
 
 /******************************************************************************/
 
-function compileCosmeticFilter(parser) {
+export function compileCosmeticFilter(parser, output) {
     const { compiled, exception } = parser.result;
     if ( compiled === undefined ) { return; }
     const sanitized = sanitizeCompiledCosmeticFilter(compiled);
@@ -86,7 +123,12 @@ function compileCosmeticFilter(parser) {
         if ( not && exception ) { continue; }
         if ( not || exception ) {
             excludeMatches.push(hn);
-        } else if ( hn !== '*' ) {
+        } else if ( hn === '*' ) {
+            if ( parser.options.trustedSource !== true ) { continue; }
+            matches.length = 0;
+            matches.push('*');
+        } else {
+            if ( matches[0] === '*' ) { continue; }
             matches.push(hn);
         }
     }
@@ -96,11 +138,11 @@ function compileCosmeticFilter(parser) {
     if ( exception === false ) {
         if ( matches.length === 0 && excludeMatches.length !== 0 ) { return; }
     }
-    const details = specificCosmeticDetails.get(sanitized) ?? {};
+    const details = output.get(sanitized) ?? {};
     if ( details.matches === undefined ) {
         details.matches = [];
         details.excludeMatches = [];
-        specificCosmeticDetails.set(sanitized, details);
+        output.set(sanitized, details);
     }
     if ( matches.length ) {
         if ( matches.includes('*') ) {
@@ -123,55 +165,115 @@ function sanitizeCompiledCosmeticFilter(compiled) {
 
 /******************************************************************************/
 
-(async ( ) => {
-    const requestId = new URL(self.location.href).searchParams.get('requestId') || '';
-    if ( requestId === '' ) { return; }
-    const text = await chrome.runtime.sendMessage({
-        what: 'getRawFilters',
-        requestId,
-    });
+export function compileFilters(listid, text, context = {}) {
     if ( Boolean(text) === false ) { return; }
+
+    const parser = new sfp.AstFilterParser(context);
+
+    const unminimizedRules = [];
+    const specificCosmeticDetails = new Map();
+    const scriptletDetails = new Map();
+
     const lines = text.split(/\n/).map(a => a.trim());
+    const filterStats = {
+       total: 0,
+       accepted: 0,
+       rejected: 0,
+    };
     for ( const line of lines ) {
         parser.parse(line);
         if ( parser.hasError() ) { continue; }
         if ( parser.isScriptletFilter() ) {
-            compileScriptletFilter(parser);
+            if ( parser.hasOptions() === false ) { continue; }
+            compileScriptletFilter(parser, scriptletDetails);
             continue;
         }
         if ( parser.isCosmeticFilter() ) {
-            compileCosmeticFilter(parser);
+            if ( parser.hasOptions() === false ) { continue; }
+            compileCosmeticFilter(parser, specificCosmeticDetails);
             continue;
         }
         if ( parser.isNetworkFilter() ) {
-            const rule = parseNetworkFilter(parser);
-            if ( rule === undefined ) { continue; }
-            dnrRules.push(rule);
+            filterStats.total += 1;
+            const result = parseNetworkFilter(
+                parser,
+                resourceTypes.length ? { resourceTypes } : {},
+                unminimizedRules
+            );
+            if ( result ) {
+                filterStats.accepted += 1;
+            } else {
+                filterStats.rejected += 1;
+            }
             continue;
         }
     }
 
+    let minimizedRules = minimizeRuleset(unminimizedRules);
+    minimizedRules = minimizeRules(minimizedRules);
+    minimizedRules = validateRules(minimizedRules);
+    const regexRuleCount = minimizedRules.reduce((a, b) => {
+        return b.condition.regexFilter ? a+1 : a;
+    }, 0);
+
+    return {
+        filterStats,
+        ruleStats: {
+            total: minimizedRules.length,
+            plain: minimizedRules.length - regexRuleCount,
+            regex: regexRuleCount,
+        },
+        dnrRules: minimizedRules,
+        specificCosmeticDetails,
+        scriptletDetails,
+    };
+}
+
+/******************************************************************************/
+
+export async function toMv3Data(rulesetid, compiledData) {
     const isolated = [];
     const main = [];
 
-    if ( scriptletDetails.size !== 0 ) {
-        for ( const details of scriptletDetails.values() ) {
-            makeScriptlet.compile('sandbox', details);
+    if ( Boolean(compiledData) === false ) { return; }
+
+    if ( compiledData.scriptletDetails.size !== 0 ) {
+        for ( const details of compiledData.scriptletDetails.values() ) {
+            makeScriptlets.compile(rulesetid, details);
         }
         const template = await fetch('./scriptlet.template.js').then(response =>
             response.text()
         );
-        const result = makeScriptlet.commit('sandbox', template);
+        const result = makeScriptlets.commit(rulesetid, template);
         if ( result.ISOLATED ) {
-            isolated.push(result.ISOLATED.code);
+            const { hasRegexes, hasAncestors, hasEntities } = result.ISOLATED;
+            const hostnames = hasRegexes || hasAncestors || hasEntities ||
+                result.ISOLATED.hostnames.includes('*')
+                ? '*'
+                : result.ISOLATED.hostnames;
+            isolated.push({
+                id: `${rulesetid}-isolated-scriptlets`,
+                code: result.ISOLATED.code,
+                hostnames,
+            });
         }
         if ( result.MAIN ) {
-            main.push(result.MAIN.code);
+            const { hasRegexes, hasAncestors, hasEntities } = result.MAIN;
+            const hostnames = hasRegexes || hasAncestors || hasEntities ||
+                result.MAIN.hostnames.includes('*')
+                ? '*'
+                : result.MAIN.hostnames;
+            main.push({
+                id: `${rulesetid}-main-scriptlets`,
+                code: result.MAIN.code,
+                hostnames,
+            });
         }
+        makeScriptlets.reset();
     }
 
-    if ( specificCosmeticDetails.size !== 0 ) {
-        const result = makeCosmeticScripts('sandbox', specificCosmeticDetails);
+    if ( compiledData.specificCosmeticDetails.size ) {
+        const result = makeCosmeticScripts(rulesetid, compiledData.specificCosmeticDetails);
         if ( result ) {
             const [
                 cssAPI,
@@ -182,32 +284,67 @@ function sanitizeCompiledCosmeticFilter(compiled) {
                 fetch('../scripting/css-api.js').then(response => response.text()),
                 fetch('../scripting/isolated-api.js').then(response => response.text()),
                 fetch('../scripting/css-procedural-api.js').then(response => response.text()),
-                fetch('./css-sandbox.template.js').then(response => response.text()),
+                fetch('./css-compiled.template.js').then(response => response.text()),
             ]);
             const code = [
                 cssAPI,
                 isolatedAPI,
                 proceduralAPI,
-                safeReplace(template, 'self.$cssSpecificData$', result.json),
+                safeReplace(template, 'self.$cssSpecificData$', JSON.stringify(result.data)),
             ].join('\n');
-            isolated.push(code);
+            const hostnames = result.data.hasEntities || result.data.regexes.length
+                ? '*'
+                : result.data.hostnames;
+            isolated.push({
+                id: `${rulesetid}-css-specific`,
+                code,
+                hostnames,
+            });
         }
     }
 
-    const msg = { what: 'compiledRawFilters', requestId };
+    const output = {};
+    if ( compiledData.dnrRules.length ) {
+        output.dnrRules = minimizeRuleset(compiledData.dnrRules);
+        output.dnrRules = minimizeRules(output.dnrRules);
+        output.dnrRules = validateRules(output.dnrRules);
+    }
     if ( isolated.length ) {
-        msg.ISOLATED = isolated;
+        output.isolated = isolated;
     }
     if ( main.length ) {
-        msg.MAIN = main;
+        output.main = main;
     }
 
-    if ( dnrRules.length ) {
-        let rules = minimizeRuleset(dnrRules);
-        rules = minimizeRules(rules);
-        rules = validateRules(rules);
-        msg.dnrRules = rules;
-    }
+    return output;
+}
 
-    chrome.runtime.sendMessage(msg);
+/******************************************************************************/
+
+(async ( ) => {
+    const requestId = new URL(self.location.href).searchParams.get('requestId') || '';
+    if ( requestId === '' ) { return; }
+    const text = await browser.runtime.sendMessage({
+        what: 'getRawFilters',
+        requestId,
+    });
+    const compiled = compileFilters('sandbox', text, {
+        localSource: true,
+        nativeCssHas: true,
+        trustedSource: true,
+    });
+    const output = await toMv3Data('sandbox', compiled) ?? {};
+    const msg = { what: 'compiledRawFilters', requestId };
+    if ( output.isolated?.length ) {
+        msg.ISOLATED = output.isolated.map(entry => entry.code);
+    }
+    if ( output.main?.length ) {
+        msg.MAIN = output.main.map(entry => entry.code);
+    }
+    if ( output.dnrRules?.length ) {
+        msg.dnrRules = output.dnrRules;
+    }
+    browser.runtime.sendMessage(msg);
 })();
+
+/******************************************************************************/

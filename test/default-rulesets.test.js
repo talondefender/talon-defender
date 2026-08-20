@@ -68,6 +68,7 @@ const EXPECTED_REGIONAL_IDS = [
 const EXPECTED_BLOCKED_REGIONAL_IDS = [
   'bgr-0',
   'pol-0',
+  'pol-3',
 ];
 const EXPECTED_BUNDLED_IDS = [
   ...EXPECTED_DEFAULT_IDS,

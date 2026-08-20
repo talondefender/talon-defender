@@ -29,7 +29,16 @@ const RULESET_DETAILS_HASH_PATHS = new Set([
 ]);
 
 const LOCAL_ONLY_RULESET_PATHS = new Set([
+  'rulesets/reload-sensitive-artifacts.json',
   'rulesets/ruleset-license-policy.json',
+]);
+
+const TRAILING_WHITESPACE_NORMALIZED_PATHS = new Set([
+  'js/resources/json-edit.js',
+  'js/resources/prevent-clipboard-write.js',
+  'js/resources/scriptlets.js',
+  'js/static-filtering-parser.js',
+  'rulesets/scripting/scriptlet/isolated/ublock-badware.js',
 ]);
 
 const READABILITY_NORMALIZED_SCRIPTLET_PAYLOADS = [
@@ -292,16 +301,20 @@ const normalizeReadabilityOnlyScriptletPayloads = source => {
 };
 
 const normalizeSourceForHash = (relativePath, source) => {
+  let normalized = source.replace(/\r\n/g, '\n');
+  if (TRAILING_WHITESPACE_NORMALIZED_PATHS.has(relativePath)) {
+    normalized = normalized.replace(/[ \t]+$/gm, '');
+  }
   if (relativePath === 'rulesets/scripting/scriptlet/isolated/ublock-filters.js') {
-    return normalizeReadabilityOnlyScriptletPayloads(source);
+    return normalizeReadabilityOnlyScriptletPayloads(normalized);
   }
   if (relativePath === 'js/scripting/css-specific.js') {
-    return source.replaceAll(
+    return normalized.replaceAll(
       TALON_CSS_SPECIFIC_PROCEDURAL_LOADER,
       UPSTREAM_CSS_SPECIFIC_PROCEDURAL_LOADER
     );
   }
-  return source;
+  return normalized;
 };
 
 const hashPath = async (rootDir, relativePath, { excludedRuleIds = new Set() } = {}) => {

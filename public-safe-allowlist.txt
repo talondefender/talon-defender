@@ -361,7 +361,7 @@ js/injectable-registration.js
 js/jsonpath.js
 js/offscreen/compile-filters.html
 js/offscreen/compile-filters.js
-js/offscreen/css-sandbox.template.js
+js/offscreen/css-compiled.template.js
 js/offscreen/make-cosmetic-filters.js
 js/offscreen/make-scriptlets.js
 js/offscreen/make-utils.js
@@ -381,6 +381,7 @@ js/regional-rulesets.js
 js/reload-sensitive-artifact-meta.js
 js/remote-scriptlet-hotfix.js
 js/report.js
+js/resources/abort-current-script.js
 js/resources/attribute.js
 js/resources/base.js
 js/resources/cookie.js
@@ -393,6 +394,8 @@ js/resources/noeval.js
 js/resources/object-prune.js
 js/resources/parse-replace.js
 js/resources/prevent-addeventlistener.js
+js/resources/prevent-bab.js
+js/resources/prevent-clipboard-write.js
 js/resources/prevent-dialog.js
 js/resources/prevent-fetch.js
 js/resources/prevent-innerHTML.js
@@ -1100,6 +1103,7 @@ rulesets/scripting/generic/ukr-0.js
 rulesets/scripting/generic/vie-1.js
 rulesets/scripting/popup/adguard-mobile.js
 rulesets/scripting/popup/annoyances-others.js
+rulesets/scripting/popup/annoyances-overlays.js
 rulesets/scripting/popup/ara-0.js
 rulesets/scripting/popup/chn-0.js
 rulesets/scripting/popup/deu-0.js
@@ -1111,6 +1115,7 @@ rulesets/scripting/popup/irn-0.js
 rulesets/scripting/popup/isr-0.js
 rulesets/scripting/popup/ita-0.js
 rulesets/scripting/popup/jpn-1.js
+rulesets/scripting/popup/kor-1.js
 rulesets/scripting/popup/ltu-0.js
 rulesets/scripting/popup/lva-0.js
 rulesets/scripting/popup/nld-0.js
@@ -1151,6 +1156,7 @@ rulesets/scripting/scriptlet/isolated/spa-1.js
 rulesets/scripting/scriptlet/isolated/swe-1.js
 rulesets/scripting/scriptlet/isolated/tha-0.js
 rulesets/scripting/scriptlet/isolated/tur-0.js
+rulesets/scripting/scriptlet/isolated/ublock-badware.js
 rulesets/scripting/scriptlet/isolated/ublock-filters.js
 rulesets/scripting/scriptlet/isolated/ukr-0.js
 rulesets/scripting/scriptlet/isolated/vie-1.js

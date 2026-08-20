@@ -1,6 +1,6 @@
 ## Third-Party Notices
 
-Last updated: 2026-06-01
+Last updated: 2026-08-20
 
 Talon Defender is distributed under `GPL-3.0-or-later` and includes third-party code and data.
 
@@ -42,6 +42,12 @@ Compiled rulesets bundled in release packages are the manifest-backed set in `ma
 - additional non-default privacy, mobile, LAN, and annoyance rulesets
 - the public-safe regional language rulesets declared for locale auto-enable
 - documented upstream exclusions in `rulesets/ruleset-license-policy.json` are not bundled
+
+The reviewed `2026.820.1159` uBO Lite source adds CERT Polska's `pol-3`
+warning-list dataset. Talon does not bundle it because explicit redistribution
+and commercial-use terms for the data feed were not found; the BSD-3-Clause
+license on the related tooling repository does not establish a license for the
+dataset itself.
 
 The authoritative upstream source and license map for every bundled ruleset is:
 - `rulesets/ruleset-license-policy.json`

@@ -398,6 +398,13 @@
       "sourceUrl": "https://github.com/MajkiIT/polish-ads-filter",
       "proof": "https://raw.githubusercontent.com/MajkiIT/polish-ads-filter/master/LICENSE",
       "reviewedAt": "2026-06-01"
+    },
+    "pol-3": {
+      "reason": "license-undetermined",
+      "commercialUse": "unknown",
+      "sourceUrl": "https://hole.cert.pl/domains/v2/domains_ublock.txt",
+      "proof": "The published warning-list data and project pages do not state redistribution or commercial-use terms for the domain dataset. The BSD-3-Clause license on CERT Polska's warning-list-tools repository covers the tools, not this data feed.",
+      "reviewedAt": "2026-08-20"
     }
   }
 }
