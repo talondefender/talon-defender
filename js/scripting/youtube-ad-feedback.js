@@ -18,30 +18,30 @@ const LOGO_PATH = 'icons/icon128.png';
 const OVERLAY_CSS = `
 #${OVERLAY_ID} {
     position: absolute;
-    top: 16px;
-    left: 16px;
+    top: 50%;
+    left: 50%;
     z-index: 2147483646;
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 18px;
     width: max-content;
-    max-width: min(390px, calc(100% - 32px));
-    min-height: 64px;
-    padding: 10px 16px 10px 10px;
+    max-width: min(520px, calc(100% - 40px));
+    min-height: 104px;
+    padding: 16px 24px 16px 16px;
     border: 1px solid rgba(72, 210, 226, 0.8);
-    border-radius: 16px;
+    border-radius: 22px;
     background: linear-gradient(135deg, rgba(8, 18, 35, 0.97), rgba(13, 35, 58, 0.95));
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
     color: #f8fafc;
     font-family: "Segoe UI", Roboto, Arial, sans-serif;
-    font-size: 16px;
+    font-size: 18px;
     line-height: 1.35;
     text-align: left;
     pointer-events: none;
     user-select: none;
     direction: ltr;
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translate(-50%, -50%) scale(1);
     transition: padding 180ms ease, min-height 180ms ease, opacity 180ms ease, transform 180ms ease;
     contain: layout style paint;
 }
@@ -51,8 +51,8 @@ const OVERLAY_CSS = `
     display: grid;
     place-items: center;
     flex: 0 0 auto;
-    width: 50px;
-    height: 50px;
+    width: 76px;
+    height: 76px;
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.96);
     box-shadow: 0 0 0 2px rgba(72, 210, 226, 0.45);
@@ -70,8 +70,8 @@ const OVERLAY_CSS = `
 
 #${OVERLAY_ID} .talon-youtube-ad-feedback-logo {
     display: block;
-    width: 46px;
-    height: 46px;
+    width: 70px;
+    height: 70px;
     border-radius: 50%;
     object-fit: contain;
     transition: width 180ms ease, height 180ms ease;
@@ -83,39 +83,39 @@ const OVERLAY_CSS = `
 
 #${OVERLAY_ID} .talon-youtube-ad-feedback-title {
     color: #ffffff;
-    font-size: 16px;
+    font-size: 22px;
     font-weight: 700;
     letter-spacing: 0.01em;
     white-space: normal;
 }
 
 #${OVERLAY_ID} .talon-youtube-ad-feedback-detail {
-    margin-top: 2px;
+    margin-top: 4px;
     color: #c8f5fa;
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 500;
     white-space: normal;
 }
 
 #${OVERLAY_ID}[data-state="compact"] {
-    gap: 9px;
-    min-height: 44px;
-    padding: 6px 12px 6px 7px;
+    gap: 12px;
+    min-height: 60px;
+    padding: 8px 18px 8px 9px;
     border-radius: 999px;
 }
 
 #${OVERLAY_ID}[data-state="compact"] .talon-youtube-ad-feedback-logo-wrap {
-    width: 34px;
-    height: 34px;
+    width: 46px;
+    height: 46px;
 }
 
 #${OVERLAY_ID}[data-state="compact"] .talon-youtube-ad-feedback-logo {
-    width: 31px;
-    height: 31px;
+    width: 42px;
+    height: 42px;
 }
 
 #${OVERLAY_ID}[data-state="compact"] .talon-youtube-ad-feedback-title {
-    font-size: 14px;
+    font-size: 17px;
 }
 
 #${OVERLAY_ID}[data-state="compact"] .talon-youtube-ad-feedback-detail {
@@ -129,29 +129,27 @@ const OVERLAY_CSS = `
 
 @media (max-width: 520px) {
     #${OVERLAY_ID} {
-        top: 10px;
-        left: 10px;
-        max-width: calc(100% - 20px);
-        min-height: 54px;
-        padding: 8px 12px 8px 8px;
+        max-width: calc(100% - 24px);
+        min-height: 82px;
+        padding: 12px 16px 12px 12px;
     }
 
     #${OVERLAY_ID} .talon-youtube-ad-feedback-logo-wrap {
-        width: 42px;
-        height: 42px;
+        width: 60px;
+        height: 60px;
     }
 
     #${OVERLAY_ID} .talon-youtube-ad-feedback-logo {
-        width: 39px;
-        height: 39px;
+        width: 55px;
+        height: 55px;
     }
 
     #${OVERLAY_ID} .talon-youtube-ad-feedback-title {
-        font-size: 14px;
+        font-size: 18px;
     }
 
     #${OVERLAY_ID} .talon-youtube-ad-feedback-detail {
-        font-size: 12px;
+        font-size: 14px;
     }
 }
 

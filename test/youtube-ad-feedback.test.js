@@ -121,6 +121,12 @@ test('YouTube feedback shows a branded non-interactive message only while accele
   assert.equal(overlay.getAttribute('role'), 'status');
   assert.match(overlay.getAttribute('aria-label'), /Talon Defender is shortening/);
   assert.match(style.textContent, /pointer-events:\s*none/);
+  assert.match(style.textContent, /top:\s*50%/);
+  assert.match(style.textContent, /left:\s*50%/);
+  assert.match(style.textContent, /translate\(-50%,\s*-50%\)/);
+  assert.match(style.textContent, /max-width:\s*min\(520px/);
+  assert.match(style.textContent, /width:\s*76px/);
+  assert.match(style.textContent, /font-size:\s*22px/);
   assert.match(style.textContent, /prefers-reduced-motion/);
 
   const logo = state.elements.find(element =>
