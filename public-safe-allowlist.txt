@@ -441,6 +441,7 @@ js/scripting/remote-cosmetics-global.js
 js/scripting/remote-cosmetics-host.js
 js/scripting/remote-cosmetics.js
 js/scripting/scriptlet-token-details.json
+js/scripting/youtube-ad-feedback.js
 js/scripting/youtube-ad-skip.js
 js/scripting/youtube-player-guard.js
 js/scripting/youtube-player-guard-loader.js
@@ -1395,6 +1396,7 @@ test/site-key.test.js
 test/ubol-parity-audit.test.js
 test/ubol-parity-status.test.js
 test/ubol-parity-watch.test.js
+test/youtube-ad-feedback.test.js
 test/youtube-ad-skip.test.js
 test/youtube-player-guard.test.js
 THIRD_PARTY_NOTICES.md

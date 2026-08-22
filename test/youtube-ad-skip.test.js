@@ -26,6 +26,8 @@ function createHarness() {
     styles: [],
     listeners: [],
     timeoutCallbacks: [],
+    feedbackTransitions: [],
+    feedbackStops: 0,
   };
   const video = {
     muted: false,
@@ -204,6 +206,15 @@ function createHarness() {
     },
     clearTimeout: () => {},
     addEventListener: () => {},
+    TalonYoutubeAdFeedbackController: {
+      setActive(active) {
+        state.feedbackTransitions.push(active === true);
+        return true;
+      },
+      stop() {
+        state.feedbackStops += 1;
+      },
+    },
     MouseEvent: class {
       constructor(type) {
         this.type = type;
@@ -247,12 +258,14 @@ test('YouTube ad skip clicks native skip controls and speeds visible ads without
   assert.equal(video.currentTime, 2);
   assert.equal(state.styles.length, 1);
   assert.equal(state.styles[0].id, 'talon-youtube-ad-skip-style');
+  assert.equal(state.feedbackTransitions.at(-1), true);
 
   state.adShowing = false;
   state.skipShowing = false;
   assert.equal(controller.tick(), false);
   assert.equal(video.muted, false);
   assert.equal(video.playbackRate, 1);
+  assert.equal(state.feedbackTransitions.at(-1), false);
 });
 
 test('YouTube ad skip recognizes visible ad indicators when ad-showing class is absent', async () => {
@@ -421,6 +434,7 @@ test('uBO parity registration excludes YouTube scriptlets and keeps Talon lane s
 
   assert.match(managerSource, /const TALON_YOUTUBE_AD_SKIP_ID = 'talon-youtube-ad-skip';/);
   assert.match(managerSource, /const TALON_YOUTUBE_AD_SKIP_PATH = '\/js\/scripting\/youtube-ad-skip\.js';/);
+  assert.match(managerSource, /const TALON_YOUTUBE_AD_FEEDBACK_PATH = '\/js\/scripting\/youtube-ad-feedback\.js';/);
   assert.match(managerSource, /const TALON_YOUTUBE_PLAYER_GUARD_ID = 'talon-youtube-player-guard';/);
   assert.match(managerSource, /const TALON_YOUTUBE_PLAYER_GUARD_PATH = '\/js\/scripting\/youtube-player-guard\.js';/);
   assert.match(managerSource, /function registerYouTubePlayerGuard\(context\)/);
@@ -440,8 +454,17 @@ test('uBO parity registration excludes YouTube scriptlets and keeps Talon lane s
   assert.match(managerSource, /const getScriptletExcludedHostnames = \( \) => YOUTUBE_AD_SKIP_HOSTNAMES;/);
   assert.match(managerSource, /function registerYouTubeAdSkip\(context\)/);
   assert.match(managerSource, /registerYouTubeAdSkip\(context\)/);
+  const youtubeRegistrationBlock = managerSource.slice(
+    managerSource.indexOf('function registerYouTubeAdSkip(context)'),
+    managerSource.indexOf('function registerYouTubePlayerGuard(context)')
+  );
+  assert.ok(
+    youtubeRegistrationBlock.indexOf('TALON_YOUTUBE_AD_FEEDBACK_PATH') <
+      youtubeRegistrationBlock.indexOf('TALON_YOUTUBE_AD_SKIP_PATH')
+  );
   assert.match(managerSource, /excludeMatches\.push\(\.\.\.ut\.matchesFromHostnames\(scriptletExcludedHostnames\)\)/);
   assert.match(managerSource, /targetHostnames = ut\.subtractHostnameIters\(\s*targetHostnames,\s*scriptletExcludedHostnames\s*\);/);
   assert.match(ownershipSource, /"js\/scripting\/youtube-ad-skip\.js"/);
+  assert.match(ownershipSource, /"js\/scripting\/youtube-ad-feedback\.js"/);
   assert.match(ownershipSource, /"js\/scripting\/youtube-player-guard\.js"/);
 });

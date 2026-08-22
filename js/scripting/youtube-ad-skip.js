@@ -105,6 +105,14 @@ const createController = env => {
     let lastSkipClickAt = 0;
     let skipActivationCount = 0;
 
+    const setAdFeedbackActive = active => {
+        try {
+            return win.TalonYoutubeAdFeedbackController?.setActive?.(active) === true;
+        } catch {
+        }
+        return false;
+    };
+
     const markState = value => {
         try {
             doc.documentElement?.setAttribute('data-talon-youtube-ad-skip', value);
@@ -480,9 +488,11 @@ const createController = env => {
             for ( const video of videos() ) {
                 handleAdVideo(video);
             }
+            setAdFeedbackActive(true);
             lastAdState = true;
             return true;
         }
+        setAdFeedbackActive(false);
         if ( lastAdState ) {
             restoreVideos();
             lastAdState = false;
@@ -568,6 +578,10 @@ const createController = env => {
             intervalId = undefined;
         }
         restoreVideos();
+        try {
+            win.TalonYoutubeAdFeedbackController?.stop?.();
+        } catch {
+        }
         lastAdState = false;
         markState('stopped');
     };

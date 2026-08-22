@@ -362,6 +362,15 @@
     },
     {
       "resources": [
+        "icons/icon128.png"
+      ],
+      "matches": [
+        "*://*.youtube.com/*",
+        "*://*.youtube-nocookie.com/*"
+      ]
+    },
+    {
+      "resources": [
         "/strictblock.html"
       ],
       "matches": [
