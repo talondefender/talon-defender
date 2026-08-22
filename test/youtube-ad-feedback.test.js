@@ -190,6 +190,12 @@ test('YouTube feedback renders an expired CTA with campaign tracking and mode-sa
     document.getElementById('talon-youtube-ad-feedback-style').textContent,
     /talon-youtube-ad-feedback-cta[\s\S]*pointer-events:\s*auto/
   );
+  assert.equal(overlay.getAttribute('data-state'), 'expanded');
+  assert.equal(state.timeoutEntries.length, 0);
+
+  controller.setActive(true, { mode: 'expired' });
+  assert.equal(overlay.getAttribute('data-state'), 'expanded');
+  assert.equal(state.timeoutEntries.length, 0);
 
   assert.equal(controller.setActive(false, { mode: 'protected' }), false);
   assert.ok(document.getElementById('talon-youtube-ad-feedback'));

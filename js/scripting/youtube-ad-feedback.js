@@ -485,7 +485,11 @@ const createController = env => {
         if ( root === null ) { return false; }
         if ( entering || modeChanged || (created && compact === false) ) {
             root.setAttribute?.('data-state', 'expanded');
-            scheduleCollapse();
+            if ( mode === EXPIRED_MODE ) {
+                clearCollapseTimer();
+            } else {
+                scheduleCollapse();
+            }
         }
         return true;
     };
