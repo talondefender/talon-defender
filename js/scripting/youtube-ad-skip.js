@@ -107,7 +107,10 @@ const createController = env => {
 
     const setAdFeedbackActive = active => {
         try {
-            return win.TalonYoutubeAdFeedbackController?.setActive?.(active) === true;
+            return win.TalonYoutubeAdFeedbackController?.setActive?.(
+                active,
+                { mode: 'protected' }
+            ) === true;
         } catch {
         }
         return false;

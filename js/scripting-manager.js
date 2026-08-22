@@ -105,7 +105,6 @@ const TALON_SITE_FIX_HOSTNAMES = Object.freeze([
     'vidzy.cc',
 ]);
 const TALON_YOUTUBE_AD_SKIP_PATH = '/js/scripting/youtube-ad-skip.js';
-const TALON_YOUTUBE_AD_FEEDBACK_PATH = '/js/scripting/youtube-ad-feedback.js';
 const TALON_YOUTUBE_AD_SKIP_ID = 'talon-youtube-ad-skip';
 const TALON_YOUTUBE_PLAYER_GUARD_PATH = '/js/scripting/youtube-player-guard.js';
 const TALON_YOUTUBE_PLAYER_GUARD_ID = 'talon-youtube-player-guard';
@@ -1071,7 +1070,6 @@ function registerYouTubeAdSkip(context) {
         id: TALON_YOUTUBE_AD_SKIP_ID,
         js: [
             '/js/scripting/breakage-guard.js',
-            TALON_YOUTUBE_AD_FEEDBACK_PATH,
             TALON_YOUTUBE_AD_SKIP_PATH,
         ],
         allFrames: true,

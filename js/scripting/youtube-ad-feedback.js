@@ -14,6 +14,13 @@ const STYLE_ID = 'talon-youtube-ad-feedback-style';
 const PLAYER_SELECTOR = '.html5-video-player,#movie_player';
 const COLLAPSE_DELAY_MS = 4000;
 const LOGO_PATH = 'icons/icon128.png';
+const PROTECTED_MODE = 'protected';
+const EXPIRED_MODE = 'expired';
+const PRICING_SOURCE = 'youtube_expired_overlay';
+const SUPPORTED_SITE_LANGS = new Set([
+    'en', 'de', 'fr', 'it', 'es', 'no', 'sv', 'da', 'fi', 'nl', 'ja', 'ko',
+]);
+const LANGUAGE_ALIASES = { nb: 'no', nn: 'no' };
 
 const OVERLAY_CSS = `
 #${OVERLAY_ID} {
@@ -97,6 +104,46 @@ const OVERLAY_CSS = `
     white-space: normal;
 }
 
+#${OVERLAY_ID} .talon-youtube-ad-feedback-cta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 12px;
+    padding: 9px 16px;
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    border-radius: 999px;
+    background: #45cfe0;
+    box-shadow: 0 5px 14px rgba(0, 0, 0, 0.28);
+    color: #071522;
+    font-size: 15px;
+    font-weight: 800;
+    line-height: 1.2;
+    text-decoration: none;
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+#${OVERLAY_ID} .talon-youtube-ad-feedback-cta:hover,
+#${OVERLAY_ID} .talon-youtube-ad-feedback-cta:focus-visible {
+    background: #7be7f1;
+    outline: 3px solid rgba(255, 255, 255, 0.82);
+    outline-offset: 3px;
+}
+
+#${OVERLAY_ID}[data-mode="protected"] .talon-youtube-ad-feedback-cta {
+    display: none;
+}
+
+#${OVERLAY_ID}[data-mode="expired"] {
+    max-width: min(590px, calc(100% - 40px));
+    border-color: rgba(250, 187, 76, 0.92);
+    background: linear-gradient(135deg, rgba(8, 18, 35, 0.98), rgba(44, 31, 20, 0.97));
+}
+
+#${OVERLAY_ID}[data-mode="expired"] .talon-youtube-ad-feedback-detail {
+    color: #ffe2aa;
+}
+
 #${OVERLAY_ID}[data-state="compact"] {
     gap: 12px;
     min-height: 60px;
@@ -120,6 +167,18 @@ const OVERLAY_CSS = `
 
 #${OVERLAY_ID}[data-state="compact"] .talon-youtube-ad-feedback-detail {
     display: none;
+}
+
+#${OVERLAY_ID}[data-mode="expired"][data-state="compact"] .talon-youtube-ad-feedback-copy {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+#${OVERLAY_ID}[data-mode="expired"][data-state="compact"] .talon-youtube-ad-feedback-cta {
+    margin-top: 0;
+    padding: 7px 13px;
+    font-size: 14px;
 }
 
 @keyframes talon-youtube-ad-feedback-pulse {
@@ -167,9 +226,13 @@ const createController = env => {
     const doc = env.document;
     let active = false;
     let compact = false;
+    let mode = PROTECTED_MODE;
     let collapseTimer;
     let overlayElement;
     let styleElement;
+    let titleElement;
+    let detailElement;
+    let ctaElement;
 
     const removeElement = element => {
         if ( !element ) { return; }
@@ -197,6 +260,39 @@ const createController = env => {
         } catch {
         }
         return path;
+    };
+
+    const pricingUrl = () => {
+        let baseUrl = 'https://talondefender.com';
+        try {
+            const getManifest = env.chrome?.runtime?.getManifest ||
+                win.chrome?.runtime?.getManifest;
+            const homepage = getManifest?.()?.homepage_url;
+            if ( typeof homepage === 'string' && homepage.trim() !== '' ) {
+                const parsed = new URL(homepage.trim());
+                if ( parsed.protocol === 'https:' ) {
+                    parsed.hash = '';
+                    parsed.search = '';
+                    baseUrl = parsed.toString().replace(/\/+$/, '');
+                }
+            }
+        } catch {
+        }
+        let language = 'en';
+        try {
+            const getUILanguage = env.chrome?.i18n?.getUILanguage ||
+                win.chrome?.i18n?.getUILanguage;
+            const rawLanguage = String(getUILanguage?.() || '').toLowerCase();
+            const baseLanguage = rawLanguage.split(/[-_]/)[0];
+            const resolved = LANGUAGE_ALIASES[baseLanguage] || baseLanguage;
+            if ( SUPPORTED_SITE_LANGS.has(resolved) ) {
+                language = resolved;
+            }
+        } catch {
+        }
+        const url = new URL(`${baseUrl}/${language}/pricing/`);
+        url.searchParams.set('source', PRICING_SOURCE);
+        return url.toString();
     };
 
     const ensureStyle = () => {
@@ -238,16 +334,14 @@ const createController = env => {
         const copy = doc.createElement?.('div');
         const title = doc.createElement?.('div');
         const detail = doc.createElement?.('div');
-        if ( !root || !logoWrap || !logo || !copy || !title || !detail ) {
+        const cta = doc.createElement?.('a');
+        if ( !root || !logoWrap || !logo || !copy || !title || !detail || !cta ) {
             return null;
         }
 
         root.id = OVERLAY_ID;
         root.setAttribute?.('data-state', compact ? 'compact' : 'expanded');
-        root.setAttribute?.(
-            'aria-label',
-            'Talon Defender is shortening this YouTube ad and getting you back to your video faster.'
-        );
+        root.setAttribute?.('data-mode', mode);
         root.setAttribute?.('role', 'status');
 
         logoWrap.className = 'talon-youtube-ad-feedback-logo-wrap';
@@ -258,16 +352,56 @@ const createController = env => {
 
         copy.className = 'talon-youtube-ad-feedback-copy';
         title.className = 'talon-youtube-ad-feedback-title';
-        title.textContent = 'Talon Defender is shortening this ad';
         detail.className = 'talon-youtube-ad-feedback-detail';
-        detail.textContent = 'Getting you back to your video faster.';
+        cta.className = 'talon-youtube-ad-feedback-cta';
+        cta.href = pricingUrl();
+        cta.target = '_blank';
+        cta.rel = 'noopener noreferrer';
+        cta.textContent = 'Restore Talon Defender';
+        cta.setAttribute?.('aria-label', 'Restore Talon Defender on the pricing page');
 
         append(logoWrap, logo);
         append(copy, title);
         append(copy, detail);
+        append(copy, cta);
         append(root, logoWrap);
         append(root, copy);
+        titleElement = title;
+        detailElement = detail;
+        ctaElement = cta;
         return root;
+    };
+
+    const updateOverlayContent = () => {
+        if ( !overlayElement ) { return; }
+        overlayElement.setAttribute?.('data-mode', mode);
+        if ( mode === EXPIRED_MODE ) {
+            overlayElement.setAttribute?.('role', 'region');
+            overlayElement.setAttribute?.(
+                'aria-label',
+                'Talon Defender protection is paused. Reactivate to shorten YouTube ads like this.'
+            );
+            if ( titleElement ) {
+                titleElement.textContent = 'Talon Defender could shorten ads like this';
+            }
+            if ( detailElement ) {
+                detailElement.textContent =
+                    'Your protection is paused. Reactivate for faster YouTube viewing.';
+            }
+            if ( ctaElement ) { ctaElement.href = pricingUrl(); }
+            return;
+        }
+        overlayElement.setAttribute?.('role', 'status');
+        overlayElement.setAttribute?.(
+            'aria-label',
+            'Talon Defender is shortening this YouTube ad and getting you back to your video faster.'
+        );
+        if ( titleElement ) {
+            titleElement.textContent = 'Talon Defender is shortening this ad';
+        }
+        if ( detailElement ) {
+            detailElement.textContent = 'Getting you back to your video faster.';
+        }
     };
 
     const ensureOverlay = () => {
@@ -293,6 +427,7 @@ const createController = env => {
             'data-state',
             compact ? 'compact' : 'expanded'
         );
+        updateOverlayContent();
         return { root: overlayElement, created };
     };
 
@@ -316,24 +451,39 @@ const createController = env => {
         }, COLLAPSE_DELAY_MS);
     };
 
-    const setActive = value => {
+    const setActive = (value, options = {}) => {
+        const requestedMode = options?.mode === EXPIRED_MODE
+            ? EXPIRED_MODE
+            : PROTECTED_MODE;
         const nextActive = value === true;
         if ( nextActive === false ) {
+            if (
+                options?.mode !== undefined &&
+                active &&
+                mode !== requestedMode
+            ) {
+                return false;
+            }
             const changed = active || overlayElement !== undefined;
             active = false;
             compact = false;
             clearCollapseTimer();
             removeElement(overlayElement);
             overlayElement = undefined;
+            titleElement = undefined;
+            detailElement = undefined;
+            ctaElement = undefined;
             return changed;
         }
 
         const entering = active === false;
+        const modeChanged = mode !== requestedMode;
         active = true;
-        if ( entering ) { compact = false; }
+        mode = requestedMode;
+        if ( entering || modeChanged ) { compact = false; }
         const { root, created } = ensureOverlay();
         if ( root === null ) { return false; }
-        if ( entering || (created && compact === false) ) {
+        if ( entering || modeChanged || (created && compact === false) ) {
             root.setAttribute?.('data-state', 'expanded');
             scheduleCollapse();
         }
@@ -341,7 +491,7 @@ const createController = env => {
     };
 
     const refresh = () => {
-        if ( active ) { setActive(true); }
+        if ( active ) { setActive(true, { mode }); }
     };
 
     const stop = () => {
@@ -357,6 +507,7 @@ const createController = env => {
 
     return {
         isActive: () => active,
+        getMode: () => mode,
         refresh,
         setActive,
         stop,

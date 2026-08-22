@@ -77,9 +77,14 @@ function createHarness() {
   const context = {
     __talonYoutubeAdFeedbackTest: true,
     document,
+    URL,
     chrome: {
+      i18n: {
+        getUILanguage: () => 'en-US',
+      },
       runtime: {
         getURL: path => `chrome-extension://talon-test/${path}`,
+        getManifest: () => ({ homepage_url: 'https://talondefender.com' }),
       },
     },
     addEventListener(name, handler, options) {
@@ -147,6 +152,49 @@ test('YouTube feedback shows a branded non-interactive message only while accele
   assert.equal(document.getElementById('talon-youtube-ad-feedback'), null);
   assert.ok(document.getElementById('talon-youtube-ad-feedback-style'));
   assert.equal(state.timeoutEntries[0].cleared, true);
+});
+
+test('YouTube feedback renders an expired CTA with campaign tracking and mode-safe cleanup', async () => {
+  const source = await readSource('js/scripting/youtube-ad-feedback.js');
+  const { context, document, state } = createHarness();
+  vm.runInNewContext(source, context);
+
+  const controller = context.__talonYoutubeAdFeedbackCreateController(context);
+  assert.equal(controller.setActive(true, { mode: 'expired' }), true);
+  assert.equal(controller.getMode(), 'expired');
+
+  const overlay = document.getElementById('talon-youtube-ad-feedback');
+  assert.equal(overlay.getAttribute('data-mode'), 'expired');
+  assert.equal(overlay.getAttribute('role'), 'region');
+  assert.match(overlay.getAttribute('aria-label'), /protection is paused/i);
+
+  const title = state.elements.find(element =>
+    element.className === 'talon-youtube-ad-feedback-title'
+  );
+  const detail = state.elements.find(element =>
+    element.className === 'talon-youtube-ad-feedback-detail'
+  );
+  const cta = state.elements.find(element =>
+    element.className === 'talon-youtube-ad-feedback-cta'
+  );
+  assert.equal(title.textContent, 'Talon Defender could shorten ads like this');
+  assert.match(detail.textContent, /protection is paused/i);
+  assert.equal(cta.textContent, 'Restore Talon Defender');
+  assert.equal(cta.target, '_blank');
+  assert.equal(cta.rel, 'noopener noreferrer');
+  assert.equal(
+    cta.href,
+    'https://talondefender.com/en/pricing/?source=youtube_expired_overlay'
+  );
+  assert.match(
+    document.getElementById('talon-youtube-ad-feedback-style').textContent,
+    /talon-youtube-ad-feedback-cta[\s\S]*pointer-events:\s*auto/
+  );
+
+  assert.equal(controller.setActive(false, { mode: 'protected' }), false);
+  assert.ok(document.getElementById('talon-youtube-ad-feedback'));
+  assert.equal(controller.setActive(false, { mode: 'expired' }), true);
+  assert.equal(document.getElementById('talon-youtube-ad-feedback'), null);
 });
 
 test('YouTube feedback collapses once without duplicate overlays or timers', async () => {

@@ -58,8 +58,9 @@
       "js/scripting/css-procedural-api.js": "Talon-owned procedural-cosmetic teardown and bounded mutation behavior support live entitlement changes.",
       "js/scripting/css-specific.js": "Talon-approved fail-closed guard around the injected procedural cosmetic API constructor. Keep this hardening when importing upstream css-specific.js updates.",
       "js/scripting/isolated-api.js": "Talon-approved empty-frame-context guards keep compiler-generated cosmetic code fail-closed on opaque or unavailable ancestors.",
-      "js/scripting/youtube-ad-feedback.js": "Talon-owned, presentation-only feedback for the Talon YouTube ad-acceleration lane.",
+      "js/scripting/youtube-ad-feedback.js": "Talon-owned, presentation-only feedback for entitled acceleration and expired reactivation messaging on YouTube.",
       "js/scripting/youtube-ad-skip.js": "Talon-owned YouTube ad-skip lane. Do not import or copy uBO Lite's YouTube scriptlet/runtime strategy into this path; upstream uBO scriptlets are intentionally excluded from YouTube hosts.",
+      "js/scripting/youtube-entitlement-observer.js": "Talon-owned, read-only YouTube ad and entitlement observer. It may render expired reactivation messaging but must never mutate media, controls, or network behavior.",
       "js/scripting/youtube-player-guard.js": "Talon-owned YouTube page-world guard: leaves YouTube player ad metadata intact, shields targeted enforcement/reset paths, and corrects SSAP restart loops without remote analytics or web-accessible script injection."
     },
     "upstreamExtra": {
@@ -99,6 +100,7 @@
     "js/scripting/shadow-dom-helper.js",
     "js/scripting/youtube-ad-feedback.js",
     "js/scripting/youtube-ad-skip.js",
+    "js/scripting/youtube-entitlement-observer.js",
     "js/scripting/youtube-player-guard.js",
     "managed_storage.json",
     "options/**",

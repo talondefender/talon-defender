@@ -4295,6 +4295,7 @@ function stopIsolatedRuntimeControllers() {
         [ 'TalonAutomationController', [ 'stop' ] ],
         [ 'TalonPostHideCleanupController', [ 'stop' ] ],
         [ 'TalonAdShellStylesController', [ 'stop' ] ],
+        [ 'TalonYoutubeAdSkipController', [ 'stop' ] ],
         [ 'TalonCssGenericController', [ 'stop' ] ],
         [ 'TalonBlockHintsController', [ 'stop' ] ],
         [ 'TalonShadowRootController', [ 'stop' ] ],
