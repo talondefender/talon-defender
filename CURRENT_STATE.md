@@ -3,6 +3,8 @@
 The extension is an MV3 blocker with a trial-plus-license entitlement model built on top of the uBOL codebase.
 
 Runtime behavior now:
+- Chrome 122 userScripts availability probing guards the namespace getter as well as method calls; ordinary startup and paywall cleanup stay available when Developer mode is off, while pending managed-script cleanup evidence is preserved.
+- YouTube MAIN and isolated scripts register together at document start only for entitled, enabled scopes. Parent opt-outs, descendant exceptions, and subsystem backoff reconcile with live document-targeted teardown; no static guard or loader bypass remains. Stopped wrappers become pass-through and owned page/media changes are restored without navigation, seeking, cookie clearing, or full storage clearing. Existing legacy guards are not stacked or unsafely unwrapped; they migrate after natural navigation.
 - `runtime.onInstalled` opens `https://talondefender.com/welcome/?source=install` on fresh install.
 - the first popup flow can open `https://talondefender.com/welcome-live/?source=first_popup_open`.
 - the uninstall URL is always set to `https://talondefender.com/uninstall/` with `source` and `version` query parameters.
@@ -65,6 +67,7 @@ Bundled filtering surface now:
 - remaining manifest/resource parity differences are documented Talon product exceptions: entitlement alarms, frame-aware navigation diagnostics, packaged automation vocabulary, and omission of uBO Lite's zapper UI
 
 Community bundle behavior now:
+- Baseline and overlay transport share a 10-second deadline through body consumption and JSON parsing, plus a 4 MiB decoded-response limit shared with the publisher/API. Oversized, malformed, and stalled responses follow existing last-known-good fallback and retry behavior. A small coordinator owns the serialized apply queue, baseline force follow-up, and per-site overlay single-flight; verification and activation remain in their existing modules.
 - the default bundle URL is `https://api.talondefender.com/v1/community/latest.bundle.json`
 - community bundles are signed JSON data only: public store packages do not carry executable JavaScript, WASM, or remote command payloads, and signed community data can only select packaged DNR behavior, packaged redirect resources, packaged cosmetics/heuristics/directives, and packaged scriptlet tokens
 - the extension now treats `latest.bundle.json` as the signed baseline lane and derives signed site-keyed overlay requests from the same community base URL, compiling `baseline + active overlays` back into the existing `communityBundle*` effective state consumed by DNR and injectables
@@ -96,6 +99,7 @@ Community bundle behavior now:
 - troubleshooting/report output now exposes compiled community bundle version, baseline version and last baseline attempt/success/error state, active overlay and negative-cache counts, last overlay site/version/reason/status, last emergency-sync attempt versus success state, cleanup reason, activation rollback state, public versus proof hotfix counts, dropped quota classes, partial DNR repair state, allow-all rollback state, active exception counts, remote heuristic regex counts, host-scoped cosmetic counts, ignored public tactic counts, and injectable sync recovery errors for operator diagnostics
 
 Release posture now:
+- `verify:ci` and every store release entrypoint run unit/public-boundary/dependency checks, package validation, and required browser smoke against a disposable copy of each exact artifact. Release evidence binds every packaged file hash to the clean tagged source before zip creation. Public CI uses Node 24.19.0 and npm 11.1.0.
 - this workspace is the only public-safe source surface
 - the manifest keeps `<all_urls>` because blocking, cosmetic filtering, strict-block navigation, picker/unpicker, and per-site protection checks must apply on arbitrary user-visited pages.
 - the manifest includes `unlimitedStorage` so atomic compiled-cosmetic generations and their last-known-good rollback data cannot fail at Chrome's default local-storage quota; runtime code still bounds and garbage-collects obsolete generations

@@ -443,7 +443,6 @@ js/scripting/remote-cosmetics.js
 js/scripting/scriptlet-token-details.json
 js/scripting/youtube-ad-skip.js
 js/scripting/youtube-player-guard.js
-js/scripting/youtube-player-guard-loader.js
 js/scripting/scriptlet-token/annoyances-cookies.abort-current-script.js
 js/scripting/scriptlet-token/annoyances-cookies.abort-on-property-read.js
 js/scripting/scriptlet-token/annoyances-cookies.abort-on-property-write.js
@@ -1437,3 +1436,13 @@ web_accessible_resources/popads.js
 web_accessible_resources/prebid-ads.js
 web_accessible_resources/scorecardresearch_beacon.js
 web_accessible_resources/sensors-analytics.js
+.github/workflows/extension-ci.yml
+.node-version
+js/community-fetch.js
+js/community-sync-coordinator.js
+js/youtube-registration.js
+scripts/archive-entry-hashes.ps1
+scripts/install-current-chrome.ps1
+scripts/install-minimum-chrome.ps1
+scripts/minimum-chrome.json
+scripts/verify-release.mjs

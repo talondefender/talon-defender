@@ -28,6 +28,7 @@ Current product summary:
 - it now exposes a plain-language `Extra protection` toggle in Settings for the stronger non-default annoyance packs
 - it verifies paid licenses against the API
 - it falls into paywall mode when entitlement expires
+- YouTube respects entitlement, Allowed Sites, and subsystem backoff through policy-scoped persistent document-start registration. Live policy changes stop and restore owned hooks, media state, styles, listeners, and queued work without reloading or seeking. Documents containing the older irreversible guard migrate on their next natural navigation.
 - YouTube uses a Talon-owned playback guard and narrowed ad-skip lane on YouTube hosts only. The guard leaves YouTube player response ad metadata intact, shields only known playback enforcement/reset signals, keeps playback-wall reload recovery disabled, clicks bounded native Skip/Skip Ads controls when present, and temporarily speeds/mutes detected ad playback without seeking the timeline. uBO Lite scriptlet/runtime parity is intentionally excluded on YouTube hosts so Talon does not copy uBO Lite's YouTube method.
 - while entitled, it can fetch signed JSON community data from the API: a baseline bundle plus signed site-keyed overlay hotfixes derived from the same community base URL. The public store package does not fetch or execute remote JavaScript, WASM, or remote command payloads; signed community data can only select packaged DNR rules, packaged redirect resources, packaged cosmetics/heuristics/directives, and packaged scriptlet tokens. The lane uses SHA-256 integrity, Ed25519 signatures, rollback to the last-known-good compiled state, authoritative cleanup when disabled or invalid, Talon-owned first-party host rejection, packaged compatibility exclusions, quota bounds, and retry/negative-cache handling.
 
@@ -51,7 +52,9 @@ Key commands:
 - `npm run package:extension:edge`
 - `npm run validate:mv3-package:edge`
 - `npm run package:public-source`
+- `npm run verify:ci`
 - `npm run test:chrome-smoke`
+- `npm run test:edge-smoke`
 - `npm run release:gate`
 - `npm run release:extension`
 - `npm run release:extension:edge`

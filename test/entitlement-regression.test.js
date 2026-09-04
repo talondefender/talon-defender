@@ -460,7 +460,7 @@ test('background paywall cleanup propagates and verifies lifecycle failures', as
   assert.match(contentCleanup, /unregisterContentScripts\(\{ ids \}\)/);
   assert.doesNotMatch(contentCleanup, /catch\s*\(/);
   assert.match(userCleanup, /unregisterAndVerifyManagedRegistrations\(\{/);
-  assert.match(userCleanup, /browser\.userScripts instanceof Object === false/);
+  assert.match(userCleanup, /isUserScriptsAvailable\(\) === false/);
   assert.doesNotMatch(userCleanup, /supportsUserScripts !== true/);
   assert.match(userCleanup, /userScripts\.unregister\(\{ ids \}\)/);
   assert.match(userCleanup, /catch \(reason\) \{[\s\S]*isUserScriptsAvailable\(\) === false[\s\S]*throw reason;/);

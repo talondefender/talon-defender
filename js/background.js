@@ -19,6 +19,7 @@
     Home: https://github.com/gorhill/uBlock
 */
 
+import { createCommunitySyncCoordinator } from './community-sync-coordinator.js';
 import {
     MODE_NONE,
     MODE_BASIC,
@@ -3241,9 +3242,6 @@ let suspendedOpenTabRuntimeRefreshRevision = 0;
 let suspendedOpenTabRuntimeRefreshHydrationPromise;
 let suspendedOpenTabRuntimeRefreshPersistenceTail = Promise.resolve();
 let lastCommunityCleanupReason = '';
-let communityBaselineSyncInFlight;
-let communityBaselineForceQueued = false;
-let communityApplyQueue = Promise.resolve();
 let entitlementOpenTabRefreshPromise;
 let entitlementActionTail = Promise.resolve();
 let entitlementEffectsRevision = 0;
@@ -3427,7 +3425,6 @@ let nextOpportunisticUserScriptsCleanupProbeAt = 0;
 const pendingPaywallMutations = new Set();
 let paywallMutationReconciliationRequired = false;
 let rulesetMutationTail = Promise.resolve();
-const communityOverlaySyncInFlight = new Map();
 let startupComplete = false;
 let startupCoreReady = false;
 let popupWarmupRecoveryPromise;
@@ -4292,6 +4289,7 @@ function stopIsolatedRuntimeControllers() {
         [ 'TalonRemoteCosmeticsController', [ 'stop', 'clear' ] ],
         [ 'TalonRemoteTacticsBootstrapController', [ 'stop' ] ],
         [ 'TalonNativeHeuristicsController', [ 'stop' ] ],
+        [ 'TalonYoutubeAdSkipController', [ 'stop' ] ],
         [ 'TalonAutomationController', [ 'stop' ] ],
         [ 'TalonPostHideCleanupController', [ 'stop' ] ],
         [ 'TalonAdShellStylesController', [ 'stop' ] ],
@@ -4315,10 +4313,11 @@ function stopIsolatedRuntimeControllers() {
     return Promise.all(jobs).then(() => true);
 }
 
-function stopMainWorldRuntimeControllers() {
+function stopMainWorldRuntimeControllers(includeYouTube = true) {
     const controllers = [
         globalThis.TalonRemoteTacticsController,
         globalThis.TalonFrenchStreamSiteFixController,
+        includeYouTube ? globalThis.TalonYoutubePlayerGuardController : undefined,
     ];
     const jobs = [];
     for ( const controller of controllers ) {
@@ -4883,6 +4882,60 @@ async function tabHasLegacyCosmeticRuntime(tabId, frameTargets) {
     return legacyFound;
 }
 
+function hasLegacyYouTubeRuntime(globalName) {
+    const controller = globalThis[globalName];
+    return Boolean(controller && controller.revision !== 2);
+}
+
+async function reconcileYouTubeRuntimeForFrames(tabId, frameStates, { allow = true } = {}) {
+    const frames = frameStates.filter(frame =>
+        /(^|\.)youtube(?:-nocookie)?\.com$/i.test(frame.hostname || '')
+    );
+    if ( frames.length === 0 ) { return false; }
+    const targetOf = frame => ({ frameId: frame.frameId, documentId: frame.documentId });
+    const targets = frames.map(targetOf);
+    let legacy = false;
+    for ( const batch of runtimeTargetBatches(targets) ) {
+        for ( const [world, globalName] of [
+            [ 'MAIN', 'TalonYoutubePlayerGuardController' ],
+            [ 'ISOLATED', 'TalonYoutubeAdSkipController' ],
+        ] ) {
+            const results = await executeRuntimeScriptTargetBatch(tabId, batch, {
+                func: hasLegacyYouTubeRuntime, world, args: [ globalName ],
+            });
+            if ( results?.some(entry => entry.result === true) ) { legacy = true; }
+        }
+    }
+    if ( legacy ) {
+        await markReloadNeededForTab(tabId, 'legacy_youtube_guard',
+            frameStates.find(frame => frame.frameId === 0)?.documentId || '');
+    }
+    const eligible = frames.filter(frame => allow && isEntitled() &&
+        frame.filteringLevel !== MODE_NONE &&
+        hasActiveSubsystemBackoff(frame.hostname, 'youtubeAdSkip') === false
+    );
+    const eligibleIds = new Set(eligible.map(frame => frame.documentId));
+    const disabled = frames.filter(frame => eligibleIds.has(frame.documentId) === false).map(targetOf);
+    if ( disabled.length ) {
+        await executeRuntimeStopLane(tabId, stopNamedRuntimeControllers, {
+            frameTargets: disabled, args: [[ 'TalonYoutubeAdSkipController' ]],
+        });
+        await executeRuntimeStopLane(tabId, stopNamedRuntimeControllers, {
+            frameTargets: disabled, world: 'MAIN',
+            args: [[ 'TalonYoutubePlayerGuardController' ]],
+        });
+    }
+    if ( eligible.length ) {
+        await executeRuntimeRefreshLane(tabId, [ '/js/scripting/youtube-player-guard.js' ], {
+            frameTargets: eligible.map(targetOf), world: 'MAIN', injectImmediately: true,
+        });
+        await executeRuntimeRefreshLane(tabId, [
+            '/js/scripting/breakage-guard.js', '/js/scripting/youtube-ad-skip.js',
+        ], { frameTargets: eligible.map(targetOf), injectImmediately: true });
+    }
+    return legacy;
+}
+
 async function refreshFrenchStreamSiteFixForTab(
     tabId,
     hostname,
@@ -5416,6 +5469,9 @@ async function refreshRuntimeStateForTab(
                 world: 'MAIN',
             });
         }
+        // Settle YouTube policy before other legacy lanes can defer a refresh.
+        // Its reversible controllers must still honor opt-out immediately.
+        await reconcileYouTubeRuntimeForFrames(tabId, runtimeFrameStates);
         const remoteEligibleFrameIds = runtimeFrameStates
             .filter(frame =>
                 frame.filteringLevel >= MODE_OPTIMAL &&
@@ -5759,6 +5815,7 @@ async function refreshRuntimeStateForTab(
         await executeRuntimeStopLane(tabId, stopMainWorldRuntimeControllers, {
             frameTargets: allFrameTargets,
             world: 'MAIN',
+            args: [ false ],
         });
         if ( filteringLevel !== MODE_NONE ) {
             await refreshFrenchStreamSiteFixForTab(tabId, hostname, frameStates, {
@@ -7932,83 +7989,15 @@ async function handleCommunitySyncResult(result) {
     return result;
 }
 
-function runCommunitySync(options) {
-    return runCommunityBaselineSync(options);
-}
-
-const enqueueCommunityApply = job => {
-    const run = communityApplyQueue
-        .catch(() => {})
-        .then(job);
-    communityApplyQueue = run.catch(() => {});
-    return run;
-};
-
-function runCommunityBaselineSync(options) {
-    const normalized = options instanceof Object
-        ? { ...options }
-        : {};
-    if ( communityBaselineSyncInFlight !== undefined ) {
-        if ( normalized.force === true ) {
-            communityBaselineForceQueued = true;
-        }
-        return communityBaselineSyncInFlight;
-    }
-    communityBaselineSyncInFlight = enqueueCommunityApply(async () => {
-        try {
-            const result = await syncCommunityRules(normalized);
-            return await handleCommunitySyncResult(result);
-        } catch (reason) {
-            ubolErr(`community-sync/baseline/${reason}`);
-        } finally {
-            communityBaselineSyncInFlight = undefined;
-            if ( communityBaselineForceQueued ) {
-                communityBaselineForceQueued = false;
-                runCommunityBaselineSync({ force: true });
-            }
-        }
-    });
-    return communityBaselineSyncInFlight;
-}
-
-function runCommunityOverlaySync(options) {
-    const normalized = options instanceof Object
-        ? { ...options }
-        : {};
-    const siteKey = normalizeAutoPromotedHostname(normalized.siteKey);
-    if ( siteKey === '' ) {
-        return Promise.resolve({ skipped: 'invalid-site-key' });
-    }
-    if ( communityOverlaySyncInFlight.has(siteKey) ) {
-        return communityOverlaySyncInFlight.get(siteKey);
-    }
-    const promise = enqueueCommunityApply(async () => {
-        try {
-            let result = await syncCommunityOverlayRules({
-                siteKey,
-                force: normalized.force === true,
-                reason: normalized.reason,
-            });
-            if ( result?.retryWithForcedBaseline === true ) {
-                await handleCommunitySyncResult(
-                    await syncCommunityRules({ force: true })
-                );
-                result = await syncCommunityOverlayRules({
-                    siteKey,
-                    force: true,
-                    reason: normalized.reason,
-                });
-            }
-            return await handleCommunitySyncResult(result);
-        } catch (reason) {
-            ubolErr(`community-sync/overlay/${reason}`);
-        } finally {
-            communityOverlaySyncInFlight.delete(siteKey);
-        }
-    });
-    communityOverlaySyncInFlight.set(siteKey, promise);
-    return promise;
-}
+const communitySyncCoordinator = createCommunitySyncCoordinator({
+    syncBaseline: syncCommunityRules,
+    syncOverlay: syncCommunityOverlayRules,
+    handleResult: handleCommunitySyncResult,
+    normalizeSiteKey: normalizeAutoPromotedHostname,
+    logError: ubolErr,
+});
+const runCommunitySync = options => communitySyncCoordinator.baseline(options);
+const runCommunityOverlaySync = options => communitySyncCoordinator.overlay(options);
 
 async function getRegisteredContentScriptsAuditSnapshot() {
     if (browser.scripting?.getRegisteredContentScripts === undefined) {
@@ -8164,7 +8153,7 @@ async function unregisterAllUserScripts({ retryAttempt = 0 } = {}) {
             removedIds: [],
         };
     };
-    if ( browser.userScripts instanceof Object === false ) {
+    if ( isUserScriptsAvailable() === false ) {
         // Chrome keeps registrations while its toggle is off. The loader is
         // disabled now, so paywall startup can complete, but retain durable
         // cleanup evidence whenever managed registrations may have existed.
@@ -11492,6 +11481,9 @@ async function stopRuntimeStateForTab(
             };
         }
     }
+    const legacyYouTubeRuntime = await reconcileYouTubeRuntimeForFrames(tabId,
+        (frames || []).map(frame => ({ ...frame, hostname: normalizeHttpHostname(frame.url) })),
+        { allow: false });
     const legacyRuntime = await tabHasLegacyCosmeticRuntime(tabId, frameTargets);
     const irreversibleCustomRuntime = Array.from(
         (await getIrreversibleCustomProceduralRuntimeByFrame(
@@ -11519,6 +11511,7 @@ async function stopRuntimeStateForTab(
     });
     if (
         legacyRuntime ||
+        legacyYouTubeRuntime ||
         irreversibleCoreRuntime ||
         irreversibleCustomRuntime
     ) {
@@ -11526,7 +11519,9 @@ async function stopRuntimeStateForTab(
             frame?.frameId === 0 &&
             typeof frame?.documentId === 'string'
         )?.documentId || '';
-        const reason = legacyRuntime
+        const reason = legacyYouTubeRuntime
+            ? 'legacy_youtube_guard'
+            : legacyRuntime
             ? 'legacy_cosmetic_runtime'
             : irreversibleCoreRuntime
                 ? 'irreversible_core_procedural'

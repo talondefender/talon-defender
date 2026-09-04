@@ -426,17 +426,7 @@ test('uBO parity registration excludes YouTube scriptlets and keeps Talon lane s
   assert.match(managerSource, /function registerYouTubePlayerGuard\(context\)/);
   assert.match(managerSource, /registerYouTubePlayerGuard\(context\)/);
   assert.match(managerSource, /world: 'MAIN'/);
-  const youtubeMatchBlock = managerSource.slice(
-    managerSource.indexOf('const getYouTubeAdSkipMatches'),
-    managerSource.indexOf('const getYouTubeAdSkipExcludeMatches')
-  );
-  const youtubeExcludeBlock = managerSource.slice(
-    managerSource.indexOf('const getYouTubeAdSkipExcludeMatches'),
-    managerSource.indexOf('const readActiveAutoGenericHighHosts')
-  );
-  assert.match(youtubeMatchBlock, /filteringModeDetails\?\.basic/);
-  assert.match(youtubeExcludeBlock, /filteringModeDetails\?\.none/);
-  assert.doesNotMatch(youtubeExcludeBlock, /filteringModeDetails\?\.basic/);
+  assert.match(managerSource, /getYouTubeRegistrationScopes/);
   assert.match(managerSource, /const getScriptletExcludedHostnames = \( \) => YOUTUBE_AD_SKIP_HOSTNAMES;/);
   assert.match(managerSource, /function registerYouTubeAdSkip\(context\)/);
   assert.match(managerSource, /registerYouTubeAdSkip\(context\)/);
@@ -444,4 +434,131 @@ test('uBO parity registration excludes YouTube scriptlets and keeps Talon lane s
   assert.match(managerSource, /targetHostnames = ut\.subtractHostnameIters\(\s*targetHostnames,\s*scriptletExcludedHostnames\s*\);/);
   assert.match(ownershipSource, /"js\/scripting\/youtube-ad-skip\.js"/);
   assert.match(ownershipSource, /"js\/scripting\/youtube-player-guard\.js"/);
+});
+
+
+test('YouTube ad skip remains stopped after queued callbacks, navigation, and visibility changes', async () => {
+  const source = await readSource('js/scripting/youtube-ad-skip.js');
+  const { context, state, video } = createHarness();
+  vm.runInNewContext(source, context);
+  const controller = context.__talonYoutubeAdSkipCreateController(context);
+  await controller.start();
+  controller.scheduleTick();
+  const queued = state.timeoutCallbacks.slice();
+  const listeners = state.listeners.slice();
+  controller.stop();
+  const clicks = state.skipClicks;
+  for (const run of queued) run();
+  for (const entry of listeners) (entry.handler || entry.callback)?.();
+  assert.equal(controller.tick(), false);
+  assert.equal(controller.isActive(), false);
+  assert.equal(state.skipClicks, clicks);
+  assert.equal(video.currentTime, 2);
+  assert.equal(video.muted, false);
+  assert.equal(video.playbackRate, 1);
+  await controller.start();
+  assert.equal(controller.isActive(), true);
+});
+
+test('YouTube ad skip stop invalidates a pending start and preserves newer user media choices', async () => {
+  const source = await readSource('js/scripting/youtube-ad-skip.js');
+  const { context, video } = createHarness();
+  let ready;
+  context.TalonBreakageGuard = { whenReady: () => new Promise(resolve => { ready = resolve; }), shouldRunSubsystem: () => true };
+  vm.runInNewContext(source, context);
+  const controller = context.__talonYoutubeAdSkipCreateController(context);
+  const pending = controller.start();
+  controller.stop(); ready();
+  assert.equal((await pending).started, false);
+  delete context.TalonBreakageGuard;
+  await controller.start();
+  video.muted = false; video.playbackRate = 1.5;
+  controller.stop();
+  assert.equal(video.muted, false);
+  assert.equal(video.playbackRate, 1.5);
+});
+
+const matchesYouTubeScope = (scopes, host) => scopes.some(scope => {
+  const accepts = pattern => {
+    const root = pattern.slice(4, -2);
+    return root.startsWith('*.')
+      ? host === root.slice(2) || host.endsWith(root.slice(1))
+      : host === root;
+  };
+  return scope.matches.some(accepts) && !scope.excludeMatches.some(accepts);
+});
+
+test('YouTube registration keeps parent opt-outs authoritative over enabled descendants', async () => {
+  const { getYouTubeRegistrationScopes } = await import('../js/youtube-registration.js');
+  const modes = { optimal: new Set(['all-urls']), none: new Set(['www.youtube.com']) };
+  let scopes = getYouTubeRegistrationScopes(modes);
+  assert.equal(matchesYouTubeScope(scopes, 'www.youtube.com'), false);
+  assert.equal(matchesYouTubeScope(scopes, 'm.youtube.com'), true);
+  assert.equal(matchesYouTubeScope(scopes, 'youtube-nocookie.com'), true);
+  modes.optimal.add('embedded.www.youtube.com');
+  scopes = getYouTubeRegistrationScopes(modes);
+  assert.equal(matchesYouTubeScope(scopes, 'embedded.www.youtube.com'), false);
+  assert.equal(matchesYouTubeScope(scopes, 'deep.embedded.www.youtube.com'), false);
+  assert.equal(matchesYouTubeScope(scopes, 'other.www.youtube.com'), false);
+  scopes = getYouTubeRegistrationScopes({ none: new Set(['all-urls']), basic: new Set(['m.youtube.com']) });
+  assert.equal(matchesYouTubeScope(scopes, 'm.youtube.com'), true);
+  assert.equal(matchesYouTubeScope(scopes, 'child.m.youtube.com'), true);
+  assert.equal(matchesYouTubeScope(scopes, 'www.youtube.com'), false);
+  assert.equal(matchesYouTubeScope(getYouTubeRegistrationScopes(modes, ['youtube.com']), 'embedded.www.youtube.com'), false);
+});
+
+test('YouTube registration follows BASIC fallback and only the authoritative all-urls sentinel', async () => {
+  const { getYouTubeRegistrationScopes } = await import('../js/youtube-registration.js');
+  for (const modes of [{}, { basic: ['all-urls'] }, { complete: ['all-urls'] }]) {
+    const scopes = getYouTubeRegistrationScopes(modes);
+    for (const host of ['youtube.com', 'www.youtube.com', 'deep.m.youtube.com', 'youtube-nocookie.com', 'www.youtube-nocookie.com']) {
+      assert.equal(matchesYouTubeScope(scopes, host), true, host);
+    }
+    for (const host of ['example.com', 'notyoutube.com', 'youtube.com.example.com', 'notyoutube-nocookie.com']) {
+      assert.equal(matchesYouTubeScope(scopes, host), false, host);
+    }
+  }
+  assert.deepEqual(getYouTubeRegistrationScopes({ none: ['all-urls'], optimal: ['all-urls'] }), []);
+  assert.deepEqual(getYouTubeRegistrationScopes({ none: ['*'] }), []);
+  assert.equal(matchesYouTubeScope(getYouTubeRegistrationScopes({ none: ['all-urls', '*'], basic: ['m.youtube.com'] }), 'm.youtube.com'), true);
+  assert.deepEqual(getYouTubeRegistrationScopes({ none: ['com'], complete: ['youtube.com'] }), []);
+});
+
+test('YouTube registration preserves exact entries when global sentinels skip ancestor walks', async () => {
+  const { getYouTubeRegistrationScopes } = await import('../js/youtube-registration.js');
+  const modes = {
+    none: ['all-urls', 'www.youtube.com'],
+    basic: ['youtube.com'],
+  };
+  let scopes = getYouTubeRegistrationScopes(modes);
+  assert.equal(matchesYouTubeScope(scopes, 'youtube.com'), true);
+  assert.equal(matchesYouTubeScope(scopes, 'www.youtube.com'), false);
+  assert.equal(matchesYouTubeScope(scopes, 'child.www.youtube.com'), true);
+  assert.equal(matchesYouTubeScope(scopes, 'youtube-nocookie.com'), false);
+  scopes = getYouTubeRegistrationScopes({ none: ['all-urls'], basic: ['all-urls', 'm.youtube.com'] });
+  assert.equal(matchesYouTubeScope(scopes, 'm.youtube.com'), true);
+  assert.equal(matchesYouTubeScope(scopes, 'child.m.youtube.com'), false);
+  assert.equal(matchesYouTubeScope(scopes, 'www.youtube.com'), false);
+});
+
+test('YouTube subsystem suppression dominates exact and descendant enabled scopes', async () => {
+  const { getYouTubeRegistrationScopes } = await import('../js/youtube-registration.js');
+  const modes = { none: ['all-urls', 'www.youtube.com'], basic: ['youtube.com', 'youtube-nocookie.com'] };
+  const scopes = getYouTubeRegistrationScopes(modes, ['www.youtube.com', 'embedded.youtube-nocookie.com']);
+  for (const host of ['www.youtube.com', 'child.www.youtube.com', 'embedded.youtube-nocookie.com', 'deep.embedded.youtube-nocookie.com']) {
+    assert.equal(matchesYouTubeScope(scopes, host), false, host);
+  }
+  for (const host of ['m.youtube.com', 'youtube-nocookie.com', 'other.youtube-nocookie.com']) {
+    assert.equal(matchesYouTubeScope(scopes, host), true, host);
+  }
+});
+
+
+test('YouTube ad skip does not restart a legacy controller during update', async () => {
+  const source = await fs.readFile(new URL('../js/scripting/youtube-ad-skip.js', import.meta.url), 'utf8');
+  let refreshed = false;
+  const context = vm.createContext({ TalonYoutubeAdSkipController: { refresh() { refreshed = true; } } });
+  vm.runInContext(source, context);
+  assert.equal(refreshed, false);
+  assert.equal(context.TalonYoutubeAdSkipController.revision, undefined);
 });

@@ -1,5 +1,6 @@
 Param(
-  [switch]$SkipPackageStep
+  [switch]$SkipPackageStep,
+  [switch]$StageOnly
 )
 
 Set-StrictMode -Version Latest
@@ -59,14 +60,14 @@ $syncLatestScript = Join-Path $scriptDir "sync-latest-artifacts.ps1"
 Write-Host "Running quality gate (tests + public-safe audit + package + MV3 validation)..."
 Push-Location $repoRoot
 try {
-  npm run lint
-  if ($LASTEXITCODE -ne 0) { throw "npm run lint failed." }
+  node scripts/verify-release.mjs --release --target chrome
+  if ($LASTEXITCODE -ne 0) { throw "Required chrome release verification failed." }
 }
 finally {
   Pop-Location
 }
 
-# lint already rebuilds and validates dist/extension; continue with release packaging steps.
+# The gate verifies the exact package in Chrome; continue with release packaging steps.
 $SkipPackageStep = $true
 
 if (-not $SkipPackageStep) {
@@ -159,6 +160,12 @@ if (Test-Path $zipPath) {
   Remove-Item $zipPath -Force
 }
 
+Push-Location $repoRoot
+try {
+  node scripts/verify-release.mjs --release --target chrome --check-evidence
+  if ($LASTEXITCODE -ne 0) { throw "Verified artifact changed before handoff." }
+} finally { Pop-Location }
+
 Write-Host "Creating extension zip..."
 New-ZipFromDirectoryFilesOnly -SourceDir $distExtension -DestinationZip $zipPath
 
@@ -186,6 +193,13 @@ if ($LASTEXITCODE -ne 0) { throw "package-public-source.ps1 failed." }
 $sourceArchivePath = Join-Path $repoRoot "dist\talon-defender-extension-source-v$($manifest.version).zip"
 $sourceManifestPath = Join-Path $repoRoot "dist\source-release.json"
 
+Push-Location $repoRoot
+try {
+  node scripts/verify-release.mjs --release --target chrome --record-handoff
+  if ($LASTEXITCODE -ne 0) { throw "ZIP/source handoff verification failed." }
+} finally { Pop-Location }
+
+if (-not $StageOnly) {
 Write-Host "Syncing latest artifact workspace..."
 & $syncLatestScript `
   -Channel "chrome" `
@@ -194,6 +208,9 @@ Write-Host "Syncing latest artifact workspace..."
   -SourceArchivePath $sourceArchivePath `
   -SourceManifestPath $sourceManifestPath
 if ($LASTEXITCODE -ne 0) { throw "sync-latest-artifacts.ps1 failed." }
+} else {
+  Write-Host "Verified release artifacts staged in dist; Latest promotion deferred."
+}
 
 $zipItem = Get-Item $zipPath
 Write-Host ""
@@ -203,4 +220,4 @@ Write-Host "  Zip:      $zipPath"
 Write-Host "  Built:    $($zipItem.LastWriteTime)"
 Write-Host "  Size:     $($zipItem.Length) bytes"
 Write-Host "  Info:     $buildInfoPath"
-Write-Host "  Latest:   $(Join-Path (Split-Path -Parent $repoRoot) 'Talon Defender Latest\chrome')"
+if (-not $StageOnly) { Write-Host "  Latest:   $(Join-Path (Split-Path -Parent $repoRoot) 'Talon Defender Latest\chrome')" }

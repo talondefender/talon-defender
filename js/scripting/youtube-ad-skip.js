@@ -4,7 +4,9 @@
 (function talonYoutubeAdSkip(global) {
 
 if ( global.TalonYoutubeAdSkipController ) {
-    global.TalonYoutubeAdSkipController.refresh?.();
+    if ( global.TalonYoutubeAdSkipController.revision === 2 ) {
+        global.TalonYoutubeAdSkipController.refresh?.();
+    }
     return;
 }
 
@@ -94,7 +96,18 @@ const INTERRUPTION_NOTICE_SELECTOR = [
 const createController = env => {
     const win = env.window || env;
     const doc = env.document;
-    const videoStates = new WeakMap();
+    const videoStates = new Map();
+    const hiddenNotices = new Map();
+    let active = true;
+    let generation = 0;
+    let queuedFrame;
+    let queuedTimer;
+    let ownedStyle;
+    const ownedListeners = [];
+    const listen = (target, type, handler) => {
+        target?.addEventListener?.(type, handler);
+        ownedListeners.push({ target, type, handler });
+    };
     let playerObserver;
     let observedPlayer;
     let intervalId;
@@ -155,6 +168,7 @@ const createController = env => {
             if ( doc.getElementById?.(AD_SURFACE_STYLE_ID) !== null ) { return true; }
             const style = doc.createElement?.('style');
             if ( !style ) { return false; }
+            ownedStyle = style;
             style.id = AD_SURFACE_STYLE_ID;
             style.textContent = AD_SURFACE_CSS;
             const parent = doc.head || doc.documentElement;
@@ -306,9 +320,32 @@ const createController = env => {
         return skipButtonCandidates().some(elementIsActionable);
     };
 
+    const restoreNotice = (element, saved) => {
+            for ( const [property, owned] of [ ['display', 'none'], ['visibility', 'hidden'] ] ) {
+                if ( element.style?.getPropertyValue?.(property) !== owned || element.style?.getPropertyPriority?.(property) !== 'important' ) { continue; }
+                element.style.setProperty(property, saved[property], saved[`${property}Priority`]);
+            }
+            if ( element.hidden === true ) { element.hidden = saved.hidden; }
+            if ( element.getAttribute?.('aria-hidden') === 'true' ) {
+                if ( saved.aria === null || saved.aria === undefined ) { element.removeAttribute?.('aria-hidden'); }
+                else { element.setAttribute?.('aria-hidden', saved.aria); }
+            }
+    };
+
     const hideInterruptionNotice = element => {
         const text = String(element?.textContent || '');
         if ( INTERRUPTION_NOTICE_RE.test(text) === false ) { return false; }
+        if ( hiddenNotices.has(element) === false ) {
+            if ( hiddenNotices.size >= 256 ) { return false; }
+            hiddenNotices.set(element, {
+                hidden: element.hidden,
+                aria: element.getAttribute?.('aria-hidden'),
+                display: element.style?.getPropertyValue?.('display') || '',
+                displayPriority: element.style?.getPropertyPriority?.('display') || '',
+                visibility: element.style?.getPropertyValue?.('visibility') || '',
+                visibilityPriority: element.style?.getPropertyPriority?.('visibility') || '',
+            });
+        }
         try {
             element.style?.setProperty?.('display', 'none', 'important');
             element.style?.setProperty?.('visibility', 'hidden', 'important');
@@ -412,7 +449,15 @@ const createController = env => {
     };
 
     const saveVideoState = video => {
-        if ( !video || videoStates.has(video) ) { return; }
+        if ( !video ) { return; }
+        const saved = videoStates.get(video);
+        if ( saved ) {
+            if ( video.muted !== true ) { saved.muted = video.muted === true; }
+            if ( video.playbackRate !== AD_PLAYBACK_RATE ) {
+                saved.playbackRate = Number(video.playbackRate) || 1;
+            }
+            return;
+        }
         videoStates.set(video, {
             muted: video.muted === true,
             playbackRate: Number(video.playbackRate) || 1,
@@ -444,11 +489,11 @@ const createController = env => {
         const saved = videoStates.get(video);
         if ( !saved ) { return; }
         try {
-            video.muted = saved.muted;
+            if ( video.muted === true ) { video.muted = saved.muted; }
         } catch {
         }
         try {
-            video.playbackRate = saved.playbackRate;
+            if ( video.playbackRate === AD_PLAYBACK_RATE ) { video.playbackRate = saved.playbackRate; }
         } catch {
         }
         videoStates.delete(video);
@@ -457,12 +502,19 @@ const createController = env => {
     const videos = () => queryAll('video');
 
     const restoreVideos = () => {
-        for ( const video of videos() ) {
+        for ( const video of videoStates.keys() ) {
             restoreVideo(video);
         }
     };
 
     const tick = () => {
+        if ( active === false ) { return false; }
+        for ( const element of hiddenNotices.keys() ) {
+            if ( element.isConnected === false ) {
+                restoreNotice(element, hiddenNotices.get(element));
+                hiddenNotices.delete(element);
+            }
+        }
         if ( isYouTubeHost() === false ) { return false; }
         installAdSurfaceStyle();
         observePlayerState();
@@ -491,20 +543,23 @@ const createController = env => {
     };
 
     const scheduleTick = () => {
-        if ( tickScheduled ) { return; }
+        if ( active === false || tickScheduled ) { return; }
         tickScheduled = true;
+        const epoch = generation;
         const run = () => {
+            if ( active === false || epoch !== generation ) { return; }
             tickScheduled = false;
+            queuedFrame = queuedTimer = undefined;
             tick();
         };
         try {
             if ( doc.visibilityState !== 'hidden' &&
                 typeof win.requestAnimationFrame === 'function' ) {
-                win.requestAnimationFrame(run);
+                queuedFrame = win.requestAnimationFrame(run);
                 return;
             }
             if ( typeof win.setTimeout === 'function' ) {
-                win.setTimeout(run, MUTATION_TICK_DELAY_MS);
+                queuedTimer = win.setTimeout(run, MUTATION_TICK_DELAY_MS);
                 return;
             }
         } catch {
@@ -529,6 +584,7 @@ const createController = env => {
     };
 
     const refreshTimer = () => {
+        if ( active === false ) { return; }
         if ( intervalId !== undefined ) {
             win.clearInterval(intervalId);
         }
@@ -540,11 +596,24 @@ const createController = env => {
 
     const start = async () => {
         if ( isYouTubeHost() === false ) { return { started: false }; }
+        if ( queuedFrame !== undefined ) { win.cancelAnimationFrame?.(queuedFrame); }
+        if ( queuedTimer !== undefined ) { win.clearTimeout?.(queuedTimer); }
+        queuedFrame = queuedTimer = undefined;
+        tickScheduled = false;
+        const epoch = ++generation;
         markState('entered');
-        if ( await shouldRun() === false ) {
+        const allowed = await shouldRun();
+        if ( epoch !== generation ) { return { started: false }; }
+        if ( allowed === false ) {
             stop();
             markState('suppressed');
             return { started: false };
+        }
+        active = true;
+        if ( ownedListeners.length === 0 ) {
+            listen(doc, 'visibilitychange', onVisibilityChange);
+            listen(doc, 'yt-navigate-finish', onNavigateFinish);
+            listen(win, 'pagehide', stop);
         }
         markState('running');
         tick();
@@ -555,6 +624,19 @@ const createController = env => {
     };
 
     const stop = () => {
+        active = false;
+        generation += 1;
+        if ( queuedFrame !== undefined ) { win.cancelAnimationFrame?.(queuedFrame); }
+        if ( queuedTimer !== undefined ) { win.clearTimeout?.(queuedTimer); }
+        queuedFrame = queuedTimer = undefined;
+        tickScheduled = false;
+        for ( const { target, type, handler } of ownedListeners.splice(0) ) {
+            target?.removeEventListener?.(type, handler);
+        }
+        ownedStyle?.remove?.();
+        ownedStyle = undefined;
+        for ( const [element, saved] of hiddenNotices ) { restoreNotice(element, saved); }
+        hiddenNotices.clear();
         if ( playerObserver !== undefined ) {
             try {
                 playerObserver.disconnect();
@@ -578,17 +660,11 @@ const createController = env => {
         scheduleTick();
     };
 
-    const init = () => {
-        start().catch(() => {});
-        try {
-            doc.addEventListener('visibilitychange', onVisibilityChange);
-            doc.addEventListener('yt-navigate-finish', onNavigateFinish);
-            win.addEventListener?.('pagehide', stop, { once: true });
-        } catch {
-        }
-    };
+    const init = () => { start().catch(() => {}); };
 
     return {
+        revision: 2,
+        isActive: () => active,
         init,
         refresh: start,
         restoreVideos,

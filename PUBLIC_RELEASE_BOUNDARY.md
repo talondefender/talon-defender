@@ -7,6 +7,7 @@ Allowed here:
 - extension assets, locales, and bundled rulesets
 - extension tests that are part of the release gate
 - packaging and validation scripts
+- public GitHub Actions checks containing only public fixtures and dependency/browser setup
 - license, attribution, and third-party notice files
 - public-safe docs needed to understand and release the extension
 

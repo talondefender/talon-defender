@@ -8,9 +8,18 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 
 const rootDir = process.cwd();
-const distDir = path.resolve(rootDir, 'dist/extension');
-const required = process.env.TALON_CHROME_SMOKE_REQUIRED === '1';
-const headed = process.env.TALON_CHROME_SMOKE_HEADLESS !== '1';
+const args = process.argv.slice(2);
+const argValue = name => args[args.indexOf(name) + 1];
+const browserTarget = args.includes('--browser') ? argValue('--browser') : 'chrome';
+if (![ 'chrome', 'edge' ].includes(browserTarget)) { throw new Error('unsupported browser target'); }
+const packageDir = path.resolve(rootDir, args.includes('--dir') ? argValue('--dir') :
+  browserTarget === 'edge' ? 'dist/edge-extension' : 'dist/extension');
+let distDir = packageDir;
+const existingPackage = args.includes('--existing-package');
+const required = args.includes('--required') || process.env.TALON_CHROME_SMOKE_REQUIRED === '1';
+const headed = !args.includes('--headless') && process.env.TALON_CHROME_SMOKE_HEADLESS !== '1';
+const expectedMajor = args.includes('--expect-major') ? Number(argValue('--expect-major')) : 0;
+const reportPath = args.includes('--report') ? path.resolve(argValue('--report')) : '';
 const MODE_NONE = 0;
 const MODE_OPTIMAL = 2;
 const TRUSTED_DIRECTIVE_BASE_RULE_ID = 8000000;
@@ -45,7 +54,7 @@ const assert = (condition, message) => {
 };
 
 const runPackage = () => {
-  const result = spawnSync(process.execPath, ['scripts/package-extension.mjs'], {
+  const result = spawnSync(process.execPath, [browserTarget === 'edge' ? 'scripts/package-edge-extension.mjs' : 'scripts/package-extension.mjs'], {
     cwd: rootDir,
     stdio: 'inherit',
     windowsHide: true,
@@ -56,6 +65,15 @@ const runPackage = () => {
 };
 
 const findChromeExecutable = async () => {
+  if (browserTarget === 'edge') {
+    const edgeCandidates = [process.env.TALON_EDGE_PATH, process.env.EDGE_PATH,
+      path.join(process.env['PROGRAMFILES(X86)'] || '', 'Microsoft/Edge/Application/msedge.exe'),
+      path.join(process.env.PROGRAMFILES || '', 'Microsoft/Edge/Application/msedge.exe'),
+      '/usr/bin/microsoft-edge', '/usr/bin/microsoft-edge-stable',
+      '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'];
+    for (const candidate of edgeCandidates) { if (await exists(candidate)) return candidate; }
+    return '';
+  }
   const candidates = [
     process.env.TALON_CHROME_PATH,
     process.env.CHROME_PATH,
@@ -156,7 +174,9 @@ const waitFor = async (label, fn, { timeoutMs = 15000, intervalMs = 250 } = {}) 
 
 const sendRuntimeMessage = (page, message) =>
   page.evaluate(payload => new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(`runtime message timed out: ${payload.what}`)), 20000);
     chrome.runtime.sendMessage(payload, response => {
+      clearTimeout(timeout);
       const err = chrome.runtime.lastError;
       if (err) {
         reject(new Error(err.message));
@@ -326,21 +346,126 @@ const writeEntitlementState = async (page, { local, sync }) => {
   return page;
 };
 
+const runYouTubePolicySmoke = async (context, control) => {
+  const entitlementBefore = (await getLocalStorage(control, ['talonEntitlement'])).talonEntitlement;
+  const syncBefore = (await getSyncStorage(control, ['talonEntitlementSync'])).talonEntitlementSync;
+  const origin = 'https:' + '//www.youtube.com';
+  await context.route(`${origin}/**`, route => route.fulfill({
+    status: 200, contentType: 'text/html',
+    body: `<!doctype html><title>Local policy test</title><script>
+      window.fixtureGuardBeforeInline = window.TalonYoutubePlayerGuardController?.isActive?.() === true;
+      localStorage.setItem('yt-enforcement-fixture', 'probe');
+      window.fixtureInlineValue = localStorage.getItem('yt-enforcement-fixture');
+      window.fixtureDocumentId = Math.random();
+    </script><div id="movie_player" class="html5-video-player ad-showing"><video></video></div>`,
+  }));
+  const setMode = level => sendRuntimeMessage(control, {
+    what: 'setFilteringMode', hostname: 'www.youtube.com', level,
+  });
+  assert(await setMode(MODE_OPTIMAL) === MODE_OPTIMAL, 'YouTube enable failed');
+  const fixture = await context.newPage();
+  try {
+    const extensionId = new URL(control.url()).hostname;
+    const stoppedBeforeNavigation = await stopExtensionServiceWorker(context, control, extensionId);
+    assert(stoppedBeforeNavigation, 'YouTube first-navigation worker eviction did not run');
+    await fixture.goto(`${origin}/watch?v=local-policy-test`);
+    const early = await fixture.evaluate(() => ({
+      beforeInline: window.fixtureGuardBeforeInline, value: window.fixtureInlineValue,
+      document: window.fixtureDocumentId,
+    }));
+    assert(early.beforeInline && early.value === null, 'YouTube document-start guard was late or missing');
+    await waitFor('YouTube ad runtime', () => fixture.evaluate(() =>
+      document.querySelector('video').playbackRate === 16));
+    assert(await setMode(MODE_NONE) === MODE_NONE, 'YouTube disable failed');
+    await waitFor('YouTube live teardown', () => fixture.evaluate(() =>
+      window.TalonYoutubePlayerGuardController?.isActive?.() === false &&
+      document.querySelector('video').playbackRate === 1));
+    const stopped = await fixture.evaluate(() => {
+      localStorage.setItem('yt-enforcement-fixture', 'allowed');
+      document.dispatchEvent(new Event('visibilitychange'));
+      document.dispatchEvent(new Event('yt-navigate-finish'));
+      return { value: localStorage.getItem('yt-enforcement-fixture'), document: window.fixtureDocumentId };
+    });
+    assert(stopped.value === 'allowed' && stopped.document === early.document,
+      'YouTube disable modified navigation or kept the storage hook');
+    await sleep(800);
+    assert(await fixture.evaluate(() => document.querySelector('video').playbackRate) === 1,
+      'YouTube event restarted stopped ad playback handling');
+    await fixture.reload();
+    assert(await fixture.evaluate(() => window.TalonYoutubePlayerGuardController === undefined &&
+      window.fixtureInlineValue === 'probe'), 'Allowed Sites still injected YouTube guard');
+    await fixture.evaluate(() => {
+      window.TalonYoutubePlayerGuardController = { refresh() { window.legacyRefreshCalled = true; } };
+    });
+    const legacyTabId = await getTabIdForUrl(control, fixture.url());
+    await control.evaluate(async tabId => chrome.scripting.executeScript({
+      target: { tabId }, world: 'ISOLATED',
+      func: () => {
+        globalThis.TalonYoutubeAdSkipController = { refresh() { globalThis.legacyAdSkipRefreshed = true; } };
+      },
+    }), legacyTabId);
+    assert(await setMode(MODE_OPTIMAL) === MODE_OPTIMAL, 'YouTube re-enable failed');
+    assert(await fixture.evaluate(() => !window.legacyRefreshCalled &&
+      window.TalonYoutubePlayerGuardController.revision === undefined),
+      'YouTube update stacked on an irreversible legacy guard');
+    const isolatedLegacy = await control.evaluate(async tabId => chrome.scripting.executeScript({
+      target: { tabId }, world: 'ISOLATED',
+      func: () => !globalThis.legacyAdSkipRefreshed && globalThis.TalonYoutubeAdSkipController.revision === undefined,
+    }), legacyTabId);
+    assert(isolatedLegacy[0]?.result === true, 'YouTube update restarted the legacy isolated controller');
+    await fixture.reload();
+    assert(await fixture.evaluate(() => window.TalonYoutubePlayerGuardController?.revision === 2),
+      'YouTube migration did not complete after natural navigation');
+    const expired = {
+      trialStartMs: Date.now() - 8 * 24 * 60 * 60 * 1000,
+      trialEndMs: Date.now() - 24 * 60 * 60 * 1000,
+    };
+    await writeEntitlementState(control, {
+      local: { ...entitlementBefore, ...expired }, sync: { ...syncBefore, ...expired },
+    });
+    await waitFor('YouTube expired entitlement', async () =>
+      (await sendRuntimeMessage(control, { what: 'getEntitlementStatus' }))?.status === 'expired');
+    await waitFor('YouTube entitlement teardown', () => fixture.evaluate(() =>
+      window.TalonYoutubePlayerGuardController?.isActive?.() === false &&
+      document.querySelector('video').playbackRate === 1));
+    await fixture.reload();
+    assert(await fixture.evaluate(() => window.TalonYoutubePlayerGuardController === undefined &&
+      window.fixtureInlineValue === 'probe'), 'Expired entitlement injected YouTube guard');
+    await writeEntitlementState(control, { local: entitlementBefore, sync: syncBefore });
+    await waitFor('YouTube restored entitlement', async () =>
+      (await sendRuntimeMessage(control, { what: 'getEntitlementStatus' }))?.status === 'trial');
+    await waitFor('YouTube entitlement live restoration', () => fixture.evaluate(() =>
+      window.TalonYoutubePlayerGuardController?.isActive?.() === true));
+    const entitlementAfter = (await getLocalStorage(control, ['talonEntitlement'])).talonEntitlement;
+    assert(entitlementAfter.deviceId === entitlementBefore.deviceId &&
+      entitlementAfter.trialStartMs === entitlementBefore.trialStartMs &&
+      entitlementAfter.trialEndMs === entitlementBefore.trialEndMs,
+    'YouTube lifecycle did not preserve device and trial state');
+  } finally {
+    await fixture.close();
+    await context.unroute(`${origin}/**`);
+  }
+};
+
 const run = async () => {
-  runPackage();
+  if (!existingPackage) { runPackage(); }
 
   const browserPath = await findChromeExecutable();
   if (browserPath === '') {
-    const message = 'Chrome smoke skipped: no Chrome/Chromium executable found. Set TALON_CHROME_PATH to run it.';
+    const message = `${browserTarget} smoke skipped: no browser executable found. Set the matching TALON_CHROME_PATH or TALON_EDGE_PATH.`;
     if (required) { throw new Error(message); }
     console.warn(message);
     return;
   }
 
-  const extensionIdFromKey = await getExtensionIdFromManifest();
-  assert(extensionIdFromKey !== '', 'packaged manifest is missing a stable extension key');
+  let extensionIdFromKey = await getExtensionIdFromManifest();
+  if (browserTarget === 'chrome' && expectedMajor === 0) {
+    assert(extensionIdFromKey !== '', 'packaged manifest is missing a stable extension key');
+  }
 
   const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'talon-chrome-smoke-'));
+  distDir = path.join(userDataDir, 'package');
+  await fs.cp(packageDir, distDir, { recursive: true });
   const lifecycleServer = createServer((_request, response) => {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     response.end('<!doctype html><title>Talon lifecycle smoke</title>');
@@ -355,20 +480,34 @@ const run = async () => {
     'lifecycle smoke server did not expose an address'
   );
   const lifecycleUrl = `http://127.0.0.1:${lifecycleAddress.port}/`;
-  const context = await chromium.launchPersistentContext(userDataDir, {
+  const context = await chromium.launchPersistentContext(path.join(userDataDir, 'profile'), {
     executablePath: browserPath,
     headless: headed === false,
     args: [
+      ...(headed ? [] : [ '--headless=new' ]),
       `--disable-extensions-except=${distDir}`,
       `--load-extension=${distDir}`,
       '--disable-default-apps',
       '--disable-sync',
       '--no-default-browser-check',
       '--no-first-run',
+      '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1',
     ],
   });
 
   try {
+    const browserVersion = context.browser()?.version() || '';
+    if (expectedMajor) {
+      assert(Number(browserVersion.split('.')[0]) === expectedMajor,
+        `expected browser major ${expectedMajor}, got ${browserVersion}`);
+    }
+    await context.route('**/*', route => {
+      const url = new URL(route.request().url());
+      return url.hostname === '127.0.0.1' || url.hostname === 'localhost' ||
+        url.protocol === 'chrome-extension:' ? route.continue() : route.abort();
+    });
+    if (extensionIdFromKey === '') { extensionIdFromKey = await getExtensionIdFromServiceWorker(context); }
+    assert(extensionIdFromKey !== '', 'loaded extension service worker was not found');
     let page = await context.newPage();
     await gotoControlPage(page, extensionIdFromKey);
 
@@ -446,9 +585,13 @@ const run = async () => {
 
     const startupErrors = await sendRuntimeMessage(page, { what: 'getConsoleOutput' });
     assert(Array.isArray(startupErrors), 'background error log response is malformed');
+    // External DNS is deliberately blocked. This one expected transport error
+    // exercises stored/packaged fallback; all other startup errors still fail.
+    const unexpectedStartupErrors = startupErrors.filter(entry =>
+      String(entry).endsWith('community-sync: Failed to fetch') === false);
     assert(
-      startupErrors.length === 0,
-      `background startup errors: ${startupErrors.join(' | ')}`
+      unexpectedStartupErrors.length === 0,
+      `background startup errors: ${unexpectedStartupErrors.join(' | ')}`
     );
 
     const lifecyclePage = await context.newPage();
@@ -549,6 +692,7 @@ const run = async () => {
         'unchanged service-worker wake rewrote persisted injectable state'
       );
     } else {
+      if (required) { throw new Error('required service-worker eviction assertion could not run'); }
       console.warn('Chrome smoke could not force service-worker eviction; no-op wake assertion skipped.');
     }
 
@@ -675,10 +819,20 @@ const run = async () => {
       `unexpected options quota message: ${quotaMessage}`
     );
 
-    console.log(`Chrome smoke passed with ${path.basename(browserPath)} and extension ${extensionIdFromKey}.`);
+    await runYouTubePolicySmoke(context, page);
+    if (reportPath) {
+      await fs.writeFile(reportPath, JSON.stringify({
+        browser: browserTarget, version: browserVersion, expectedMajor,
+        executable: path.basename(browserPath), verifiedAt: new Date().toISOString(),
+      }, null, 2) + '\n');
+    }
+    console.log(`${browserTarget} smoke passed with ${path.basename(browserPath)} ${context.browser()?.version()} and extension ${extensionIdFromKey}.`);
   } finally {
     await context.close().catch(() => {});
     await new Promise(resolve => lifecycleServer.close(resolve));
+    if (!path.resolve(userDataDir).startsWith(path.resolve(os.tmpdir()) + path.sep)) {
+      throw new Error('refusing profile cleanup outside the temporary directory');
+    }
     await fs.rm(userDataDir, { recursive: true, force: true }).catch(() => {});
   }
 };

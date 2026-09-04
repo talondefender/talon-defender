@@ -162,28 +162,12 @@ test('manifest and public allowlist expose bounded static runtime bootstrap lane
     Array.isArray(entry.js) &&
     entry.js.includes(talonYouTubeGuardPath)
   );
-  assert.equal(youtubeGuardMainScripts.length, 1);
-  assert.deepEqual(youtubeGuardMainScripts[0].matches, [
-    '*://*.youtube.com/*',
-    '*://*.youtube-nocookie.com/*',
-  ]);
-  assert.deepEqual(youtubeGuardMainScripts[0].js, [talonYouTubeGuardPath]);
-  assert.equal(youtubeGuardMainScripts[0].run_at, 'document_start');
-  assert.equal(youtubeGuardMainScripts[0].all_frames, true);
-  assert.equal(youtubeGuardMainScripts[0].world, 'MAIN');
+  assert.equal(youtubeGuardMainScripts.length, 0);
   const youtubeGuardLoaders = contentScripts.filter(entry =>
     Array.isArray(entry.js) &&
     entry.js.includes(talonYouTubeGuardLoaderPath)
   );
-  assert.equal(youtubeGuardLoaders.length, 1);
-  assert.deepEqual(youtubeGuardLoaders[0].matches, [
-    '*://*.youtube.com/*',
-    '*://*.youtube-nocookie.com/*',
-  ]);
-  assert.deepEqual(youtubeGuardLoaders[0].js, [talonYouTubeGuardLoaderPath]);
-  assert.equal(youtubeGuardLoaders[0].run_at, 'document_start');
-  assert.equal(youtubeGuardLoaders[0].all_frames, true);
-  assert.equal(youtubeGuardLoaders[0].world, undefined);
+  assert.equal(youtubeGuardLoaders.length, 0);
   assert.equal(
     contentScripts.some(entry =>
       Array.isArray(entry.js) &&
@@ -203,11 +187,7 @@ test('manifest and public allowlist expose bounded static runtime bootstrap lane
     Array.isArray(entry.resources) &&
     entry.resources.includes(talonYouTubeGuardPath)
   );
-  assert.equal(youtubeGuardResources.length, 1);
-  assert.deepEqual(youtubeGuardResources[0].matches, [
-    '*://*.youtube.com/*',
-    '*://*.youtube-nocookie.com/*',
-  ]);
+  assert.equal(youtubeGuardResources.length, 0);
   assert.equal(
     webAccessibleResources.some(entry =>
       Array.isArray(entry.resources) &&
@@ -229,7 +209,7 @@ test('manifest and public allowlist expose bounded static runtime bootstrap lane
 
   assert.equal(allowlist.includes(talonYouTubePath), true);
   assert.equal(allowlist.includes(talonYouTubeGuardPath), true);
-  assert.equal(allowlist.includes(talonYouTubeGuardLoaderPath), true);
+  assert.equal(allowlist.includes(talonYouTubeGuardLoaderPath), false);
   assert.equal(allowlist.includes(frenchStreamMainSiteFixPath), true);
   assert.equal(allowlist.includes(bootstrapPath), false);
   assert.equal(allowlist.includes(relayHtmlPath), false);

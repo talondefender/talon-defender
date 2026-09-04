@@ -753,16 +753,66 @@ test('YouTube player guard is public-safe page-world runtime without remote code
   assert.doesNotMatch(source, new RegExp(`${httpsPrefix}analytics|${httpsPrefix}${privateComparatorToken}-break`, 'i'));
 });
 
-test('YouTube player guard loader injects only the local page-world guard', async () => {
-  const source = await readSource('js/scripting/youtube-player-guard-loader.js');
 
-  assert.match(source, /talonYoutubePlayerGuardLoader/);
-  assert.match(source, /YOUTUBE_HOST_RE/);
-  assert.match(source, /GUARD_SCRIPT_PATH = 'js\/scripting\/youtube-player-guard\.js'/);
-  assert.match(source, /chrome\.runtime\.getURL\(GUARD_SCRIPT_PATH\)/);
-  assert.match(source, /createElement\('script'\)/);
-  assert.doesNotMatch(source, /\bfetch\s*\(|\bXMLHttpRequest\b/);
-  assert.doesNotMatch(source, /https?:\/\//);
-  const privateComparatorToken = String.fromCharCode(99, 111, 102, 102, 101, 101);
-  assert.doesNotMatch(source, new RegExp(`analytics|posthog|${privateComparatorToken}-break`, 'i'));
+
+test('YouTube guard stop restores owned hooks and captured wrappers become pass-through', async () => {
+  const { context, controller } = await createController();
+  const originalGet = context.Storage.prototype.getItem;
+  const originalSet = context.Storage.prototype.setItem;
+  const originalThen = context.Promise.prototype.then;
+  controller.install();
+  const capturedSet = context.Storage.prototype.setItem;
+  const capturedThen = context.Promise.prototype.then;
+  controller.stop(); controller.stop();
+  assert.equal(context.Storage.prototype.getItem, originalGet);
+  assert.equal(context.Storage.prototype.setItem, originalSet);
+  assert.equal(context.Promise.prototype.then, originalThen);
+  capturedSet.call(context.localStorage, 'yt-enforcement', 'allowed');
+  assert.equal(context.localStorage.getItem('yt-enforcement'), 'allowed');
+  let called = false;
+  await capturedThen.call(context.Promise.resolve(), function onAbnormalityDetected() { called = true; });
+  assert.equal(called, true);
+  assert.equal(controller.install(), true);
+  assert.equal(context.localStorage.getItem('yt-enforcement'), null);
+  assert.equal(controller.isActive(), true);
+});
+
+test('YouTube guard teardown preserves a later site-owned hook and does not stack on legacy controllers', async () => {
+  const { context, controller, source } = await createController();
+  controller.install();
+  const siteGet = function () { return 'site'; };
+  context.Storage.prototype.getItem = siteGet;
+  controller.stop();
+  assert.equal(context.Storage.prototype.getItem, siteGet);
+  let legacyRefresh = 0;
+  const legacy = { refresh() { legacyRefresh++; } };
+  context.TalonYoutubePlayerGuardController = legacy;
+  vm.runInNewContext(source, context);
+  assert.equal(context.TalonYoutubePlayerGuardController, legacy);
+  assert.equal(legacyRefresh, 0);
+});
+
+test('YouTube guard removes hooks before page caching and waits for authorized reinstall', async () => {
+  const events = new Map();
+  const { context, controller, video } = await createController({
+    addEventListener(type, handler) { events.set(type, handler); },
+    removeEventListener(type, handler) { if (events.get(type) === handler) events.delete(type); },
+  });
+  const originalGet = context.Storage.prototype.getItem;
+  const originalSet = context.Storage.prototype.setItem;
+  const originalThen = context.Promise.prototype.then;
+  controller.install();
+  const capturedSet = context.Storage.prototype.setItem;
+  events.get('pagehide')({ persisted: true });
+  assert.equal(controller.isActive(), false);
+  assert.equal(context.Storage.prototype.getItem, originalGet);
+  assert.equal(context.Storage.prototype.setItem, originalSet);
+  assert.equal(context.Promise.prototype.then, originalThen);
+  capturedSet.call(context.localStorage, 'yt-enforcement', 'allowed while cached');
+  events.get('pageshow')?.({ persisted: true });
+  assert.equal(context.localStorage.getItem('yt-enforcement'), 'allowed while cached');
+  assert.equal(controller.isActive(), false);
+  assert.equal(video.currentTime, 0);
+  assert.equal(controller.install(), true);
+  assert.equal(controller.isActive(), true);
 });

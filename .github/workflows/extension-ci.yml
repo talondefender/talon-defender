@@ -1,0 +1,36 @@
+name: Extension checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  packages:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm install --global npm@11.1.0
+      - run: npm ci
+      - run: npx playwright install msedge
+      - name: Install current Stable Chrome
+        shell: pwsh
+        run: |
+          $currentRoot = Join-Path $env:RUNNER_TEMP 'talon-chrome-stable'
+          $currentExecutable = & ./scripts/install-current-chrome.ps1 -DestinationDirectory $currentRoot
+          "TALON_CHROME_PATH=$currentExecutable" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Install declared-minimum Chrome
+        shell: pwsh
+        run: |
+          $minimumRoot = Join-Path $env:RUNNER_TEMP 'talon-chrome-122'
+          $minimumExecutable = & ./scripts/install-minimum-chrome.ps1 -DestinationDirectory $minimumRoot
+          "TALON_CHROME_MIN_PATH=$minimumExecutable" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - run: npm run verify:ci
+        env:
+          TALON_CHROME_SMOKE_HEADLESS: '1'

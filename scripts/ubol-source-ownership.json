@@ -40,8 +40,7 @@
     "localExtra": {
       "automation/directives.json": "Talon-owned packaged heuristic directives.",
       "automation/native-heuristics.json": "Talon-owned packaged native-ad heuristic vocabulary.",
-      "web_accessible_resources/click2load.html": "Retained for Talon's entitlement-gated custom-filter redirect compiler; current uBO Lite no longer exposes this redirect target from its manifest.",
-      "js/scripting/youtube-player-guard.js": "Talon-owned YouTube page-world guard exposed only to YouTube hosts."
+      "web_accessible_resources/click2load.html": "Retained for Talon's entitlement-gated custom-filter redirect compiler; current uBO Lite no longer exposes this redirect target from its manifest."
     },
     "upstreamExtra": {
       "zapper-ui.html": "Talon does not ship uBO Lite's zapper command or UI."
@@ -100,6 +99,7 @@
     "managed_storage.json",
     "options/**",
     "popup/**",
-    "shared/**"
+    "shared/**",
+    "js/youtube-registration.js"
   ]
 }

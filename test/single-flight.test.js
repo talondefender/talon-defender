@@ -408,3 +408,40 @@ test('overlay session store rejects mismatched file or page URL and consumes the
   }), { ok: false, error: 'session_mismatch' });
   assert.deepEqual(store.claim(session), { ok: false, error: 'unknown_token' });
 });
+
+
+test('community coordinator serializes overlays and queues one forced baseline after overlap', async () => {
+  const { createCommunitySyncCoordinator } = await import('../js/community-sync-coordinator.js');
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  const events = [];
+  const coordinator = createCommunitySyncCoordinator({
+    syncBaseline: async options => { events.push(`baseline:${Boolean(options.force)}`); if (events.length === 1) await held; return {}; },
+    syncOverlay: async options => { events.push(`overlay:${options.siteKey}`); return {}; },
+    handleResult: async result => result,
+    normalizeSiteKey: value => typeof value === 'string' ? value : '',
+  });
+  const first = coordinator.baseline();
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(coordinator.baseline({ force: true }), first);
+  assert.equal(coordinator.baseline({ force: true }), first);
+  const overlay = coordinator.overlay({ siteKey: 'example.com' });
+  assert.equal(coordinator.overlay({ siteKey: 'example.com' }), overlay);
+  release();
+  await Promise.all([first, overlay]);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(events, ['baseline:false', 'overlay:example.com', 'baseline:true']);
+});
+
+test('community coordinator keeps forced-baseline overlay recovery in one transaction', async () => {
+  const { createCommunitySyncCoordinator } = await import('../js/community-sync-coordinator.js');
+  const events = [];
+  let attempts = 0;
+  const coordinator = createCommunitySyncCoordinator({
+    syncBaseline: async () => { events.push('baseline'); return {}; },
+    syncOverlay: async () => { events.push('overlay'); return { retryWithForcedBaseline: attempts++ === 0 }; },
+    handleResult: async result => result, normalizeSiteKey: value => value || '',
+  });
+  await coordinator.overlay({ siteKey: 'example.com' });
+  assert.deepEqual(events, ['overlay', 'baseline', 'overlay']);
+});

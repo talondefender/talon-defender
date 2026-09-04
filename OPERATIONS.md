@@ -1,9 +1,10 @@
 # Operations
 
 Setup:
-- `npm install`
+- Use Node `24.19.0` from `.node-version` and npm `11.1.0`, then `npm ci`
 
 Core verification:
+- `npm run verify:ci` runs the shared required Chrome/Edge artifact verification without requiring a release tag
 - `npm test`
 - `npm run audit:public-content`
 - `npm run audit:public-safe`
@@ -34,6 +35,7 @@ Working directories and outputs:
 - current handoff artifacts are copied into `../Talon Defender Latest/chrome`, `../Talon Defender Latest/edge`, and `../Talon Defender Latest/source`
 
 Operational rules:
+- Community response limits are 4 MiB of decoded UTF-8 bytes for both baseline and overlay. Publish only payloads validated against this shared bound; enable publisher enforcement before API and Extension rollout. Preserve the signed last-known-good generation on timeout, oversize, parse, verification, or activation failure.
 - do not add private operational files here
 - keep `source-code.json` and the public source archive tied to the public repository tag
 - store handoff artifacts require a clean working tree and a matching `v<manifest.version>` tag at `HEAD`

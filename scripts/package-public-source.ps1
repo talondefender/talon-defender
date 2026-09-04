@@ -115,6 +115,9 @@ $metadataPath = Join-Path $distDir "source-release.json"
 
 $sourceItems = @(
   ".gitignore",
+  ".ignore",
+  ".github",
+  ".node-version",
   "AGENTS.md",
   "ATTRIBUTION.md",
   "CHANGE_PROCESS.md",

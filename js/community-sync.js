@@ -1,6 +1,7 @@
 /******************************************************************************/
 // Community intelligence sync (remote signed DNR rules)
 
+import { fetchCommunityResponse } from './community-fetch.js';
 import {
     browser,
     localRemove, localWrite,
@@ -253,26 +254,8 @@ const isPublicCommunityHotfixLane = value => {
     return false;
 };
 
-const fetchWithTimeout = async (url, options = {}) => {
-    let controller;
-    let timer;
-    try {
-        controller = new AbortController();
-        timer = self.setTimeout(() => controller.abort(), COMMUNITY_FETCH_TIMEOUT_MS);
-    } catch {
-    }
-    try {
-        return await fetch(url, {
-            ...options,
-            signal: controller?.signal,
-            redirect: 'error',
-        });
-    } finally {
-        if ( timer !== undefined ) {
-            try { clearTimeout(timer); } catch { }
-        }
-    }
-};
+const fetchWithTimeout = (url, options) =>
+    fetchCommunityResponse(url, options, { timeoutMs: COMMUNITY_FETCH_TIMEOUT_MS });
 
 /******************************************************************************/
 

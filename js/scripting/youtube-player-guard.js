@@ -4,7 +4,11 @@
 (function talonYoutubePlayerGuard(global) {
 
 if ( global.TalonYoutubePlayerGuardController ) {
-    global.TalonYoutubePlayerGuardController.refresh?.();
+    // Older page-world closures cannot be safely unwrapped after an update.
+    // Leave their document untouched until the user's next navigation.
+    if ( global.TalonYoutubePlayerGuardController.revision === 2 ) {
+        global.TalonYoutubePlayerGuardController.refresh?.();
+    }
     return;
 }
 
@@ -73,6 +77,19 @@ const createController = env => {
         Function.prototype.toString;
     const nativeAppendChild = win.Node?.prototype?.appendChild;
     let installed = false;
+    const ownedListeners = [];
+    let ownedHooks = [];
+    const listen = (target, type, handler) => {
+        target?.addEventListener?.(type, handler);
+        ownedListeners.push({ target, type, handler });
+    };
+    const hookTargets = () => [
+        [ win.Storage?.prototype, 'getItem' ],
+        [ win.Storage?.prototype, 'setItem' ],
+        [ win.Storage?.prototype, 'key' ],
+        [ win.Promise?.prototype, 'then' ],
+    ].filter(([target]) => target);
+
     let lastHref = String(win.location?.href || '');
     let ssapRanges = [];
     let ssapRangeIds = [];
@@ -557,8 +574,9 @@ const createController = env => {
             return false;
         }
         try {
-            win.Promise.prototype.then = new win.Proxy(nativePromiseThen, {
+            win.Promise.prototype.then = new win.Proxy(win.Promise.prototype.then, {
                 apply(target, thisArg, args) {
+                    if ( installed === false ) { return win.Reflect.apply(target, thisArg, args); }
                     for ( const index of [ 0, 1 ] ) {
                         if ( isAbnormalityCallback(args?.[index]) === false ) { continue; }
                         abnormalityGuardHits += 1;
@@ -601,6 +619,7 @@ const createController = env => {
             if ( typeof nativeGetItem === 'function' ) {
                 proto.getItem = new win.Proxy(nativeGetItem, {
                     apply(target, thisArg, args) {
+                        if ( installed === false ) { return win.Reflect.apply(target, thisArg, args); }
                         if ( shouldShieldStorageKey(args?.[0]) ) {
                             storageResetLiteReads += 1;
                             return null;
@@ -612,6 +631,7 @@ const createController = env => {
             if ( typeof nativeSetItem === 'function' ) {
                 proto.setItem = new win.Proxy(nativeSetItem, {
                     apply(target, thisArg, args) {
+                        if ( installed === false ) { return win.Reflect.apply(target, thisArg, args); }
                         if ( shouldShieldStorageKey(args?.[0]) ) {
                             storageResetLiteWrites += 1;
                             return undefined;
@@ -623,6 +643,7 @@ const createController = env => {
             if ( typeof nativeKey === 'function' ) {
                 proto.key = new win.Proxy(nativeKey, {
                     apply(target, thisArg, args) {
+                        if ( installed === false ) { return win.Reflect.apply(target, thisArg, args); }
                         const requested = Number(args?.[0]);
                         if ( Number.isInteger(requested) === false ||
                             requested < 0 ) {
@@ -1089,21 +1110,46 @@ const createController = env => {
 
     const installNavigationListeners = () => {
         const onNavigate = () => {
+            if ( installed === false ) { return; }
             refreshNavigationState();
             correctSsapLoop();
         };
-        try {
-            doc?.addEventListener?.('yt-navigate-start', onNavigate);
-            doc?.addEventListener?.('yt-navigate-finish', onNavigate);
-            doc?.addEventListener?.('DOMContentLoaded', onNavigate);
-            win.addEventListener?.('popstate', onNavigate);
-            win.addEventListener?.('pagehide', stopSsapLoopCheck, { once: true });
-        } catch {
+        listen(doc, 'yt-navigate-start', onNavigate);
+        listen(doc, 'yt-navigate-finish', onNavigate);
+        listen(doc, 'DOMContentLoaded', onNavigate);
+        listen(win, 'popstate', onNavigate);
+        // A cached document cannot receive a policy change while it is away.
+        // Remove hooks before caching; policy reconciliation can reinstall them
+        // on restoration only when the document is still eligible.
+        listen(win, 'pagehide', stop);
+    };
+
+    const stop = () => {
+        installed = false;
+        stopSsapLoopCheck();
+        for ( const { target, type, handler } of ownedListeners.splice(0) ) {
+            target?.removeEventListener?.(type, handler);
         }
+        for ( const { target, key, before, after } of ownedHooks ) {
+            const current = Object.getOwnPropertyDescriptor(target, key);
+            if ( current?.value !== after?.value || current?.get !== after?.get || current?.set !== after?.set ) { continue; }
+            try {
+                if ( before ) { Object.defineProperty(target, key, before); }
+                else { delete target[key]; }
+            } catch { }
+        }
+        ownedHooks = [];
+        storageResetLiteInstalled = false;
+        abnormalityGuardInstalled = false;
+        markGuard('stopped');
+        return { stopped: true };
     };
 
     const install = () => {
         if ( installed || isYouTubeHost() === false ) { return false; }
+        ownedHooks = hookTargets().map(([target, key]) => ({
+            target, key, before: Object.getOwnPropertyDescriptor(target, key),
+        }));
         installed = true;
         installStorageResetLiteGuard();
         cleanupSuspiciousWebStorage();
@@ -1114,10 +1160,14 @@ const createController = env => {
         // Array push proxies opt-in so YouTube SPA rendering stays responsive.
         installAbnormalityGuard();
         installNavigationListeners();
+        ownedHooks.forEach(entry => { entry.after = Object.getOwnPropertyDescriptor(entry.target, entry.key); });
         return true;
     };
 
     return {
+        revision: 2,
+        stop,
+        isActive: () => installed,
         correctSsapLoop,
         getLatestSsapRange,
         getAbnormalityGuardStats: () => ({

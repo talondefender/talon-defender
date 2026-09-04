@@ -1,3 +1,4 @@
+import { getYouTubeRegistrationScopes } from './youtube-registration.js';
 /*******************************************************************************
 
     uBlock Origin Lite - a comprehensive, MV3-compliant content blocker
@@ -326,43 +327,6 @@ const pushExactExcludeMatches = (excludeMatches, hostnames) => {
         seen.add(match);
         excludeMatches.push(match);
     }
-};
-
-const modeSetCoversHostname = (modeSet, hostname) => {
-    if ( modeSet instanceof Set === false ) { return false; }
-    return modeSet.has('all-urls') ||
-        modeSet.has('*') ||
-        modeSet.has(hostname) ||
-        ut.isDescendantHostnameOfIter(hostname, modeSet);
-};
-
-const getYouTubeAdSkipMatches = filteringModeDetails => {
-    const enabledModes = [
-        filteringModeDetails?.basic,
-        filteringModeDetails?.optimal,
-        filteringModeDetails?.complete,
-    ];
-    const hasGlobalEnable = enabledModes.some(modeSet =>
-        modeSet instanceof Set &&
-        (modeSet.has('all-urls') || modeSet.has('*'))
-    );
-    if ( hasGlobalEnable ) {
-        return ut.matchesFromHostnames(YOUTUBE_AD_SKIP_HOSTNAMES);
-    }
-    const hostnames = YOUTUBE_AD_SKIP_HOSTNAMES.filter(hostname =>
-        enabledModes.some(modeSet => modeSetCoversHostname(modeSet, hostname))
-    );
-    return ut.matchesFromHostnames(hostnames);
-};
-
-const getYouTubeAdSkipExcludeMatches = filteringModeDetails => {
-    const disabledModes = [
-        filteringModeDetails?.none,
-    ];
-    const hostnames = YOUTUBE_AD_SKIP_HOSTNAMES.filter(hostname =>
-        disabledModes.some(modeSet => modeSetCoversHostname(modeSet, hostname))
-    );
-    return ut.matchesFromHostnames(hostnames);
 };
 
 const readActiveSubsystemSuppressionHostnames = async () => {
@@ -1050,97 +1014,46 @@ function registerAutomation(context) {
 
 /******************************************************************************/
 
-function registerYouTubeAdSkip(context) {
-    const { before, filteringModeDetails, subsystemSuppressionHostnames } = context;
-    const matches = getYouTubeAdSkipMatches(filteringModeDetails);
-    if ( matches.length === 0 ) { return; }
+const modeSetCoversHostname = (modeSet, hostname) => {
+    if ( modeSet instanceof Set === false ) { return false; }
+    return modeSet.has('all-urls') || modeSet.has('*') || modeSet.has(hostname) ||
+        ut.isDescendantHostnameOfIter(hostname, modeSet);
+};
 
-    normalizeMatches(matches);
-
-    const excludeMatches = getYouTubeAdSkipExcludeMatches(filteringModeDetails);
-    pushExactExcludeMatches(
-        excludeMatches,
-        subsystemSuppressionHostnames?.youtubeAdSkip
+function registerYouTubeLane(context, baseId, files, world) {
+    const scopes = getYouTubeRegistrationScopes(
+        context.filteringModeDetails,
+        context.subsystemSuppressionHostnames?.youtubeAdSkip || []
     );
-
-    const registered = before.get(TALON_YOUTUBE_AD_SKIP_ID);
-    before.delete(TALON_YOUTUBE_AD_SKIP_ID); // Important!
-
-    const directive = {
-        id: TALON_YOUTUBE_AD_SKIP_ID,
-        js: [
-            '/js/scripting/breakage-guard.js',
-            TALON_YOUTUBE_AD_SKIP_PATH,
-        ],
-        allFrames: true,
-        matches,
-        runAt: 'document_start',
-    };
-    if ( excludeMatches.length !== 0 ) {
-        directive.excludeMatches = excludeMatches;
-    }
-
-    if ( registered === undefined ) {
-        context.toAdd.push(directive);
-        return;
-    }
-
-    if (
-        ut.strArrayEq(registered.js, directive.js, false) === false ||
-        ut.strArrayEq(registered.matches, matches) === false ||
-        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false
-    ) {
-        context.toRemove.push(TALON_YOUTUBE_AD_SKIP_ID);
-        context.toAdd.push(directive);
-    }
+    scopes.forEach((scope, index) => {
+        const id = index === 0 ? baseId : `${baseId}.${index}`;
+        const directive = {
+            id, js: files, allFrames: true,
+            matches: scope.matches, excludeMatches: scope.excludeMatches,
+            runAt: 'document_start', persistAcrossSessions: true,
+            ...(world ? { world } : {}),
+        };
+        const registered = context.before.get(id);
+        context.before.delete(id);
+        if ( registered === undefined ) {
+            context.toAdd.push(directive);
+        } else if ( contentScriptRegistrationsEqual(registered, directive) === false ) {
+            context.toRemove.push(id);
+            context.toAdd.push(directive);
+        }
+    });
 }
 
-/******************************************************************************/
+function registerYouTubeAdSkip(context) {
+    registerYouTubeLane(context, TALON_YOUTUBE_AD_SKIP_ID, [
+        '/js/scripting/breakage-guard.js', TALON_YOUTUBE_AD_SKIP_PATH,
+    ]);
+}
 
 function registerYouTubePlayerGuard(context) {
-    const { before, filteringModeDetails, subsystemSuppressionHostnames } = context;
-    const matches = getYouTubeAdSkipMatches(filteringModeDetails);
-    if ( matches.length === 0 ) { return; }
-
-    normalizeMatches(matches);
-
-    const excludeMatches = getYouTubeAdSkipExcludeMatches(filteringModeDetails);
-    pushExactExcludeMatches(
-        excludeMatches,
-        subsystemSuppressionHostnames?.youtubeAdSkip
-    );
-
-    const registered = before.get(TALON_YOUTUBE_PLAYER_GUARD_ID);
-    before.delete(TALON_YOUTUBE_PLAYER_GUARD_ID); // Important!
-
-    const directive = {
-        id: TALON_YOUTUBE_PLAYER_GUARD_ID,
-        js: [
-            TALON_YOUTUBE_PLAYER_GUARD_PATH,
-        ],
-        allFrames: true,
-        matches,
-        runAt: 'document_start',
-        world: 'MAIN',
-    };
-    if ( excludeMatches.length !== 0 ) {
-        directive.excludeMatches = excludeMatches;
-    }
-
-    if ( registered === undefined ) {
-        context.toAdd.push(directive);
-        return;
-    }
-
-    if (
-        ut.strArrayEq(registered.js, directive.js, false) === false ||
-        ut.strArrayEq(registered.matches, matches) === false ||
-        ut.strArrayEq(registered.excludeMatches, excludeMatches) === false ||
-        registered.world !== directive.world
-    ) {
-        context.toRemove.push(TALON_YOUTUBE_PLAYER_GUARD_ID);
-        context.toAdd.push(directive);
-    }
+    registerYouTubeLane(context, TALON_YOUTUBE_PLAYER_GUARD_ID, [
+        TALON_YOUTUBE_PLAYER_GUARD_PATH,
+    ], 'MAIN');
 }
 
 /******************************************************************************/

@@ -35,10 +35,12 @@ export const webextFlavor = (( ) => {
 })();
 
 export const isUserScriptsAvailable = () => {
-    if ( browser.userScripts instanceof Object === false ) { return false; }
-    if ( typeof browser.userScripts.getScripts !== 'function' ) { return false; }
-    if ( typeof browser.userScripts.register !== 'function' ) { return false; }
     try {
+        // On Chrome 122 even reading the namespace can throw while Developer
+        // Mode is off. Keep the complete capability probe inside this guard.
+        if ( browser.userScripts instanceof Object === false ) { return false; }
+        if ( typeof browser.userScripts.getScripts !== 'function' ) { return false; }
+        if ( typeof browser.userScripts.register !== 'function' ) { return false; }
         // Chrome recommends a method-call probe: before Chrome 138 the API can
         // be present while Developer Mode is off, and after 138 a revoked
         // Allow User Scripts toggle can leave the namespace defined until this

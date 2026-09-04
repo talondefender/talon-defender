@@ -1,6 +1,6 @@
 {
   "name": "talon-defender-extension",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "Talon Defender browser extension",
   "license": "GPL-3.0-or-later",
   "repository": {
@@ -31,10 +31,16 @@
     "release:extension:all": "npm run release:extension && npm run release:extension:edge",
     "lint": "npm test && npm run audit:public-safe && npm run audit:release-hygiene && npm run package:extension && npm run validate:mv3-package",
     "lint:edge": "npm test && npm run audit:public-safe && npm run audit:release-hygiene && npm run package:extension:edge && npm run validate:mv3-package:edge",
-    "release:gate": "npm test && npm run audit:public-safe && npm run audit:release-hygiene && npm audit && npm audit --omit=dev && npm run package:extension && npm run validate:mv3-package && npm run package:extension:edge && npm run validate:mv3-package:edge && npm run package:public-source && npm run test:chrome-smoke",
-    "lint:strict": "npm run release:gate"
+    "release:gate": "node scripts/verify-release.mjs --release --target all && npm run package:public-source",
+    "lint:strict": "npm run release:gate",
+    "verify:ci": "node scripts/verify-release.mjs --target all",
+    "test:edge-smoke": "node scripts/chrome-smoke.mjs --browser edge"
   },
   "devDependencies": {
     "playwright": "^1.58.2"
+  },
+  "packageManager": "npm@11.1.0",
+  "engines": {
+    "node": "24.x"
   }
 }

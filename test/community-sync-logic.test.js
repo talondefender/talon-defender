@@ -200,3 +200,103 @@ test('injectable state comparison preserves heuristic selector tuning', () => {
     true
   );
 });
+
+
+test('community transport keeps its deadline through streamed JSON and releases a stalled body', async () => {
+  const { fetchCommunityResponse } = await import('../js/community-fetch.js');
+  let cancelled = false;
+  let signal;
+  const body = new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode('{"rules":')); },
+    cancel() { cancelled = true; },
+  });
+  await assert.rejects(fetchCommunityResponse('https://example.com/bundle', {}, {
+    timeoutMs: 25,
+    fetchImpl: async (_url, options) => { signal = options.signal; return new Response(body); },
+  }), error => error.code === 'community_fetch_timeout');
+  assert.equal(signal.aborted, true);
+  assert.equal(cancelled, true);
+});
+
+test('community transport enforces elapsed time even while buffered reads starve timers', async () => {
+  const { fetchCommunityResponse } = await import('../js/community-fetch.js');
+  let cancelled = false;
+  await assert.rejects(fetchCommunityResponse('https://example.com/bundle', {}, {
+    timeoutMs: 10,
+    fetchImpl: async () => ({
+      ok: true, status: 200,
+      body: { getReader: () => ({
+        async read() {
+          const until = Date.now() + 15;
+          while (Date.now() < until) { /* Simulate a busy buffered stream. */ }
+          return { value: Uint8Array.of(32), done: false };
+        },
+        async cancel() { cancelled = true; },
+        releaseLock() {},
+      }) },
+    }),
+  }), error => error.code === 'community_fetch_timeout');
+  assert.equal(cancelled, true);
+});
+
+test('community transport preserves chunked Unicode JSON and status-only overlay responses', async () => {
+  const { fetchCommunityResponse } = await import('../js/community-fetch.js');
+  const bytes = new TextEncoder().encode(JSON.stringify({ rules: [], version: '\u00e9\u96ea\ud83d\udee1' }));
+  const response = await fetchCommunityResponse('https://example.com/bundle', {}, {
+    fetchImpl: async () => new Response(new ReadableStream({
+      start(controller) { for (const byte of bytes) controller.enqueue(Uint8Array.of(byte)); controller.close(); },
+    })),
+  });
+  assert.deepEqual(await response.json(), { rules: [], version: '\u00e9\u96ea\ud83d\udee1' });
+  for (const status of [204, 404, 410, 503]) {
+    const result = await fetchCommunityResponse('https://example.com/bundle', {}, {
+      fetchImpl: async () => new Response(null, { status }),
+    });
+    assert.equal(result.status, status);
+  }
+  await assert.rejects(fetchCommunityResponse('https://example.com/bundle', {}, {
+    fetchImpl: async () => new Response('{incomplete'),
+  }), SyntaxError);
+});
+
+test('community transport accepts exactly the decoded byte limit and cancels a chunk beyond it', async () => {
+  const { fetchCommunityResponse, COMMUNITY_MAX_RESPONSE_BYTES } = await import('../js/community-fetch.js');
+  const exact = JSON.stringify('x'.repeat(COMMUNITY_MAX_RESPONSE_BYTES - 2));
+  const response = await fetchCommunityResponse('https://example.com/bundle', {}, {
+    fetchImpl: async () => new Response(exact),
+  });
+  assert.equal((await response.json()).length, COMMUNITY_MAX_RESPONSE_BYTES - 2);
+  let cancelled = false;
+  let reads = 0;
+  await assert.rejects(fetchCommunityResponse('https://example.com/bundle', {}, {
+    fetchImpl: async () => new Response(new ReadableStream({
+      pull(controller) { reads += 1; controller.enqueue(new Uint8Array(1024 * 1024)); },
+      cancel() { cancelled = true; },
+    })),
+  }), error => error.code === 'community_response_too_large');
+  assert.equal(cancelled, true);
+  assert.ok(reads <= 6, `read too many chunks: ${reads}`);
+  await assert.rejects(fetchCommunityResponse('https://example.com/bundle', {}, {
+    fetchImpl: async () => new Response(exact + ' '),
+  }), error => error.code === 'community_response_too_large');
+});
+
+test('community transport counts decoded bytes of compressed HTTP responses', async () => {
+  const { createServer } = await import('node:http');
+  const { gzipSync } = await import('node:zlib');
+  const { fetchCommunityResponse } = await import('../js/community-fetch.js');
+  const body = gzipSync(JSON.stringify('x'.repeat(2048)));
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'Content-Encoding': 'gzip', 'Content-Length': body.length });
+    response.end(body);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    await assert.rejects(fetchCommunityResponse('http:' + `//127.0.0.1:${server.address().port}/bundle`, {}, {
+      maxBytes: 1024,
+    }), error => error.code === 'community_response_too_large');
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
