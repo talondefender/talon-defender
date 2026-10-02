@@ -86,6 +86,7 @@ import {
     isIgnorableRuntimeError,
 } from './utils.js';
 import {
+    computeEntitlementState,
     getTrialReminderWhen,
     normalizeAndValidateLicenseKey,
     runDurableEntitlementEffects,
@@ -1489,6 +1490,45 @@ const getReloadNeededState = tabId => {
     };
 };
 
+const readPopupEntitlementSnapshot = async () => {
+    // A pristine install has no trial record until initialization commits it.
+    // Do not turn missing state into a definitive expired-subscription screen.
+    if ( entitlementInitialized === false ) { return { status: 'loading' }; }
+    const stored = await readEntitlement();
+    const status = computeEntitlementState(stored, { trialPeriodMs: TRIAL_PERIOD_MS });
+    if (
+        status.trialStartMs === 0 && status.trialEndMs === 0 &&
+        status.entitledUntilMs === 0 && status.licenseKeyPresent === false
+    ) {
+        return { status: 'loading' };
+    }
+    return Object.assign({}, status, {
+        lastError: typeof stored.lastError === 'string' ? stored.lastError : '',
+    });
+};
+
+const readPopupPanelSummary = async ({ hostname = '' } = {}) => {
+    const entitlement = await readPopupEntitlementSnapshot();
+    // Rendering the popup must not start managed-policy reads, DNR repair, or
+    // custom-filter/reload diagnostics. Startup owns those transactions.
+    if ( isStartupCoreReady() === false ) {
+        return { startupReady: false, entitlementStatus: entitlement };
+    }
+    const sanitizedHostname = sanitizeModeHostname(hostname);
+    const [ defaultMode, level ] = await Promise.all([
+        getDefaultFilteringMode(),
+        sanitizedHostname !== ''
+            ? getFilteringMode(sanitizedHostname)
+            : getDefaultFilteringMode(),
+    ]);
+    return {
+        startupReady: isStartupCoreReady(),
+        defaultFilteringMode: defaultMode,
+        level,
+        entitlementStatus: entitlement,
+    };
+};
+
 const readPopupPanelData = async ({
     tabId = -1,
     hostname = '',
@@ -1503,7 +1543,7 @@ const readPopupPanelData = async ({
         disabledFeatures,
     ] = await Promise.all([
         getDefaultFilteringMode().catch(() => MODE_OPTIMAL),
-        getEntitlementStatusFromStorage().catch(() => entitlementStatus),
+        readPopupEntitlementSnapshot().catch(() => ({ status: 'loading' })),
         readEntitlement().catch(() => ({})),
         hasBroadHostPermissions().catch(() => false),
         adminReadEx('disabledFeatures').catch(() => []),
@@ -3018,6 +3058,7 @@ import {
 import {
     DNR_RECONCILIATION_DIRTY_KEY,
     enableRulesets,
+    ensureInternalUnfilteredRules,
     excludeFromStrictBlock,
     getDefaultRulesetsFromEnv,
     getEffectiveDynamicRules,
@@ -3101,6 +3142,7 @@ import { createSingleFlightRunner } from './single-flight.js';
 import {
     ENTITLEMENT_CHECK_ALARM,
     ENTITLEMENT_EXPIRE_ALARM,
+    TRIAL_PERIOD_MS,
     clearLicenseKey,
     getEntitlementStatus as getEntitlementStatusFromStorage,
     initEntitlement,
@@ -3166,7 +3208,37 @@ const configureUninstallURL = (source = 'extension_uninstall') => {
     }
 };
 
+let firstPopupWelcomeOpenedAt = 0;
+let firstPopupWelcomeInstallStatePending = false;
+let firstPopupWelcomeInstallStatePromise;
+
+function prepareFirstPopupWelcomeState() {
+    if ( firstPopupWelcomeInstallStatePending === false ) {
+        return Promise.resolve();
+    }
+    if ( firstPopupWelcomeInstallStatePromise instanceof Promise ) {
+        return firstPopupWelcomeInstallStatePromise;
+    }
+    // Commit install intent atomically. An early popup must not race separate
+    // pending/seen writes, and a failed write remains retryable in this worker.
+    const operation = browser.storage.local.set({
+        [FIRST_POPUP_WELCOME_PENDING_KEY]: {
+            source: FIRST_POPUP_WELCOME_SOURCE,
+            queuedAt: Date.now(),
+        },
+        [FIRST_POPUP_WELCOME_SEEN_KEY]: 0,
+    }).then(() => {
+        firstPopupWelcomeInstallStatePending = false;
+    });
+    firstPopupWelcomeInstallStatePromise = operation.catch(reason => {
+        firstPopupWelcomeInstallStatePromise = undefined;
+        throw reason;
+    });
+    return firstPopupWelcomeInstallStatePromise;
+}
+
 async function openFirstPopupWelcomeOnce() {
+    await prepareFirstPopupWelcomeState();
     const [pending, seenAt] = await Promise.all([
         readLocalStrict(FIRST_POPUP_WELCOME_PENDING_KEY),
         readLocalStrict(FIRST_POPUP_WELCOME_SEEN_KEY),
@@ -3180,10 +3252,18 @@ async function openFirstPopupWelcomeOnce() {
         return { opened: false };
     }
     const url = buildFirstPopupWelcomeURL();
-    await localWrite(FIRST_POPUP_WELCOME_SEEN_KEY, Date.now());
+    let opened = false;
+    if ( firstPopupWelcomeOpenedAt === 0 ) {
+        await ensureInstallWelcomeAllowlistReady();
+        await gotoURL(url);
+        firstPopupWelcomeOpenedAt = Date.now();
+        opened = true;
+    }
+    // Only acknowledge a successful open. Keep pending intent on any failure;
+    // the in-memory receipt and gotoURL's existing-tab lookup deduplicate retries.
+    await localWrite(FIRST_POPUP_WELCOME_SEEN_KEY, firstPopupWelcomeOpenedAt);
     await localRemove(FIRST_POPUP_WELCOME_PENDING_KEY);
-    await gotoURL(url);
-    return { opened: true };
+    return { opened };
 }
 
 const runFirstPopupWelcomeOpen = createSingleFlightRunner(openFirstPopupWelcomeOnce);
@@ -3435,6 +3515,8 @@ const overlaySessions = createOverlaySessionStore();
 const AUTO_GENERIC_HIGH_KEY = 'autoGenericHighHosts'; // legacy cleanup only
 const AUTO_PROMOTE_ENABLED = true;
 const STARTUP_SAFE_MESSAGE_TYPES = new Set([
+    'getYoutubeFeedbackPolicy',
+    'maybeOpenFirstPopupWelcome',
     'popupWarmup',
     'popupPanelData',
     'getTabReloadNeededState',
@@ -4046,7 +4128,7 @@ function shouldHandleMessageBeforeFullInitialization(request, sender) {
     if ( request instanceof Object === false ) { return false; }
     const what = typeof request.what === 'string' ? request.what : '';
     if ( STARTUP_SAFE_MESSAGE_TYPES.has(what) === false ) { return false; }
-    if ( what === 'removeCSS' ) {
+    if ( what === 'removeCSS' || what === 'getYoutubeFeedbackPolicy' ) {
         return isExtensionRuntimeSender(sender) &&
             Number.isInteger(sender?.tab?.id) &&
             Number.isInteger(sender?.frameId) &&
@@ -4130,7 +4212,7 @@ function ensureInstallWelcomeAllowlistReady() {
     if ( installWelcomeAllowlistReadyPromise instanceof Promise ) {
         return installWelcomeAllowlistReadyPromise;
     }
-    installWelcomeAllowlistReadyPromise = reconcileFilteringModeDetails().catch(reason => {
+    installWelcomeAllowlistReadyPromise = ensureInternalUnfilteredRules().catch(reason => {
         installWelcomeAllowlistReadyPromise = undefined;
         throw reason;
     });
@@ -4282,6 +4364,52 @@ async function syncRegionalRulesetOptOutState(enabledRulesets) {
         patch.regionalRulesetOptOutIds
     );
     return true;
+}
+
+const readYoutubeFeedbackPolicy = async sender => {
+    const hostname = normalizeHttpHostname(sender?.url || '');
+    if ( sender?.id !== runtime.id || sender?.frameId !== 0 ||
+        Number.isInteger(sender?.tab?.id) === false || sender.tab.id < 0 ||
+        typeof sender?.documentId !== 'string' || sender.documentId === '' ||
+        /(^|\.)youtube(?:-nocookie)?\.com$/i.test(hostname) === false ) {
+        return { ready: true, enabled: false, expired: false };
+    }
+    if ( entitlementInitialized === false || startupComplete === false ||
+        isStartupCoreReady() === false ) {
+        return { ready: false, enabled: false, expired: false };
+    }
+    const [ status, level ] = await Promise.all([
+        readPopupEntitlementSnapshot(), getFilteringMode(hostname),
+    ]);
+    if ( !['paid', 'trial', 'expired'].includes(status?.status) ) {
+        return { ready: false, enabled: false, expired: false };
+    }
+    let backedOff = false;
+    for ( let host = hostname; host.includes('.'); host = host.slice(host.indexOf('.') + 1) ) {
+        if ( hasActiveSubsystemBackoff(host, 'youtubeAdSkip') ) { backedOff = true; break; }
+    }
+    const now = Date.now();
+    const nextBoundary = [status.trialEndMs, status.entitledUntilMs, status.graceUntilMs]
+        .filter(value => Number.isFinite(value) && value > now)
+        .sort((a, b) => a - b)[0];
+    return {
+        ready: true,
+        enabled: level !== MODE_NONE && backedOff === false,
+        expired: status.status === 'expired',
+        ...(nextBoundary ? { refreshAfterMs: nextBoundary - now + 50 } : {}),
+    };
+};
+
+function notifyYoutubeFeedbackPolicyChanged() {
+    notifyYoutubeFeedbackPolicyChanged.runner ||= createSingleFlightRunner(async () => {
+        const tabs = await browser.tabs?.query?.({
+            url: [ '*://*.youtube.com/*', '*://*.youtube-nocookie.com/*' ],
+        });
+        await Promise.allSettled((tabs || []).filter(tab => Number.isInteger(tab.id)).map(tab =>
+            browser.tabs.sendMessage(tab.id, { youtubeFeedbackPolicyChanged: true }, { frameId: 0 })
+        ));
+    }, { trailing: true });
+    return notifyYoutubeFeedbackPolicyChanged.runner();
 }
 
 function stopIsolatedRuntimeControllers() {
@@ -4930,7 +5058,8 @@ async function reconcileYouTubeRuntimeForFrames(tabId, frameStates, { allow = tr
             frameTargets: eligible.map(targetOf), world: 'MAIN', injectImmediately: true,
         });
         await executeRuntimeRefreshLane(tabId, [
-            '/js/scripting/breakage-guard.js', '/js/scripting/youtube-ad-skip.js',
+            '/js/scripting/breakage-guard.js', '/js/scripting/youtube-ad-feedback.js',
+            '/js/scripting/youtube-ad-skip.js',
         ], { frameTargets: eligible.map(targetOf), injectImmediately: true });
     }
     return legacy;
@@ -8518,6 +8647,7 @@ async function enablePaywallNow({ broadcast = true } = {}) {
     if (broadcast) {
         broadcastMessage({ entitlement: entitlementStatus });
     }
+    notifyYoutubeFeedbackPolicyChanged().catch(() => {});
 }
 
 async function clearPaywallAllowAllRulesNow() {
@@ -8582,6 +8712,7 @@ async function disablePaywallNow({ broadcast = true } = {}) {
     if (broadcast) {
         broadcastMessage({ entitlement: entitlementStatus });
     }
+    notifyYoutubeFeedbackPolicyChanged().catch(() => {});
 }
 
 async function scheduleEntitlementAlarms(status) {
@@ -9140,6 +9271,9 @@ async function broadcastRulesetRuntimeState(runtimeVerified) {
         configRevision: rulesetConfig.configRevision,
         runtimeVerified: runtimeVerified === true,
     });
+    if ( runtimeVerified === true ) {
+        notifyYoutubeFeedbackPolicyChanged().catch(() => {});
+    }
 }
 
 const broadcastVerifiedRulesetRuntimeState = () =>
@@ -9858,6 +9992,12 @@ function onMessage(
     // Does not require trusted origin.
 
     switch (what) {
+
+        case 'getYoutubeFeedbackPolicy':
+            readYoutubeFeedbackPolicy(sender).then(callback).catch(() => {
+                callback({ ready: false, enabled: false, expired: false });
+            });
+            return true;
 
         case 'registerOverlaySession': {
             if (isEntitled() === false) {
@@ -10633,13 +10773,20 @@ function onMessage(
                 ? request.tabId
                 : sender?.tab?.id;
             const hostname = sanitizeModeHostname(request.hostname);
-            readPopupPanelData({
+            const readPanel = request.compact === true
+                ? readPopupPanelSummary
+                : readPopupPanelData;
+            readPanel({
                 tabId,
                 hostname,
             }).then(panelData => {
                 callback(panelData);
             }).catch(reason => {
                 ubolErr(`popupPanelData/${reason}`);
+                if ( request.compact === true ) {
+                    callback({ startupReady: false, entitlementStatus: { status: 'loading' } });
+                    return;
+                }
                 callback({
                     defaultFilteringMode: MODE_OPTIMAL,
                     hasOmnipotence: false,
@@ -11718,7 +11865,7 @@ async function startNow({ forcePermissionSync = false } = {}) {
     }
     const installResetApplied = await applyPendingInstallRulesetReset();
     if ( initialSetupPending || installResetApplied ) {
-        await ensureInstallWelcomeAllowlistReady();
+        await reconcileFilteringModeDetails();
     }
     setEntitlementStatusForRuntime(await initEntitlement());
     entitlementInitialized = true;
@@ -11871,6 +12018,7 @@ async function startNow({ forcePermissionSync = false } = {}) {
     }
     await clearStartupDocumentRuntimeRepairEvidence();
     startupComplete = true;
+    notifyYoutubeFeedbackPolicyChanged().catch(() => {});
     observeBestEffortOperation(
         () => browser.alarms?.clear?.(STARTUP_PROCESS_RETRY_ALARM),
         'startup watchdog clear'
@@ -12270,9 +12418,7 @@ browser.commands.onCommand.addListener((...args) => {
 async function openInstallWelcomeAfterAllowlistReady(url) {
     // Static rules can already be active on first install; wait only for the
     // install-welcome allowlist, not for unrelated extension startup work.
-    await ensureInstallWelcomeAllowlistReady().catch(reason => {
-        ubolErr(`runtime.onInstalled/allowlist/${reason}`);
-    });
+    await ensureInstallWelcomeAllowlistReady();
     await gotoURL(url);
 }
 
@@ -12293,11 +12439,8 @@ runtime.onInstalled.addListener((details) => {
         .then(() => isFullyInitialized)
         .then(() => completeLateInstallRulesetReset())
         .catch(ubolErr);
-    localWrite(FIRST_POPUP_WELCOME_PENDING_KEY, {
-        source: FIRST_POPUP_WELCOME_SOURCE,
-        queuedAt: Date.now(),
-    }).catch(ubolErr);
-    localRemove(FIRST_POPUP_WELCOME_SEEN_KEY).catch(ubolErr);
+    firstPopupWelcomeInstallStatePending = true;
+    prepareFirstPopupWelcomeState().catch(ubolErr);
     openInstallWelcomeAfterAllowlistReady(url).catch(reason => {
         ubolErr(`runtime.onInstalled/welcome/${reason}`);
     });

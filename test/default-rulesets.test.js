@@ -404,7 +404,7 @@ test('background keeps service-worker wakeups read-only for persistent DNR state
   assert.match(source, /A warm worker wake never touches already-open browsing tabs/);
 });
 
-test('background materializes filtering-mode DNR before first-install welcome opens', async () => {
+test('welcome navigation prepares its narrow allowlist while startup still reconciles filtering-mode DNR', async () => {
   const source = await readText('../js/background.js');
   const startBlock = source.slice(
     source.indexOf('async function startNow('),
@@ -419,15 +419,15 @@ test('background materializes filtering-mode DNR before first-install welcome op
   assert.match(source, /let installWelcomeAllowlistReadyPromise;/);
   assert.match(
     source,
-    /function ensureInstallWelcomeAllowlistReady\(\) \{[\s\S]*installWelcomeAllowlistReadyPromise = reconcileFilteringModeDetails\(\)\.catch/
+    /function ensureInstallWelcomeAllowlistReady\(\) \{[\s\S]*installWelcomeAllowlistReadyPromise = ensureInternalUnfilteredRules\(\)\.catch/
   );
   assert.match(
     startBlock,
-    /if \( initialSetupPending \|\| installResetApplied \) \{[\s\S]*await ensureInstallWelcomeAllowlistReady\(\);[\s\S]*await startSession\(\{[\s\S]*forceDynamicRules: initialSetupPending \|\| installResetApplied/
+    /if \( initialSetupPending \|\| installResetApplied \) \{[\s\S]*await reconcileFilteringModeDetails\(\);[\s\S]*await startSession\(\{[\s\S]*forceDynamicRules: initialSetupPending \|\| installResetApplied/
   );
   assert.match(
     source,
-    /async function openInstallWelcomeAfterAllowlistReady\(url\) \{[\s\S]*await ensureInstallWelcomeAllowlistReady\(\)\.catch\(reason => \{[\s\S]*await gotoURL\(url\);/
+    /async function openInstallWelcomeAfterAllowlistReady\(url\) \{[\s\S]*await ensureInstallWelcomeAllowlistReady\(\);[\s\S]*await gotoURL\(url\);/
   );
   assert.doesNotMatch(
     source,

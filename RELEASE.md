@@ -76,7 +76,7 @@ Store-safe public package gate:
 Smoke gate:
 - `npm run verify:ci` runs the shared gate on local changes and in public CI; it does not create store handoff artifacts or require a release tag
 - `npm run test:chrome-smoke` and `npm run test:edge-smoke` are standalone development checks; the release gate always requires browsers and cannot accept a skip
-- browser verification copies the selected unpacked artifact into a disposable profile directory, preserving the hashed package. It checks startup/options, DNR, entitlement expiry/restoration, worker wake, registration repair, Allowed Sites, quota messaging, and synthetic YouTube early execution, live teardown, and legacy-document migration
+- browser verification copies the selected unpacked artifact into a disposable profile directory, preserving the hashed package. It checks startup/options, actual popup rendering and trial display, one-time welcome navigation, DNR, entitlement expiry/restoration, worker wake, registration repair, Allowed Sites, quota messaging, and synthetic YouTube early execution, single Skip activation, empty-container handling, unrelated-control exclusions, live teardown, and legacy-document migration
 - use `TALON_CHROME_PATH` and `TALON_EDGE_PATH` to select current browser binaries; the shared gate requires an explicit current Chrome path. CI installs official Stable Chrome for Testing and Microsoft Edge
 - `TALON_CHROME_MIN_PATH` is mandatory for the shared gate and must point to Chrome for Testing `122.0.6261.128`; the smoke checks the actual browser major, and both store artifacts also run on this minimum Chromium build
 - run `scripts/install-minimum-chrome.ps1 -DestinationDirectory <absolute-private-directory>` to download and verify the single version/URL/SHA-256 pin in `scripts/minimum-chrome.json`; the installer prints the executable path. Public and integrated CI use this same installer
@@ -90,6 +90,7 @@ Compatibility and rollout:
 - deploy the shared 4 MiB decoded-body publisher prevalidation before API enforcement and Extension rollout. Existing signed schemas and verification keys are unchanged
 - use the store staged rollout controls where available, verify real playback and Allowed Sites in the private browser lab, and expand only after the existing paid/trial and browser gates pass
 - legacy YouTube documents keep their old controller until natural navigation; do not force reloads or clear user playback/storage state
+- YouTube feedback validation covers the protected overlay, four-second compaction, stationary expired CTA, policy uncertainty, Allowed Sites/backoff suppression, and live protected/expired transitions. Expired tests must retain zero registered dynamic protection scripts. Static presentation code is not a protection-registration exception.
 - rollback requires a new higher extension version built from the known-good source and fresh browser evidence. Preserve storage schemas and independently revoke faulty signed overlays through the backend controls
 
 License and trial preservation gate:

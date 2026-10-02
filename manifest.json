@@ -307,6 +307,19 @@
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self';"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.youtube.com/*",
+        "*://*.youtube-nocookie.com/*"
+      ],
+      "js": [
+        "js/scripting/youtube-ad-feedback.js",
+        "js/scripting/youtube-entitlement-observer.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
   "name": "__MSG_extensionName__",
   "options_page": "options/options.html",
   "permissions": [
@@ -326,6 +339,13 @@
   },
   "version": "0.1.16",
   "web_accessible_resources": [
+    {
+      "resources": [ "icons/icon128.png" ],
+      "matches": [
+        "*://*.youtube.com/*",
+        "*://*.youtube-nocookie.com/*"
+      ]
+    },
     {
       "resources": [
         "/strictblock.html"

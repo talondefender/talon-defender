@@ -1046,7 +1046,8 @@ function registerYouTubeLane(context, baseId, files, world) {
 
 function registerYouTubeAdSkip(context) {
     registerYouTubeLane(context, TALON_YOUTUBE_AD_SKIP_ID, [
-        '/js/scripting/breakage-guard.js', TALON_YOUTUBE_AD_SKIP_PATH,
+        '/js/scripting/breakage-guard.js',
+        '/js/scripting/youtube-ad-feedback.js', TALON_YOUTUBE_AD_SKIP_PATH,
     ]);
 }
 

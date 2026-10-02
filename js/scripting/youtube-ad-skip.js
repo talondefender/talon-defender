@@ -68,6 +68,8 @@ const SKIP_BUTTON_SELECTOR = [
 ].join(',');
 
 const SKIP_BUTTON_FALLBACK_SELECTOR = 'button,[role="button"]';
+const SKIP_ACTIVATION_SELECTOR = 'button,[role="button"],a';
+const LEGACY_SKIP_CONTROL_SELECTOR = '.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-skip-ad-button';
 const SKIP_BUTTON_FALLBACK_TEXT_RE =
     /\bskip\s+(?:ad|ads)\b|\bskip\b.{0,24}\b(?:ad|ads)\b|\b(?:ad|ads)\b.{0,24}\bskip\b/i;
 
@@ -213,7 +215,17 @@ const createController = env => {
             element.getAttribute?.('title'),
             element.textContent,
         ].filter(Boolean).join(' ');
-        return SKIP_BUTTON_FALLBACK_TEXT_RE.test(text);
+        if ( SKIP_BUTTON_FALLBACK_TEXT_RE.test(text) ) { return true; }
+        // A short label is safe only inside the very player showing an ad.
+        // It must not turn unrelated Skip/navigation controls into ad signals.
+        const label = element.getAttribute?.('aria-label') ||
+            element.getAttribute?.('title') || element.textContent || '';
+        if ( /^skip$/i.test(String(label).trim()) === false ) { return false; }
+        try {
+            return element.closest?.(PLAYER_SELECTOR)?.matches?.(AD_STATE_SELECTOR) === true;
+        } catch {
+        }
+        return false;
     };
 
     const skipButtonCandidates = () => {
@@ -224,8 +236,25 @@ const createController = env => {
             seen.add(element);
             candidates.push(element);
         };
-        for ( const button of queryAll(SKIP_BUTTON_SELECTOR) ) {
-            addCandidate(button);
+        for ( const element of queryAll(SKIP_BUTTON_SELECTOR) ) {
+            try {
+                const control = element.closest?.(SKIP_ACTIVATION_SELECTOR);
+                if ( control ) {
+                    addCandidate(control);
+                    continue;
+                }
+                const children = Array.from(element.querySelectorAll?.(SKIP_ACTIVATION_SELECTOR) || []);
+                if ( children.length !== 0 ) {
+                    for ( const child of children ) { addCandidate(child); }
+                    continue;
+                }
+                // Keep role-less legacy controls, but never count a container,
+                // countdown, or label as a successful button activation.
+                if ( element.matches?.(LEGACY_SKIP_CONTROL_SELECTOR) ) {
+                    addCandidate(element);
+                }
+            } catch {
+            }
         }
         for ( const button of queryAll(SKIP_BUTTON_FALLBACK_SELECTOR) ) {
             if ( skipControlLooksLikeAdSkip(button) ) {
@@ -235,29 +264,7 @@ const createController = env => {
         return candidates;
     };
 
-    const activationTargetsFor = element => {
-        const targets = [];
-        const seen = new Set();
-        const addTarget = target => {
-            if ( !target || seen.has(target) ) { return; }
-            seen.add(target);
-            targets.push(target);
-        };
-        addTarget(element);
-        try {
-            addTarget(element.closest?.('button,[role="button"],a'));
-        } catch {
-        }
-        try {
-            addTarget(element.querySelector?.('button,[role="button"],a'));
-        } catch {
-        }
-        return targets;
-    };
-
     const dispatchSkipActivationEvents = button => {
-        let dispatched = false;
-        const targets = activationTargetsFor(button);
         const eventTypes = [
             'pointerover',
             'mouseover',
@@ -265,34 +272,39 @@ const createController = env => {
             'mousedown',
             'pointerup',
             'mouseup',
-            'click',
         ];
-        for ( const target of targets ) {
+        try {
+            button.focus?.({ preventScroll: true });
+        } catch {
+        }
+        for ( const type of eventTypes ) {
             try {
-                target.focus?.({ preventScroll: true });
+                const Ctor = type.startsWith('pointer') && typeof win.PointerEvent === 'function'
+                    ? win.PointerEvent
+                    : win.MouseEvent;
+                if ( typeof Ctor !== 'function' ) { continue; }
+                const buttons = type.endsWith('down') ? 1 : 0;
+                const event = new Ctor(type, {
+                    bubbles: true,
+                    button: 0,
+                    buttons,
+                    cancelable: true,
+                    composed: true,
+                    view: win,
+                });
+                button.dispatchEvent?.(event);
             } catch {
             }
-            for ( const type of eventTypes ) {
-                try {
-                    const Ctor = type.startsWith('pointer') && typeof win.PointerEvent === 'function'
-                        ? win.PointerEvent
-                        : win.MouseEvent;
-                    if ( typeof Ctor !== 'function' ) { continue; }
-                    const buttons = type.endsWith('down') ? 1 : 0;
-                    const event = new Ctor(type, {
-                        bubbles: true,
-                        button: 0,
-                        buttons,
-                        cancelable: true,
-                        composed: true,
-                        view: win,
-                    });
-                    dispatched = target.dispatchEvent?.(event) !== false || dispatched;
-                } catch {
-                }
-            }
+        }
+        let dispatched = false;
+        try {
+            button.click();
+            dispatched = true;
+        } catch {
             try {
-                target.click();
+                button.dispatchEvent(new win.MouseEvent('click', {
+                    bubbles: true, button: 0, cancelable: true, composed: true, view: win,
+                }));
                 dispatched = true;
             } catch {
             }
@@ -507,6 +519,13 @@ const createController = env => {
         }
     };
 
+    const setAdFeedbackActive = active => {
+        try {
+            win.TalonYoutubeAdFeedbackController?.setActive?.(active, { mode: 'protected' });
+        } catch {
+        }
+    };
+
     const tick = () => {
         if ( active === false ) { return false; }
         for ( const element of hiddenNotices.keys() ) {
@@ -526,12 +545,17 @@ const createController = env => {
             noticeScanPending = false;
             suppressedNotice = suppressInterruptionNotices();
         }
-        const adShowing = isAdShowing();
+        let adShowing = isAdShowing();
         const skipClicked = adShowing ? clickSkipButtons() : false;
+        // A native Skip click can synchronously return to the video. Do not
+        // speed up that content or leave feedback visible until the next tick.
+        if ( skipClicked ) { adShowing = isAdShowing(); }
         if ( adShowing ) {
-            for ( const video of videos() ) {
+            const adVideos = videos();
+            for ( const video of adVideos ) {
                 handleAdVideo(video);
             }
+            setAdFeedbackActive(adVideos.some(video => Number(video.playbackRate) >= AD_PLAYBACK_RATE));
             lastAdState = true;
             return true;
         }
@@ -539,6 +563,7 @@ const createController = env => {
             restoreVideos();
             lastAdState = false;
         }
+        setAdFeedbackActive(false);
         return suppressedNotice || skipClicked;
     };
 
@@ -650,6 +675,10 @@ const createController = env => {
             intervalId = undefined;
         }
         restoreVideos();
+        try {
+            win.TalonYoutubeAdFeedbackController?.stop?.({ mode: 'protected' });
+        } catch {
+        }
         lastAdState = false;
         markState('stopped');
     };

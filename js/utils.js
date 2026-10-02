@@ -361,10 +361,8 @@ async function gotoURL(url, type) {
         const { windowId, id } = tabs[0];
         try {
             await Promise.all([
-                browser.windows.update(windowId, { focused: true })
-                    .catch(ignoreRuntimeError),
-                browser.tabs.update(id, { active: true })
-                    .catch(ignoreRuntimeError),
+                browser.windows.update(windowId, { focused: true }),
+                browser.tabs.update(id, { active: true }),
             ]);
             return;
         } catch (error) {

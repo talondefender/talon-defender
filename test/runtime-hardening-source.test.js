@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
+import { createSingleFlightRunner } from '../js/single-flight.js';
+import { computeEntitlementState } from '../js/entitlement-logic.js';
+import { INTERNAL_UNFILTERED_DOMAINS } from '../js/breakage-policy.js';
+import { isIgnorableRuntimeError } from '../js/runtime-errors.js';
 
 import {
   isPackagedStaticScriptletDirectiveId,
@@ -1696,22 +1700,521 @@ test('popup warmup attempts a bounded injectable recovery before reporting start
   assert.match(source, /callback\(buildPopupWarmupResponse\(\{/);
 });
 
-test('first-popup welcome tab open is single-flight guarded', async () => {
+const createWelcomeHarness = async ({ initialState = {}, ...overrides } = {}) => {
   const source = await readSource('js/background.js');
-  const openerStart = source.indexOf('async function openFirstPopupWelcomeOnce()');
-  const openerEnd = source.indexOf('const runFirstPopupWelcomeOpen', openerStart);
-  const handlerStart = source.indexOf("case 'maybeOpenFirstPopupWelcome':");
-  const handlerEnd = source.indexOf("case 'gotoURL':", handlerStart);
-  const openerSource = source.slice(openerStart, openerEnd);
-  const handlerSource = source.slice(handlerStart, handlerEnd);
+  const welcomeSource = sourceBetween(source, 'let firstPopupWelcomeOpenedAt =', 'const senderOriginFrom =');
+  const state = { ...initialState };
+  const calls = [];
+  const dependencies = {
+    createSingleFlightRunner,
+    isFullyInitialized: new Promise(() => {}),
+    async readLocalStrict(key) { calls.push(['read', key]); return state[key]; },
+    async localWrite(key, value) { calls.push(['write', key]); state[key] = value; },
+    async localRemove(key) { calls.push(['remove', key]); delete state[key]; },
+    async gotoURL(url) { calls.push(['navigate', url]); },
+    async ensureInternalUnfilteredRules() { calls.push(['allowlist']); },
+    browser: { storage: { local: {
+      async set(patch) { calls.push(['set', patch]); Object.assign(state, patch); },
+    } } },
+    ...overrides,
+  };
+  const build = new Function('deps', `
+    const {
+      createSingleFlightRunner, isFullyInitialized, readLocalStrict,
+      localWrite, localRemove, gotoURL, ensureInternalUnfilteredRules, browser,
+    } = deps;
+    let installWelcomeAllowlistReadyPromise;
+    ${sourceBetween(source, 'const INSTALL_WELCOME_URL =', 'const buildUninstallURL =')}
+    ${sourceBetween(source, 'function ensureInstallWelcomeAllowlistReady()', 'async function syncWithBrowserPermissions()')}
+    ${welcomeSource}
+    return {
+      run: runFirstPopupWelcomeOpen,
+      install() {
+        firstPopupWelcomeInstallStatePending = true;
+        return prepareFirstPopupWelcomeState();
+      },
+    };
+  `);
+  return { ...build(dependencies), state, calls };
+};
 
-  assert.match(source, /import \{ createSingleFlightRunner \} from '\.\/single-flight\.js';/);
-  assert.match(source, /const runFirstPopupWelcomeOpen = createSingleFlightRunner\(openFirstPopupWelcomeOnce\);/);
-  assert.match(handlerSource, /runFirstPopupWelcomeOpen\(\)\.then\(result => \{\s*callback\(result\);/);
-  assert.ok(
-    openerSource.indexOf('localWrite(FIRST_POPUP_WELCOME_SEEN_KEY') <
-      openerSource.indexOf('gotoURL(url)')
+test('first-popup welcome waits only for its allowlist and deduplicates concurrent requests', { timeout: 1000 }, async () => {
+  const ready = Promise.withResolvers();
+  const started = Promise.withResolvers();
+  const harness = await createWelcomeHarness({
+    initialState: { firstPopupWelcomePending: true },
+    ensureInternalUnfilteredRules() { started.resolve(); return ready.promise; },
+  });
+  const first = harness.run();
+  const concurrent = harness.run();
+  assert.equal(first, concurrent);
+  await started.promise;
+  assert.equal(harness.calls.some(([kind]) => kind === 'navigate'), false);
+  assert.equal(harness.state.firstPopupWelcomeSeenAt, undefined);
+  ready.resolve();
+  assert.deepEqual(await first, { opened: true });
+  assert.equal(harness.calls.filter(([kind]) => kind === 'navigate').length, 1);
+  assert.ok(harness.state.firstPopupWelcomeSeenAt > 0);
+  assert.equal(harness.state.firstPopupWelcomePending, undefined);
+  assert.deepEqual(await harness.run(), { opened: false });
+  const navigationIndex = harness.calls.findIndex(([kind]) => kind === 'navigate');
+  const receiptIndex = harness.calls.findIndex(([kind]) => kind === 'write');
+  assert.ok(navigationIndex < receiptIndex, 'navigation must succeed before acknowledging the welcome');
+});
+
+test('first-popup welcome navigation and allowlist failures leave intent retryable', async () => {
+  for (const failure of ['allowlist', 'navigate']) {
+    let attempts = 0;
+    const failOnce = async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error(`${failure} failed`);
+    };
+    const harness = await createWelcomeHarness({
+      initialState: { firstPopupWelcomePending: true },
+      ...(failure === 'allowlist'
+        ? { ensureInternalUnfilteredRules: failOnce }
+        : { gotoURL: failOnce }),
+    });
+    await assert.rejects(harness.run(), new RegExp(`${failure} failed`));
+    assert.equal(harness.state.firstPopupWelcomePending, true);
+    assert.equal(harness.state.firstPopupWelcomeSeenAt, undefined);
+    assert.deepEqual(await harness.run(), { opened: true });
+    assert.equal(attempts, 2);
+    assert.ok(harness.state.firstPopupWelcomeSeenAt > 0);
+  }
+});
+
+test('welcome receipt write and cleanup failures do not reopen an already-created tab', async () => {
+  for (const failure of ['write', 'remove']) {
+    let attempts = 0;
+    let harness;
+    const failOnce = async (key, value) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error(`${failure} failed`);
+      if (failure === 'write') harness.state[key] = value;
+      else delete harness.state[key];
+    };
+    harness = await createWelcomeHarness({
+      initialState: { firstPopupWelcomePending: true },
+      ...(failure === 'write' ? { localWrite: failOnce } : { localRemove: failOnce }),
+    });
+    await assert.rejects(harness.run(), new RegExp(`${failure} failed`));
+    assert.equal(harness.state.firstPopupWelcomePending, true);
+    assert.deepEqual(await harness.run(), { opened: false });
+    assert.equal(harness.calls.filter(([kind]) => kind === 'navigate').length, 1);
+    assert.ok(harness.state.firstPopupWelcomeSeenAt > 0);
+    assert.equal(harness.state.firstPopupWelcomePending, undefined);
+  }
+});
+
+test('first-popup request shares atomic install intent and retries a failed install write', { timeout: 1000 }, async () => {
+  let harness;
+  let installWrites = 0;
+  const gate = Promise.withResolvers();
+  harness = await createWelcomeHarness({
+    browser: { storage: { local: {
+      async set(patch) {
+        installWrites += 1;
+        if (installWrites === 1) throw new Error('install storage failed');
+        await gate.promise;
+        Object.assign(harness.state, patch);
+      },
+    } } },
+  });
+  await assert.rejects(harness.install(), /install storage failed/);
+  const installed = harness.install();
+  const opened = harness.run();
+  await Promise.resolve();
+  assert.equal(installWrites, 2, 'install and popup share one pending write');
+  assert.equal(harness.calls.length, 0, 'popup must not read partially committed install state');
+  gate.resolve();
+  await installed;
+  assert.deepEqual(await opened, { opened: true });
+  assert.ok(harness.state.firstPopupWelcomeSeenAt > 0);
+  assert.equal(harness.state.firstPopupWelcomePending, undefined);
+});
+
+test('welcome allowlist preparation only owns its narrow rule pair and retries failed writes', async () => {
+  const source = await readSource('js/ruleset-manager.js');
+  const build = new Function('dnr', 'INTERNAL_UNFILTERED_DOMAINS', `
+    ${sourceBetween(source, 'const USER_RULES_PRIORITY =', 'const TALON_SITE_FIXES_RULESET_ID =')}
+    ${sourceBetween(source, 'function ensureInternalUnfilteredRules()', 'async function filteringModesToDNR(')}
+    return ensureInternalUnfilteredRules;
+  `);
+  const firstWrite = Promise.withResolvers();
+  const calls = [];
+  const prepare = build({
+    setAllowAllRules(...args) {
+      calls.push(args);
+      return calls.length === 1 ? firstWrite.promise : Promise.resolve(true);
+    },
+  }, INTERNAL_UNFILTERED_DOMAINS);
+  const first = prepare();
+  assert.equal(prepare(), first, 'concurrent navigations must share one DNR transaction');
+  firstWrite.reject(new Error('DNR write failed'));
+  await assert.rejects(first, /DNR write failed/);
+  await prepare();
+  await prepare();
+  assert.deepEqual(calls, [
+    [8000002, ['talondefender.com'], [], false, 2000000],
+    [8000002, ['talondefender.com'], [], false, 2000000],
+  ], 'user filtering rules and paywall rules must retain their separate ids');
+});
+
+test('compact popup snapshot stays neutral before startup without reading managed policy or filtering modes', async () => {
+  const source = await readSource('js/background.js');
+  const summarySource = sourceBetween(source, 'const readPopupEntitlementSnapshot =', 'const readPopupPanelData =');
+  const calls = [];
+  let stored = {};
+  const build = new Function('deps', `
+    const { readEntitlement, computeEntitlementState, getDefaultFilteringMode, getFilteringMode } = deps;
+    const TRIAL_PERIOD_MS = 7 * 86400000;
+    let entitlementInitialized = false;
+    let coreReady = false;
+    const isStartupCoreReady = () => coreReady;
+    const sanitizeModeHostname = hostname => hostname;
+    ${summarySource}
+    return {
+      read: readPopupPanelSummary,
+      hydrate: () => { entitlementInitialized = true; },
+      ready: () => { coreReady = true; },
+    };
+  `);
+  const harness = build({
+    computeEntitlementState,
+    async readEntitlement() { calls.push('entitlement'); return stored; },
+    async getDefaultFilteringMode() { calls.push('default'); return 2; },
+    async getFilteringMode(hostname) { calls.push(hostname); return 0; },
+  });
+  assert.deepEqual(await harness.read({ hostname: 'example.com' }), {
+    startupReady: false, entitlementStatus: { status: 'loading' },
+  });
+  assert.deepEqual(calls, []);
+  harness.hydrate();
+  assert.equal((await harness.read()).entitlementStatus.status, 'loading');
+  stored = { trialStartMs: Date.now() - 1000 };
+  assert.equal((await harness.read()).entitlementStatus.status, 'trial');
+  assert.equal(calls.includes('default'), false, 'partial startup must not trigger managed mode hydration');
+  harness.ready();
+  const ready = await harness.read({ hostname: 'example.com' });
+  assert.equal(ready.startupReady, true);
+  assert.equal(ready.defaultFilteringMode, 2);
+  assert.equal(ready.level, 0);
+  assert.equal(ready.entitlementStatus.status, 'trial');
+  stored = { trialStartMs: Date.now() - 8 * 86400000 };
+  assert.equal((await harness.read()).entitlementStatus.status, 'expired');
+});
+
+test('navigation retries a disappeared matching tab but propagates other browser errors', async () => {
+  const source = await readSource('js/utils.js');
+  const navigationSource = sourceBetween(source, 'async function gotoURL(url, type)', '// Important: We need to sort the arrays');
+  const build = new Function('browser', 'isIgnorableRuntimeError', `
+    const normalizeNavigationURL = value => new URL(value);
+    ${navigationSource}
+    return gotoURL;
+  `);
+  for (const failure of [null, 'missing-tab', 'missing-window', 'other']) {
+    const created = [];
+    const navigate = build({
+      tabs: {
+        async query() { return [{ id: 19, windowId: 3 }]; },
+        async update() {
+          if (failure === 'missing-tab') throw new Error('No tab with id: 19.');
+          if (failure === 'other') throw new Error('Permission denied');
+        },
+        async create(details) { created.push(details); },
+      },
+      windows: {
+        async update() {
+          if (failure === 'missing-window') throw new Error('No window with id: 3.');
+        },
+      },
+    }, isIgnorableRuntimeError);
+    const url = 'https://talondefender.com/welcome-live/?source=first_popup_open';
+    if (failure === 'other') {
+      await assert.rejects(navigate(url), /Permission denied/);
+      assert.deepEqual(created, []);
+    } else {
+      await navigate(url);
+      assert.deepEqual(created, failure === null ? [] : [{ active: true, url }]);
+    }
+  }
+});
+
+test('early welcome and compact popup requests remain restricted to trusted extension pages', async () => {
+  const source = await readSource('js/background.js');
+  const trustedSource = sourceBetween(source, 'const senderOriginFrom =', "self.addEventListener('unhandledrejection'");
+  const allowlistSource = sourceBetween(source, 'const STARTUP_SAFE_MESSAGE_TYPES =', 'const STARTUP_DOCUMENT_RUNTIME_MESSAGE_TYPES =');
+  const gateSource = sourceBetween(source, 'function shouldHandleMessageBeforeFullInitialization(', 'function shouldWaitForStartupDocumentRuntime(');
+  const accepts = new Function(`
+    const runtime = { id: 'test-extension' };
+    const UBOL_ORIGIN = 'chrome-extension://test-extension';
+    ${trustedSource}
+    ${allowlistSource}
+    ${gateSource}
+    return shouldHandleMessageBeforeFullInitialization;
+  `)();
+  const trusted = { id: 'test-extension', origin: 'chrome-extension://test-extension' };
+  for (const what of ['maybeOpenFirstPopupWelcome', 'popupPanelData']) {
+    assert.equal(accepts({ what }, trusted), true, `${what} must bypass full startup`);
+    assert.equal(accepts({ what }, { id: 'test-extension', origin: 'https://example.com' }), false);
+    assert.equal(accepts({ what }, { id: 'other-extension', origin: trusted.origin }), false);
+    assert.equal(accepts({ what }, { id: 'test-extension' }), false);
+  }
+  assert.equal(accepts({ what: 'setFilteringMode' }, trusted), false, 'fast reads must not enable early mutations');
+});
+
+test('popup starts cache hydration and active-tab lookup together before its panel read', async () => {
+  const source = await readSource('popup/popup.js');
+  const initSource = sourceBetween(source, 'async function init()', 'function wireRuntimeStateUpdates()');
+  const cache = Promise.withResolvers();
+  const activeTab = Promise.withResolvers();
+  const calls = [];
+  const buildInit = new Function('deps', `
+    const {
+      hydrateFromLocalCache, resolveActiveHost, refreshPopupPanelSnapshot,
+      showInitialPopupShell, maybeOpenFirstPopupWelcome,
+    } = deps;
+    const setDocumentLanguage = () => {};
+    const localizeHtml = () => {};
+    const wireEvents = () => {};
+    const wireRuntimeStateUpdates = () => {};
+    let popupInitialHydrationComplete = false;
+    let popupPanelRefreshDeadline = 0;
+    const POPUP_PANEL_RETRY_WINDOW_MS = 30000;
+    const clearPopupLoadingFailSafe = () => {};
+    const setToggleLoading = () => {};
+    const refreshFilterCatalog = async () => {};
+    ${initSource}
+    return init;
+  `);
+  const init = buildInit({
+    hydrateFromLocalCache() { calls.push('cache'); return cache.promise; },
+    resolveActiveHost() { calls.push('tab'); return activeTab.promise; },
+    async refreshPopupPanelSnapshot() { calls.push('panel'); },
+    showInitialPopupShell() { calls.push('shell'); },
+    maybeOpenFirstPopupWelcome() { calls.push('welcome'); },
+  });
+  const initialized = init();
+  await Promise.resolve();
+  assert.equal(calls.includes('shell'), true);
+  assert.equal(calls.includes('welcome'), true);
+  assert.equal(calls.includes('cache'), true);
+  assert.equal(calls.includes('tab'), true, 'slow cache storage must not delay the tab query');
+  assert.equal(calls.includes('panel'), false);
+  activeTab.resolve();
+  await Promise.resolve();
+  assert.equal(calls.includes('panel'), false, 'cache must settle before runtime data can supersede it');
+  cache.resolve();
+  await initialized;
+  assert.equal(calls.filter(call => call === 'panel').length, 1);
+});
+
+test('popup loading deadline preserves the active tab and an in-flight filtering lock', async () => {
+  const source = await readSource('popup/popup.js');
+  const deadlineSource = sourceBetween(
+    source, 'function clearPopupLoadingFailSafe()', 'const toFiniteNumber ='
   );
+  const toggleSource = sourceBetween(
+    source, 'function setToggleLoading(isLoading)', 'function renderFilterCatalog('
+  );
+  const buildDeadline = new Function('deps', `
+    const { self, toggleButton } = deps;
+    const POPUP_LOADING_FAILSAFE_MS = 2500;
+    let popupLoadingFailSafeId = null;
+    let pendingFilteringMutations = 1;
+    let currentHost = 'example.com';
+    let currentTabId = 19;
+    let currentTabUrl = 'https://example.com/article';
+    let currentEnabledState = true;
+    let currentSiteLevel = 2;
+    const clearCurrentTabState = () => {
+      currentHost = null;
+      currentTabId = null;
+      currentTabUrl = '';
+    };
+    const renderToggle = () => {};
+    ${deadlineSource}
+    ${toggleSource}
+    return {
+      schedule: schedulePopupLoadingFailSafe,
+      state: () => ({ currentHost, currentTabId, currentTabUrl, currentSiteLevel }),
+      finishMutation: () => { pendingFilteringMutations = 0; setToggleLoading(false); },
+    };
+  `);
+  let onDeadline;
+  const classes = new Set();
+  const toggleButton = {
+    disabled: true,
+    classList: { toggle(name, enabled) { if (enabled) classes.add(name); else classes.delete(name); } },
+  };
+  const harness = buildDeadline({
+    toggleButton,
+    self: {
+      setTimeout(callback) { onDeadline = callback; return 1; },
+      clearTimeout() {},
+    },
+  });
+  harness.schedule();
+  onDeadline();
+  assert.deepEqual(harness.state(), {
+    currentHost: 'example.com', currentTabId: 19,
+    currentTabUrl: 'https://example.com/article', currentSiteLevel: 2,
+  });
+  assert.equal(toggleButton.disabled, true, 'a deadline cannot unlock a pending user mutation');
+  assert.equal(classes.has('loading'), true);
+  harness.finishMutation();
+  assert.equal(toggleButton.disabled, false);
+  assert.equal(classes.has('loading'), false);
+});
+
+test('popup distinguishes uninitialized trial storage from a genuinely expired entitlement', async () => {
+  const source = await readSource('popup/popup.js');
+  const helpers = sourceBetween(source, 'const toFiniteNumber =', 'async function hydrateFromLocalCache()');
+  const deriveStatus = new Function(`
+    const MODE_NONE = 0, MODE_BASIC = 1, MODE_OPTIMAL = 2, MODE_COMPLETE = 3;
+    ${sourceBetween(source, 'const TRIAL_PERIOD_MS =', 'const RUNTIME_MESSAGE_TIMEOUT_MS =')}
+    ${helpers}
+    return deriveStatusFromStoredEntitlement;
+  `)();
+  const now = Date.now();
+  assert.notEqual(deriveStatus(null)?.status, 'expired');
+  assert.equal(deriveStatus({}).status, 'loading');
+  assert.equal(deriveStatus({ trialStartMs: 0, trialEndMs: 0 }).status, 'loading');
+  assert.equal(deriveStatus({ trialStartMs: now - 1000 }).status, 'trial');
+  assert.equal(deriveStatus({ trialStartMs: now - 8 * 86400000 }).status, 'expired');
+  assert.equal(deriveStatus({ entitledUntilMs: now + 86400000 }).status, 'paid');
+  assert.equal(deriveStatus({ lastErrorCode: 'REVOKED' }).status, 'expired');
+});
+
+test('popup transient entitlement snapshots do not replace a known paid, trial, or expired state', async () => {
+  const source = await readSource('popup/popup.js');
+  const applySource = sourceBetween(source, 'function applyEntitlementStatus(status)', 'async function refreshEntitlement(');
+  const buildApply = new Function('initialStatus', `
+    let entitlementStatus = initialStatus;
+    let entitlementStatusRevision = 0;
+    let paywalled = initialStatus?.status === 'expired';
+    let licenseEntryVisible = false;
+    let currentEnabledState = true;
+    const renderEntitlementStatus = () => {};
+    const setPaywalledUI = () => {};
+    const renderExpiredOverlay = () => {};
+    const renderAllowedSitesControls = () => {};
+    const setLicenseEntryVisible = () => {};
+    const renderToggle = () => {};
+    const document = { querySelector: () => null };
+    const subscribeNowButton = null, showLicenseEntryButton = null,
+      recoverLicenseLink = null, useThisDeviceButton = null,
+      expiredUseThisDeviceButtonEl = null;
+    ${applySource}
+    return { apply: applyEntitlementStatus, state: () => ({ entitlementStatus, paywalled }) };
+  `);
+  for (const status of ['paid', 'trial', 'expired']) {
+    const original = { status, trialEndMs: 1234, lastError: '' };
+    const harness = buildApply(original);
+    for (const transient of ['loading', 'error']) {
+      harness.apply({ status: transient });
+      assert.equal(harness.state().entitlementStatus, original);
+      assert.equal(harness.state().paywalled, status === 'expired');
+    }
+    harness.apply({ status: status === 'paid' ? 'expired' : 'paid' });
+    assert.notEqual(harness.state().entitlementStatus.status, status, 'definitive transitions remain accepted');
+  }
+});
+
+test('popup compact reads preserve missing fields and do not overwrite newer user or entitlement state', async () => {
+  const source = await readSource('popup/popup.js');
+  const panelSource = sourceBetween(source, 'async function refreshPopupPanelData()', 'function formatRemaining(');
+  const build = new Function('sendRuntimeMessageWithTimeout', `
+    const MODE_NONE = 0;
+    let currentHost = 'example.com';
+    let currentTabId = 19;
+    let currentSiteLevel = 3;
+    let defaultFilteringMode = 2;
+    let currentEnabledState = true;
+    let filteringStateRevision = 0;
+    let entitlementStatusRevision = 0;
+    let entitlementStatus = { status: 'trial' };
+    const applyEntitlementStatus = status => { entitlementStatus = status; };
+    const renderToggle = () => {};
+    const renderAllowedSitesControls = () => {};
+    ${panelSource}
+    return {
+      read: refreshPopupPanelData,
+      mutate() {
+        filteringStateRevision += 1;
+        entitlementStatusRevision += 1;
+        currentSiteLevel = 0;
+        defaultFilteringMode = 0;
+        currentEnabledState = false;
+        entitlementStatus = { status: 'paid' };
+      },
+      state: () => ({ currentSiteLevel, defaultFilteringMode, currentEnabledState, entitlementStatus }),
+    };
+  `);
+  const pending = Promise.withResolvers();
+  const requests = [];
+  let response = Promise.resolve({ startupReady: false, entitlementStatus: { status: 'loading' } });
+  const harness = build(message => { requests.push(message); return response; });
+  assert.equal(await harness.read(), false);
+  assert.equal(harness.state().currentSiteLevel, 3);
+  assert.equal(harness.state().defaultFilteringMode, 2);
+  assert.equal(requests[0].what, 'popupPanelData');
+  assert.equal(requests[0].compact, true);
+  response = pending.promise;
+  const read = harness.read();
+  harness.mutate();
+  pending.resolve({
+    startupReady: true, level: 2, defaultFilteringMode: 2,
+    entitlementStatus: { status: 'trial' },
+  });
+  await read;
+  assert.deepEqual(harness.state(), {
+    currentSiteLevel: 0, defaultFilteringMode: 0, currentEnabledState: false,
+    entitlementStatus: { status: 'paid' },
+  });
+});
+
+test('open popup refreshes verified runtime and local filtering changes without applying raw mode broadcasts', async () => {
+  const source = await readSource('popup/popup.js');
+  const listenerSource = sourceBetween(source, 'function wireRuntimeStateUpdates()', 'function schedulePopupPanelRefresh(');
+  let channel;
+  let storageListener;
+  const refreshes = [];
+  const applied = [];
+  const wire = new Function('deps', `
+    const { BroadcastChannel, chrome, schedulePopupPanelRefresh, applyEntitlementStatus } = deps;
+    const FILTERING_MODE_STORAGE_KEY = 'filteringModeDetails';
+    const ENTITLEMENT_LOCAL_STORAGE_KEY = 'talonEntitlement';
+    let runtimeStateChannel = null;
+    let filteringStateRevision = 0;
+    let defaultFilteringMode = 2;
+    let currentSiteLevel = 2;
+    ${listenerSource}
+    wireRuntimeStateUpdates();
+    return () => ({ filteringStateRevision, defaultFilteringMode, currentSiteLevel });
+  `);
+  const state = wire({
+    BroadcastChannel: class {
+      constructor(name) { assert.equal(name, 'uBOL'); channel = this; }
+    },
+    chrome: { storage: { onChanged: { addListener(listener) { storageListener = listener; } } } },
+    schedulePopupPanelRefresh(options) { refreshes.push(options); },
+    applyEntitlementStatus(status) { applied.push(status); },
+  });
+  channel.onmessage({ data: { runtimeVerified: true } });
+  channel.onmessage({ data: { defaultFilteringMode: 0 } });
+  storageListener({ filteringModeDetails: { newValue: { none: ['all-urls'] } } }, 'local');
+  storageListener({ talonEntitlement: { newValue: {} } }, 'local');
+  const status = { status: 'paid' };
+  channel.onmessage({ data: { entitlement: status } });
+  assert.deepEqual(refreshes, Array.from({ length: 5 }, () => ({ restart: true })));
+  assert.deepEqual(applied, [status]);
+  assert.deepEqual(state(), { filteringStateRevision: 2, defaultFilteringMode: 2, currentSiteLevel: 2 });
+  channel.onmessage({ data: { runtimeVerified: false } });
+  storageListener({ filteringModeDetails: { newValue: {} } }, 'sync');
+  storageListener({ unrelated: { newValue: true } }, 'local');
+  assert.equal(refreshes.length, 5);
 });
 
 test('automation host-filters first and only loads ruleset state when a gate is present', async () => {

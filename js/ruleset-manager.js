@@ -67,6 +67,8 @@ const USER_RULES_BASE_RULE_ID = 9000000;
 const USER_RULES_PRIORITY = 1000000;
 const TRUSTED_DIRECTIVE_BASE_RULE_ID = 8000000;
 const TRUSTED_DIRECTIVE_PRIORITY = USER_RULES_PRIORITY + 1000000;
+const INTERNAL_UNFILTERED_BASE_RULE_ID = 8000002;
+let internalUnfilteredRulesReadyPromise;
 const TALON_SITE_FIXES_RULESET_ID = 'talon-site-fixes';
 export const DNR_RECONCILIATION_DIRTY_KEY = 'dnrReconciliationDirtyV1';
 const TALON_SITE_FIXES_RUNTIME_BASE_RULE_ID = 7000000;
@@ -734,6 +736,29 @@ async function getEffectiveSessionRules() {
 
 /******************************************************************************/
 
+function ensureInternalUnfilteredRules() {
+    if ( internalUnfilteredRulesReadyPromise instanceof Promise ) {
+        return internalUnfilteredRulesReadyPromise;
+    }
+    // First-party navigation must be ready before unrelated managed policy
+    // and content-script startup. These hosts are always unfiltered below,
+    // so a separate rule pair preserves that invariant without replacing
+    // the user's or administrator's filtering-mode rule pair.
+    internalUnfilteredRulesReadyPromise = dnr.setAllowAllRules(
+        INTERNAL_UNFILTERED_BASE_RULE_ID,
+        Array.from(INTERNAL_UNFILTERED_DOMAINS).sort(),
+        [],
+        false,
+        TRUSTED_DIRECTIVE_PRIORITY
+    ).catch(reason => {
+        internalUnfilteredRulesReadyPromise = undefined;
+        throw reason;
+    });
+    return internalUnfilteredRulesReadyPromise;
+}
+
+/******************************************************************************/
+
 async function filteringModesToDNR(modes) {
     const noneHostnames = new Set([ ...modes.none ]);
     const notNoneHostnames = new Set([ ...modes.basic, ...modes.optimal, ...modes.complete ]);
@@ -1314,6 +1339,7 @@ async function updateCommunityRules(rulesIn = [], bundleMeta = {}) {
 
 export {
     enableRulesets,
+    ensureInternalUnfilteredRules,
     excludeFromStrictBlock,
     filteringModesToDNR,
     getActiveCommunityRules,

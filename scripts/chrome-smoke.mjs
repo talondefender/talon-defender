@@ -322,6 +322,80 @@ const gotoControlPage = (page, extensionId) =>
     waitUntil: 'domcontentloaded',
   });
 
+const runPopupSmoke = async (context, controlPage, extensionId) => {
+  const welcomeURL = 'https://talondefender.com/welcome-live/?source=first_popup_open';
+  const welcomeRoute = 'https://talondefender.com/welcome-live/**';
+  const welcomeKeys = [ 'firstPopupWelcomePending', 'firstPopupWelcomeSeenAt' ];
+  await waitFor('fresh-install first-popup welcome intent', async () => {
+    const stored = await getLocalStorage(controlPage, welcomeKeys);
+    return stored.firstPopupWelcomePending && !stored.firstPopupWelcomeSeenAt;
+  }, { timeoutMs: 45000, intervalMs: 25 });
+  await context.route(welcomeRoute, route => route.fulfill({
+    status: 200,
+    contentType: 'text/html',
+    body: '<!doctype html><title>Local welcome navigation fixture</title>',
+  }));
+  const popupPage = await context.newPage();
+  const pageErrors = [];
+  popupPage.on('pageerror', error => pageErrors.push(String(error)));
+  await popupPage.addInitScript(() => {
+    window.__popupSmokeExpiredShown = false;
+    new MutationObserver(() => {
+      const overlay = document.getElementById('expiredOverlay');
+      if (overlay && overlay.hidden === false) {
+        window.__popupSmokeExpiredShown = true;
+      }
+    }).observe(document, { subtree: true, childList: true, attributes: true });
+  });
+  const popupURL = `chrome-extension://${extensionId}/popup/popup.html`;
+  try {
+    const startedAt = Date.now();
+    await popupPage.goto(popupURL, { waitUntil: 'domcontentloaded' });
+    const welcomeState = await waitFor('first-popup welcome acknowledgment', async () => {
+      const stored = await getLocalStorage(controlPage, welcomeKeys);
+      return Number(stored.firstPopupWelcomeSeenAt) > 0 &&
+        stored.firstPopupWelcomePending === undefined ? stored : null;
+    }, { timeoutMs: 45000, intervalMs: 25 });
+    const welcomeAcknowledgedMs = Date.now() - startedAt;
+    const welcomeTabId = await getTabIdForUrl(controlPage, welcomeURL);
+    assert(welcomeTabId >= 0, 'first popup acknowledged a welcome tab that was not opened');
+    await waitFor('popup controls and entitlement', async () => {
+      const summary = await sendRuntimeMessage(popupPage, {
+        what: 'popupPanelData', compact: true,
+      });
+      const visible = await popupPage.evaluate(() => {
+        const popup = document.querySelector('.popup');
+        const toggle = document.getElementById('toggleProtection');
+        return popup?.hidden === false && toggle?.disabled === false &&
+          document.getElementById('expiredOverlay')?.hidden === true;
+      });
+      return summary?.startupReady === true &&
+        summary?.entitlementStatus?.status === 'trial' && visible;
+    }, { timeoutMs: 45000 });
+    const controlsReadyMs = Date.now() - startedAt;
+    assert(await popupPage.evaluate(() => window.__popupSmokeExpiredShown) === false,
+      'fresh popup displayed an expired-subscription overlay');
+
+    // Closing the welcome tab makes a mistaken repeat observable even when
+    // normal navigation would otherwise reuse an already-open matching tab.
+    await controlPage.evaluate(tabId => chrome.tabs.remove(tabId), welcomeTabId);
+    await popupPage.reload({ waitUntil: 'domcontentloaded' });
+    await popupPage.waitForFunction(() => document.querySelector('.popup')?.hidden === false);
+    const repeated = await sendRuntimeMessage(popupPage, { what: 'maybeOpenFirstPopupWelcome' });
+    assert(repeated?.opened === false, 'repeated popup reopened its welcome page');
+    assert(await getTabIdForUrl(controlPage, welcomeURL) === -1,
+      'repeated popup created another welcome tab');
+    const repeatedState = await getLocalStorage(controlPage, welcomeKeys);
+    assert(repeatedState.firstPopupWelcomeSeenAt === welcomeState.firstPopupWelcomeSeenAt,
+      'repeated popup changed its original welcome receipt');
+    assert(pageErrors.length === 0, `popup page errors: ${pageErrors.join(' | ')}`);
+    return { welcomeAcknowledgedMs, controlsReadyMs };
+  } finally {
+    await popupPage.close().catch(() => {});
+    await context.unroute(welcomeRoute);
+  }
+};
+
 const writeEntitlementState = async (page, { local, sync }) => {
   let localStored = null;
   let syncStored = null;
@@ -350,7 +424,8 @@ const runYouTubePolicySmoke = async (context, control) => {
   const entitlementBefore = (await getLocalStorage(control, ['talonEntitlement'])).talonEntitlement;
   const syncBefore = (await getSyncStorage(control, ['talonEntitlementSync'])).talonEntitlementSync;
   const origin = 'https:' + '//www.youtube.com';
-  await context.route(`${origin}/**`, route => route.fulfill({
+  const allowedOrigin = 'https:' + '//m.youtube.com';
+  const fulfillYouTubeFixture = route => route.fulfill({
     status: 200, contentType: 'text/html',
     body: `<!doctype html><title>Local policy test</title><script>
       window.fixtureGuardBeforeInline = window.TalonYoutubePlayerGuardController?.isActive?.() === true;
@@ -358,12 +433,16 @@ const runYouTubePolicySmoke = async (context, control) => {
       window.fixtureInlineValue = localStorage.getItem('yt-enforcement-fixture');
       window.fixtureDocumentId = Math.random();
     </script><div id="movie_player" class="html5-video-player ad-showing"><video></video></div>`,
-  }));
-  const setMode = level => sendRuntimeMessage(control, {
-    what: 'setFilteringMode', hostname: 'www.youtube.com', level,
+  });
+  await context.route(`${origin}/**`, fulfillYouTubeFixture);
+  await context.route(`${allowedOrigin}/**`, fulfillYouTubeFixture);
+  const setMode = (level, hostname = 'www.youtube.com') => sendRuntimeMessage(control, {
+    what: 'setFilteringMode', hostname, level,
   });
   assert(await setMode(MODE_OPTIMAL) === MODE_OPTIMAL, 'YouTube enable failed');
+  assert(await setMode(MODE_NONE, 'm.youtube.com') === MODE_NONE, 'YouTube opt-out fixture failed');
   const fixture = await context.newPage();
+  const allowedFixture = await context.newPage();
   try {
     const extensionId = new URL(control.url()).hostname;
     const stoppedBeforeNavigation = await stopExtensionServiceWorker(context, control, extensionId);
@@ -376,10 +455,90 @@ const runYouTubePolicySmoke = async (context, control) => {
     assert(early.beforeInline && early.value === null, 'YouTube document-start guard was late or missing');
     await waitFor('YouTube ad runtime', () => fixture.evaluate(() =>
       document.querySelector('video').playbackRate === 16));
+    await waitFor('YouTube protected feedback', () => fixture.evaluate(() => {
+      const overlay = document.getElementById('talon-youtube-ad-feedback');
+      const cta = overlay?.querySelector('.talon-youtube-ad-feedback-cta');
+      return overlay?.dataset.mode === 'protected' && overlay.getClientRects().length > 0 &&
+        overlay.textContent.includes('Talon Defender is shortening this ad') &&
+        getComputedStyle(overlay).pointerEvents === 'none' &&
+        getComputedStyle(cta).display === 'none';
+    }));
+    await fixture.evaluate(() => {
+      window.fixtureSkipCounts = { plain: 0, native: 0, empty: 0, outside: 0, navigation: 0, content: 0 };
+      const player = document.getElementById('movie_player');
+      const addControl = (parent, label, name) => {
+        const button = document.createElement('button');
+        button.textContent = label;
+        button.dataset.fixtureSkip = name;
+        button.addEventListener('click', () => {
+          window.fixtureSkipCounts[name] += 1;
+          if (name === 'plain') { button.hidden = true; }
+        });
+        parent.append(button);
+      };
+      addControl(document.body, 'Skip', 'outside');
+      addControl(player, 'Skip navigation', 'navigation');
+      addControl(player, 'Skip', 'plain');
+    });
+    await waitFor('YouTube plain Skip activation', () => fixture.evaluate(() =>
+      window.fixtureSkipCounts.plain > 0));
+    assert(await fixture.evaluate(() => window.fixtureSkipCounts.plain === 1),
+      'YouTube activated a plain Skip button more than once');
+    await fixture.evaluate(() => {
+      const player = document.getElementById('movie_player');
+      document.querySelector('[data-fixture-skip="plain"]').remove();
+      const empty = document.createElement('div');
+      empty.className = 'ytp-ad-skip-button-container';
+      empty.style.cssText = 'width:80px;height:24px;';
+      empty.addEventListener('click', () => { window.fixtureSkipCounts.empty += 1; });
+      const button = document.createElement('button');
+      button.className = 'ytp-ad-skip-button';
+      button.textContent = 'Skip ads';
+      button.addEventListener('click', () => {
+        window.fixtureSkipCounts.native += 1;
+        button.hidden = true;
+      });
+      player.append(empty, button);
+    });
+    await waitFor('YouTube native Skip after empty wrapper', () => fixture.evaluate(() =>
+      window.fixtureSkipCounts.native > 0));
+    assert(await fixture.evaluate(() => window.fixtureSkipCounts.native === 1 &&
+      window.fixtureSkipCounts.empty === 0 && window.fixtureSkipCounts.outside === 0 &&
+      window.fixtureSkipCounts.navigation === 0),
+    'YouTube Skip activation clicked a wrapper, duplicate, or unrelated control');
+    await fixture.evaluate(() => {
+      const player = document.getElementById('movie_player');
+      player.querySelector('.ytp-ad-skip-button-container').remove();
+      player.querySelector('.ytp-ad-skip-button').remove();
+      player.classList.remove('ad-showing');
+    });
+    await waitFor('YouTube playback restoration after Skip fixtures', () => fixture.evaluate(() =>
+      document.querySelector('video').playbackRate === 1 &&
+      document.getElementById('talon-youtube-ad-feedback') === null));
+    await fixture.evaluate(() => {
+      const button = document.createElement('button');
+      button.textContent = 'Skip';
+      button.dataset.fixtureSkip = 'content';
+      button.addEventListener('click', () => { window.fixtureSkipCounts.content += 1; });
+      document.getElementById('movie_player').append(button);
+    });
+    await sleep(1100);
+    assert(await fixture.evaluate(() => window.fixtureSkipCounts.content === 0 &&
+      window.fixtureSkipCounts.outside === 0 && window.fixtureSkipCounts.navigation === 0 &&
+      document.querySelector('video').playbackRate === 1),
+    'YouTube treated a non-ad Skip control as an advertisement');
+    await fixture.evaluate(() => {
+      document.querySelector('[data-fixture-skip="content"]').remove();
+      document.getElementById('movie_player').classList.add('ad-showing');
+    });
+    await waitFor('YouTube restored ad fixture', () => fixture.evaluate(() =>
+      document.querySelector('video').playbackRate === 16));
     assert(await setMode(MODE_NONE) === MODE_NONE, 'YouTube disable failed');
     await waitFor('YouTube live teardown', () => fixture.evaluate(() =>
       window.TalonYoutubePlayerGuardController?.isActive?.() === false &&
-      document.querySelector('video').playbackRate === 1));
+      document.querySelector('video').playbackRate === 1 &&
+      document.getElementById('talon-youtube-ad-feedback') === null &&
+      document.getElementById('talon-youtube-ad-feedback-style') === null));
     const stopped = await fixture.evaluate(() => {
       localStorage.setItem('yt-enforcement-fixture', 'allowed');
       document.dispatchEvent(new Event('visibilitychange'));
@@ -394,6 +553,9 @@ const runYouTubePolicySmoke = async (context, control) => {
     await fixture.reload();
     assert(await fixture.evaluate(() => window.TalonYoutubePlayerGuardController === undefined &&
       window.fixtureInlineValue === 'probe'), 'Allowed Sites still injected YouTube guard');
+    await sleep(600);
+    assert(await fixture.evaluate(() => document.getElementById('talon-youtube-ad-feedback') === null),
+      'Allowed Sites rendered YouTube feedback');
     await fixture.evaluate(() => {
       window.TalonYoutubePlayerGuardController = { refresh() { window.legacyRefreshCalled = true; } };
     });
@@ -416,6 +578,7 @@ const runYouTubePolicySmoke = async (context, control) => {
     await fixture.reload();
     assert(await fixture.evaluate(() => window.TalonYoutubePlayerGuardController?.revision === 2),
       'YouTube migration did not complete after natural navigation');
+    await allowedFixture.goto(`${allowedOrigin}/watch?v=local-policy-test`);
     const expired = {
       trialStartMs: Date.now() - 8 * 24 * 60 * 60 * 1000,
       trialEndMs: Date.now() - 24 * 60 * 60 * 1000,
@@ -428,14 +591,40 @@ const runYouTubePolicySmoke = async (context, control) => {
     await waitFor('YouTube entitlement teardown', () => fixture.evaluate(() =>
       window.TalonYoutubePlayerGuardController?.isActive?.() === false &&
       document.querySelector('video').playbackRate === 1));
+    await waitFor('YouTube expired feedback', () => fixture.evaluate(() => {
+      const overlay = document.getElementById('talon-youtube-ad-feedback');
+      const cta = overlay?.querySelector('.talon-youtube-ad-feedback-cta');
+      return overlay?.dataset.mode === 'expired' && cta?.textContent === 'Restore Talon Defender' &&
+        cta.getClientRects().length > 0 && getComputedStyle(cta).pointerEvents === 'auto' &&
+        new URL(cta.href).searchParams.get('source') === 'youtube_expired_overlay';
+    }));
+    await fixture.evaluate(() => document.getElementById('movie_player').classList.remove('ad-showing'));
+    await waitFor('YouTube expired feedback clears after ad', () => fixture.evaluate(() =>
+      document.getElementById('talon-youtube-ad-feedback') === null));
+    await fixture.evaluate(() => document.getElementById('movie_player').classList.add('ad-showing'));
+    await waitFor('YouTube expired feedback returns for next ad', () => fixture.evaluate(() =>
+      document.getElementById('talon-youtube-ad-feedback')?.dataset.mode === 'expired'));
+    assert(await allowedFixture.evaluate(() => document.getElementById('talon-youtube-ad-feedback') === null &&
+      document.querySelector('video').playbackRate === 1), 'Expired observer ignored an existing Allowed Sites choice');
+    await allowedFixture.reload();
+    await sleep(600);
+    assert(await allowedFixture.evaluate(() => document.getElementById('talon-youtube-ad-feedback') === null &&
+      document.getElementById('talon-youtube-ad-feedback-style') === null &&
+      window.TalonYoutubePlayerGuardController === undefined), 'Expired observer rendered on an opted-out navigation');
     await fixture.reload();
     assert(await fixture.evaluate(() => window.TalonYoutubePlayerGuardController === undefined &&
       window.fixtureInlineValue === 'probe'), 'Expired entitlement injected YouTube guard');
+    await waitFor('YouTube expired feedback after navigation', () => fixture.evaluate(() =>
+      document.getElementById('talon-youtube-ad-feedback')?.dataset.mode === 'expired'));
     await writeEntitlementState(control, { local: entitlementBefore, sync: syncBefore });
     await waitFor('YouTube restored entitlement', async () =>
       (await sendRuntimeMessage(control, { what: 'getEntitlementStatus' }))?.status === 'trial');
     await waitFor('YouTube entitlement live restoration', () => fixture.evaluate(() =>
-      window.TalonYoutubePlayerGuardController?.isActive?.() === true));
+      window.TalonYoutubePlayerGuardController?.isActive?.() === true &&
+      document.querySelector('video').playbackRate === 16 &&
+      document.getElementById('talon-youtube-ad-feedback')?.dataset.mode === 'protected'));
+    assert(await fixture.evaluate(() => document.querySelectorAll('#talon-youtube-ad-feedback').length === 1),
+      'YouTube entitlement restoration left duplicate feedback');
     const entitlementAfter = (await getLocalStorage(control, ['talonEntitlement'])).talonEntitlement;
     assert(entitlementAfter.deviceId === entitlementBefore.deviceId &&
       entitlementAfter.trialStartMs === entitlementBefore.trialStartMs &&
@@ -443,7 +632,9 @@ const runYouTubePolicySmoke = async (context, control) => {
     'YouTube lifecycle did not preserve device and trial state');
   } finally {
     await fixture.close();
+    await allowedFixture.close();
     await context.unroute(`${origin}/**`);
+    await context.unroute(`${allowedOrigin}/**`);
   }
 };
 
@@ -518,6 +709,10 @@ const run = async () => {
         `service worker extension id mismatch: ${extensionIdFromWorker} !== ${extensionIdFromKey}`
       );
     }
+
+    // Open the real popup while its worker is still starting. Waiting for the
+    // options response first would hide the first-click startup regression.
+    const popupTimings = await runPopupSmoke(context, page, extensionIdFromKey);
 
     let optionsData;
     try {
@@ -824,9 +1019,10 @@ const run = async () => {
       await fs.writeFile(reportPath, JSON.stringify({
         browser: browserTarget, version: browserVersion, expectedMajor,
         executable: path.basename(browserPath), verifiedAt: new Date().toISOString(),
+        popup: popupTimings,
       }, null, 2) + '\n');
     }
-    console.log(`${browserTarget} smoke passed with ${path.basename(browserPath)} ${context.browser()?.version()} and extension ${extensionIdFromKey}.`);
+    console.log(`${browserTarget} smoke passed with ${path.basename(browserPath)} ${context.browser()?.version()} and extension ${extensionIdFromKey}. Popup: ${JSON.stringify(popupTimings)}`);
   } finally {
     await context.close().catch(() => {});
     await new Promise(resolve => lifecycleServer.close(resolve));

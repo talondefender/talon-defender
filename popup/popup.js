@@ -73,6 +73,8 @@ let licenseEntryVisible = false;
 let expiredKeyEntryVisible = false;
 let toggleChangeInFlight = false;
 let pendingFilteringMutations = 0;
+let filteringStateRevision = 0;
+let entitlementStatusRevision = 0;
 const filteringMutationQueue = createSerializedActionQueue();
 
 const GLOBAL_PAUSE_SNAPSHOT_KEY = "globalPauseFilteringModesSnapshot";
@@ -98,8 +100,16 @@ const LICENSE_RUNTIME_MESSAGE_TIMEOUT_MS = 12000;
 const POPUP_STORAGE_TIMEOUT_MS = 1000;
 const POPUP_ACTIVE_TAB_TIMEOUT_MS = 1000;
 const POPUP_LOADING_FAILSAFE_MS = 2500;
+const POPUP_PANEL_RETRY_DELAY_MS = 250;
+const POPUP_PANEL_RETRY_WINDOW_MS = 10000;
 
 let popupLoadingFailSafeId = null;
+let popupPanelRefreshTimerId = null;
+let popupPanelRefreshPromise = null;
+let popupPanelRefreshRequested = false;
+let popupPanelRefreshDeadline = 0;
+let popupInitialHydrationComplete = false;
+let runtimeStateChannel = null;
 
 self.addEventListener("unhandledrejection", (event) => {
   if (isIgnorableRuntimeError(event?.reason)) {
@@ -126,7 +136,6 @@ init().catch((error) => {
   }
   clearPopupLoadingFailSafe();
   setToggleLoading(false);
-  clearCurrentTabState();
   renderToggle(currentEnabledState);
 });
 
@@ -168,36 +177,102 @@ async function init() {
   setDocumentLanguage();
   localizeHtml();
   wireEvents();
+  wireRuntimeStateUpdates();
   maybeOpenFirstPopupWelcome();
   showInitialPopupShell();
 
-  let hostEnrichmentPromise = Promise.resolve();
-  let panelDataPromise = Promise.resolve();
   try {
-    await hydrateFromLocalCache();
-    hostEnrichmentPromise = resolveActiveHost()
-      .catch((error) => {
-        console.warn("Active tab enrichment failed", error);
-        clearCurrentTabState();
-      });
-    panelDataPromise = hostEnrichmentPromise
-      .then(() => refreshPopupPanelData())
-      .catch(async (error) => {
-        console.warn("Popup panel data refresh failed", error);
-        await Promise.allSettled([
-          refreshEntitlement(),
-          refreshFilteringState()
-        ]);
-      });
     await Promise.allSettled([
-      panelDataPromise,
-      refreshFilterCatalog()
+      hydrateFromLocalCache(),
+      resolveActiveHost()
     ]);
+    popupInitialHydrationComplete = true;
+    popupPanelRefreshDeadline = Date.now() + POPUP_PANEL_RETRY_WINDOW_MS;
+    await refreshPopupPanelSnapshot();
   } finally {
     clearPopupLoadingFailSafe();
     setToggleLoading(false);
   }
-  await hostEnrichmentPromise;
+}
+
+function wireRuntimeStateUpdates() {
+  try {
+    runtimeStateChannel = new BroadcastChannel("uBOL");
+    runtimeStateChannel.onmessage = (event) => {
+      const message = event?.data;
+      const status = message?.entitlement;
+      const hasEntitlement = status && typeof status === "object";
+      const filteringChanged = typeof message?.defaultFilteringMode === "number";
+      if (hasEntitlement) {
+        applyEntitlementStatus(status);
+      }
+      if (filteringChanged) {
+        filteringStateRevision += 1;
+      }
+      if (hasEntitlement || filteringChanged || message?.runtimeVerified === true) {
+        schedulePopupPanelRefresh({ restart: true });
+      }
+    };
+  } catch (_error) {
+    // The bounded refresh also works if the channel is unavailable.
+  }
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local") {
+      return;
+    }
+    if (changes[FILTERING_MODE_STORAGE_KEY]) {
+      filteringStateRevision += 1;
+    }
+    if (changes[ENTITLEMENT_LOCAL_STORAGE_KEY] || changes[FILTERING_MODE_STORAGE_KEY]) {
+      schedulePopupPanelRefresh({ restart: true });
+    }
+  });
+}
+
+function schedulePopupPanelRefresh({ restart = false } = {}) {
+  if (restart) {
+    popupPanelRefreshDeadline = Date.now() + POPUP_PANEL_RETRY_WINDOW_MS;
+  }
+  if (Date.now() >= popupPanelRefreshDeadline) {
+    return;
+  }
+  if (popupPanelRefreshPromise !== null) {
+    popupPanelRefreshRequested = true;
+    return;
+  }
+  if (popupPanelRefreshTimerId !== null) {
+    return;
+  }
+  popupPanelRefreshTimerId = self.setTimeout(() => {
+    popupPanelRefreshTimerId = null;
+    refreshPopupPanelSnapshot().catch(() => {});
+  }, POPUP_PANEL_RETRY_DELAY_MS);
+}
+
+async function refreshPopupPanelSnapshot() {
+  if (popupPanelRefreshPromise !== null) {
+    return popupPanelRefreshPromise;
+  }
+  if (!popupInitialHydrationComplete || pendingFilteringMutations !== 0) {
+    schedulePopupPanelRefresh();
+    return false;
+  }
+  popupPanelRefreshRequested = false;
+  let ready = false;
+  popupPanelRefreshPromise = refreshPopupPanelData();
+  try {
+    ready = await popupPanelRefreshPromise;
+    return ready;
+  } catch (error) {
+    console.warn("Popup panel data refresh failed", error);
+    applyEntitlementStatus({ status: "error", lastError: "Network Error" });
+    return false;
+  } finally {
+    popupPanelRefreshPromise = null;
+    if (!ready || popupPanelRefreshRequested) {
+      schedulePopupPanelRefresh();
+    }
+  }
 }
 
 function setDocumentLanguage() {
@@ -302,7 +377,6 @@ function schedulePopupLoadingFailSafe() {
   clearPopupLoadingFailSafe();
   popupLoadingFailSafeId = self.setTimeout(() => {
     popupLoadingFailSafeId = null;
-    clearCurrentTabState();
     setToggleLoading(false);
     renderToggle(currentEnabledState);
   }, POPUP_LOADING_FAILSAFE_MS);
@@ -366,7 +440,9 @@ function deriveStatusFromStoredEntitlement(stored) {
   );
   const trialActive = trialEndMs > now;
 
-  let status = "expired";
+  let status = trialEndMs > 0 || entitledUntilMs > 0 || hardDeny
+    ? "expired"
+    : "loading";
   if (paidActive) {
     status = "paid";
   } else if (trialActive) {
@@ -389,6 +465,7 @@ function deriveStatusFromStoredEntitlement(stored) {
 }
 
 async function hydrateFromLocalCache() {
+  const statusRevision = entitlementStatusRevision;
   let cachedEntitlement = null;
   let cachedDefaultMode = null;
   try {
@@ -410,7 +487,7 @@ async function hydrateFromLocalCache() {
     currentEnabledState = cachedDefaultMode !== MODE_NONE;
     renderToggle(currentEnabledState);
   }
-  if (cachedEntitlement) {
+  if (cachedEntitlement && statusRevision === entitlementStatusRevision) {
     applyEntitlementStatus(cachedEntitlement);
   }
 }
@@ -785,10 +862,13 @@ async function resolveActiveHost() {
 }
 
 async function refreshPopupPanelData() {
+  const filteringRevision = filteringStateRevision;
+  const statusRevision = entitlementStatusRevision;
   let panelData = null;
   try {
     panelData = await sendRuntimeMessageWithTimeout({
       what: "popupPanelData",
+      compact: true,
       tabId: currentTabId,
       hostname: currentHost || ""
     });
@@ -797,23 +877,29 @@ async function refreshPopupPanelData() {
     throw error;
   }
 
-  const nextDefaultMode = Number(panelData?.defaultFilteringMode);
-  if (Number.isFinite(nextDefaultMode)) {
-    defaultFilteringMode = nextDefaultMode;
-    currentEnabledState = nextDefaultMode !== MODE_NONE;
+  // A response started before a click must not overwrite the user's mutation.
+  if (filteringRevision === filteringStateRevision) {
+    const nextDefaultMode = Number(panelData?.defaultFilteringMode);
+    if (Number.isFinite(nextDefaultMode)) {
+      defaultFilteringMode = nextDefaultMode;
+      currentEnabledState = nextDefaultMode !== MODE_NONE;
+    }
+    const nextSiteLevel = Number(panelData?.level);
+    if (Number.isFinite(nextSiteLevel)) {
+      currentSiteLevel = nextSiteLevel;
+    } else if (!currentHost) {
+      currentSiteLevel = defaultFilteringMode;
+    }
   }
-  const nextSiteLevel = Number(panelData?.level);
-  currentSiteLevel = Number.isFinite(nextSiteLevel)
-    ? nextSiteLevel
-    : defaultFilteringMode;
 
-  if (panelData?.entitlementStatus && typeof panelData.entitlementStatus === "object") {
+  if (statusRevision === entitlementStatusRevision &&
+      panelData?.entitlementStatus && typeof panelData.entitlementStatus === "object") {
     applyEntitlementStatus(panelData.entitlementStatus);
-  } else {
-    renderToggle(currentEnabledState);
   }
+  renderToggle(currentEnabledState);
   renderAllowedSitesControls();
-
+  return panelData?.startupReady === true &&
+    ["paid", "trial", "expired"].includes(panelData?.entitlementStatus?.status);
 }
 
 function formatRemaining(ms) {
@@ -980,12 +1066,17 @@ function renderEntitlementStatus(status) {
   if (!subscriptionStatusEl) {
     return;
   }
+  subscriptionStatusEl.className = "status-note bold-status";
   if (subscriptionSubstatusEl) {
     subscriptionSubstatusEl.hidden = true;
   }
 
   const now = Date.now();
   const state = status?.status || "expired";
+  if (state === "loading") {
+    subscriptionStatusEl.textContent = t("subscriptionStatusLoading");
+    return;
+  }
   if (state === "paid") {
     const until = Number(status?.entitledUntilMs) || 0;
     subscriptionStatusEl.textContent = until
@@ -1105,6 +1196,12 @@ function renderExpiredOverlay(status, { canReplaceDevice = false } = {}) {
 }
 
 function applyEntitlementStatus(status) {
+  const nextState = status?.status;
+  if ((nextState === "loading" || nextState === "error") &&
+      ["paid", "trial", "expired"].includes(entitlementStatus?.status)) {
+    return;
+  }
+  entitlementStatusRevision += 1;
   entitlementStatus = status || { status: "error", lastError: "Unknown" };
   paywalled = entitlementStatus?.status === "expired";
   const isPaid = entitlementStatus?.status === "paid";
@@ -1340,6 +1437,7 @@ function applyOptimisticProtectionToggle(enabled) {
 }
 
 async function runFilteringMutation(action) {
+  filteringStateRevision += 1;
   pendingFilteringMutations += 1;
   setToggleLoading(true);
   renderAllowedSitesControls();
@@ -1511,7 +1609,7 @@ function renderToggle(enabled) {
   }
   ensureToggleMarkup();
   if (paywalled) {
-    toggleButton.disabled = false;
+    toggleButton.disabled = pendingFilteringMutations !== 0;
     toggleButton.classList.add("off");
     toggleButton.setAttribute("aria-checked", "false");
     toggleButton.setAttribute("data-i18n-aria-label", "popupToggleActivateSubscription");
@@ -1531,8 +1629,9 @@ function setToggleLoading(isLoading) {
   if (!toggleButton) {
     return;
   }
-  toggleButton.disabled = isLoading;
-  toggleButton.classList.toggle("loading", isLoading);
+  const loading = Boolean(isLoading) || pendingFilteringMutations !== 0;
+  toggleButton.disabled = loading;
+  toggleButton.classList.toggle("loading", loading);
 }
 
 function renderFilterCatalog(summary) {

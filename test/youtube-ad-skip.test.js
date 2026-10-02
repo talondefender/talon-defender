@@ -6,6 +6,74 @@ import vm from 'node:vm';
 const readSource = relativePath =>
   fs.readFile(new URL(`../${relativePath}`, import.meta.url), 'utf8');
 
+function createControl({ tagName = 'BUTTON', className = '', textContent = '', attributes = {}, disabled = false, hidden = false, onClick = () => {}, onEvent = () => {}, onFocus = () => {} } = {}) {
+  const children = [];
+  const element = {
+    tagName,
+    className,
+    textContent,
+    disabled,
+    hidden,
+    parentElement: null,
+    isConnected: true,
+    children,
+    getAttribute: name => name === 'class' ? element.className : attributes[name] ?? null,
+    getClientRects: () => element.hidden ? [] : [{ width: 20, height: 20 }],
+    matches(selector) {
+      return selector.split(',').some(part => {
+        const value = part.trim();
+        const attrs = [...value.matchAll(/\[([\w-]+)(\*=|\^=|=)?["']?([^\]"']*)["']?\]/g)];
+        const structural = value.replace(/\[[^\]]+\]/g, '');
+        if (structural.includes(' ')) { return false; }
+        const tag = structural.match(/^[a-z][\w-]*/i)?.[0];
+        if (tag && tag.toUpperCase() !== element.tagName) { return false; }
+        for (const [, name] of structural.matchAll(/\.([\w-]+)/g)) {
+          if (!element.className.split(/\s+/).includes(name)) { return false; }
+        }
+        for (const [, id] of structural.matchAll(/#([\w-]+)/g)) {
+          if (element.getAttribute('id') !== id) { return false; }
+        }
+        return attrs.every(([, name, operator, expected]) => {
+          const actual = element.getAttribute(name);
+          if (actual === null) { return false; }
+          if (operator === '*=') { return actual.includes(expected); }
+          if (operator === '^=') { return actual.startsWith(expected); }
+          return !operator || actual === expected;
+        });
+      });
+    },
+    closest(selector) {
+      for (let current = element; current; current = current.parentElement) {
+        if (current.matches(selector)) { return current; }
+      }
+      return null;
+    },
+    querySelectorAll(selector) {
+      return children.flatMap(child => [
+        ...(child.matches(selector) ? [child] : []),
+        ...child.querySelectorAll(selector),
+      ]);
+    },
+    querySelector(selector) { return element.querySelectorAll(selector)[0] || null; },
+    contains(target) {
+      for (let current = target; current; current = current.parentElement) {
+        if (current === element) { return true; }
+      }
+      return false;
+    },
+    appendChild(child) { children.push(child); child.parentElement = element; return child; },
+    focus: onFocus,
+    dispatchEvent(event) { onEvent(event); return true; },
+    click() {
+      if (element.disabled) { return; }
+      onClick();
+      element.dispatchEvent({ type: 'click' });
+    },
+  };
+  element.classList = { contains: name => element.className.split(/\s+/).includes(name) };
+  return element;
+}
+
 function createHarness() {
   const state = {
     adShowing: true,
@@ -23,6 +91,8 @@ function createHarness() {
     skipEvents: [],
     skipFocuses: 0,
     skipClicks: 0,
+    skipCandidates: null,
+    fallbackCandidates: null,
     styles: [],
     listeners: [],
     timeoutCallbacks: [],
@@ -40,92 +110,26 @@ function createHarness() {
       return Promise.resolve();
     },
   };
-  const skipButton = {
-    disabled: false,
-    hidden: false,
-    getAttribute: name => (name === 'aria-disabled' ? 'false' : null),
-    getClientRects: () => [{ width: 20, height: 20 }],
-    matches: selector => selector.includes('ytp-ad-skip') || selector.includes('skip-button'),
-    focus: () => {
-      state.skipFocuses += 1;
-    },
-    dispatchEvent: event => {
-      state.skipEvents.push(event.type);
-      return true;
-    },
-    click: () => {
-      state.skipClicks += 1;
-    },
+  const controlOptions = {
+    onFocus: () => { state.skipFocuses += 1; },
+    onEvent: event => { state.skipEvents.push(event.type); },
+    onClick: () => { state.skipClicks += 1; },
   };
-  const fallbackSkipButton = {
-    disabled: false,
-    hidden: false,
-    textContent: 'Skip ads',
-    getAttribute: name => (name === 'aria-disabled' ? 'false' : null),
-    getClientRects: () => [{ width: 20, height: 20 }],
-    matches: () => false,
-    focus: () => {
-      state.skipFocuses += 1;
-    },
-    dispatchEvent: event => {
-      state.skipEvents.push(event.type);
-      return true;
-    },
-    click: () => {
-      state.skipClicks += 1;
-    },
-  };
-  const shortPlayerSkipButton = {
-    disabled: false,
-    hidden: false,
-    textContent: 'Skip',
-    getAttribute: name => (name === 'aria-disabled' ? 'false' : null),
-    getClientRects: () => [{ width: 20, height: 20 }],
-    matches: () => false,
-    closest: selector => selector === '.html5-video-player,#movie_player' ? playerElement : null,
-    focus: () => {
-      state.skipFocuses += 1;
-    },
-    dispatchEvent: event => {
-      state.skipEvents.push(event.type);
-      return true;
-    },
-    click: () => {
-      state.skipClicks += 1;
-    },
-  };
-  const navigationSkipButton = {
-    disabled: false,
-    hidden: false,
-    textContent: 'Skip navigation',
-    getAttribute: name => {
-      if (name === 'aria-disabled') { return 'false'; }
-      if (name === 'aria-label') { return 'Skip navigation'; }
-      return null;
-    },
-    getClientRects: () => [{ width: 20, height: 20 }],
-    matches: () => false,
-    focus: () => {
-      state.skipFocuses += 1;
-    },
-    dispatchEvent: event => {
-      state.skipEvents.push(event.type);
-      return true;
-    },
-    click: () => {
-      state.skipClicks += 1;
-    },
-  };
+  const skipButton = createControl({ ...controlOptions, className: 'ytp-ad-skip-button-modern' });
+  const fallbackSkipButton = createControl({ ...controlOptions, textContent: 'Skip ads' });
+  const shortPlayerSkipButton = createControl({ ...controlOptions, textContent: 'Skip' });
+  const navigationSkipButton = createControl({ ...controlOptions, textContent: 'Skip navigation', attributes: { 'aria-label': 'Skip navigation' } });
   const styleParent = {
     append: element => {
       state.styles.push(element);
     },
   };
-  const playerElement = {
-    nodeType: 1,
-    matches: selector => selector.includes('.html5-video-player') || selector.includes('#movie_player'),
-    querySelectorAll: () => [],
-  };
+  const playerElement = createControl({ tagName: 'DIV', attributes: { id: 'movie_player' } });
+  Object.defineProperty(playerElement, 'className', {
+    get: () => `html5-video-player${state.adShowing && state.playerClassShowing ? ' ad-showing' : ''}`,
+  });
+  playerElement.nodeType = 1;
+  playerElement.appendChild(shortPlayerSkipButton);
   const interruptionToast = {
     nodeType: 1,
     hidden: false,
@@ -167,9 +171,11 @@ function createHarness() {
         return [video];
       }
       if (selector.includes('ytp-ad-skip') || selector.includes('skip-ad')) {
+        if (state.skipCandidates !== null) { return state.skipCandidates; }
         return state.skipShowing ? [skipButton] : [];
       }
       if (selector === 'button,[role="button"]') {
+        if (state.fallbackCandidates !== null) { return state.fallbackCandidates; }
         return [
           state.fallbackSkipShowing ? fallbackSkipButton : null,
           state.shortPlayerSkipShowing ? shortPlayerSkipButton : null,
@@ -229,7 +235,7 @@ function createHarness() {
     },
   };
   context.globalThis = context;
-  return { context, interruptionToast, state, video };
+  return { context, interruptionToast, state, video, playerElement, shortPlayerSkipButton };
 }
 
 test('YouTube ad skip clicks native skip controls and speeds visible ads without seeking', async () => {
@@ -271,6 +277,42 @@ test('YouTube ad skip recognizes visible ad indicators when ad-showing class is 
   assert.equal(video.playCalls, 1);
 });
 
+test('Skip that immediately resumes content does not accelerate content or show stale feedback', async () => {
+  const source = await readSource('js/scripting/youtube-ad-skip.js');
+  for (const wasAccelerating of [false, true]) {
+    const { context, state, video } = createHarness();
+    const feedback = [];
+    context.TalonYoutubeAdFeedbackController = {
+      setActive(value, options) { feedback.push({ active: value === true, mode: options?.mode }); },
+      stop(options) { feedback.push({ active: false, mode: options?.mode }); },
+    };
+    video.playbackRate = 1.5;
+    state.skipShowing = false;
+    vm.runInNewContext(source, context);
+    const controller = context.__talonYoutubeAdSkipCreateController(context);
+    if (wasAccelerating) {
+      controller.tick();
+      assert.equal(video.playbackRate, 16);
+      feedback.length = 0;
+    }
+    const skip = createControl({
+      className: 'ytp-ad-skip-button',
+      onClick() {
+        state.adShowing = false;
+        state.skipShowing = false;
+        state.skipCandidates = [];
+        skip.hidden = true;
+      },
+    });
+    state.skipCandidates = [skip];
+    controller.tick();
+    assert.equal(video.playbackRate, 1.5, `previous acceleration: ${wasAccelerating}`);
+    assert.equal(video.muted, false);
+    assert.equal(video.currentTime, 2);
+    assert.equal(feedback.some(call => call.active), false);
+  }
+});
+
 test('YouTube ad skip accepts labeled fallback skip controls', async () => {
   const source = await readSource('js/scripting/youtube-ad-skip.js');
   const { context, state, video } = createHarness();
@@ -301,6 +343,106 @@ test('YouTube ad skip ignores plain Skip controls without an ad-specific label o
   assert.equal(state.skipEvents.length, 0);
   assert.equal(video.muted, false);
   assert.equal(video.playbackRate, 1);
+});
+
+test('YouTube ad skip accepts exact Skip only inside the player showing an ad', async () => {
+  const source = await readSource('js/scripting/youtube-ad-skip.js');
+  const { context, state } = createHarness();
+  state.skipShowing = false;
+  state.shortPlayerSkipShowing = true;
+  vm.runInNewContext(source, context);
+
+  const controller = context.__talonYoutubeAdSkipCreateController(context);
+  controller.tick();
+  assert.equal(state.skipClicks, 1);
+  assert.equal(state.skipEvents.filter(type => type === 'click').length, 1);
+});
+
+test('YouTube ad skip ignores exact Skip outside the ad player or inside a different player', async () => {
+  const source = await readSource('js/scripting/youtube-ad-skip.js');
+  for (const outsidePlayer of [true, false]) {
+    const { context, state, shortPlayerSkipButton } = createHarness();
+    state.skipShowing = false;
+    state.shortPlayerSkipShowing = true;
+    shortPlayerSkipButton.parentElement = outsidePlayer
+      ? null
+      : createControl({ tagName: 'DIV', className: 'html5-video-player' });
+    vm.runInNewContext(source, context);
+    context.__talonYoutubeAdSkipCreateController(context).tick();
+    assert.equal(state.skipClicks, 0, outsidePlayer ? 'outside player' : 'different player');
+    assert.equal(state.skipEvents.length, 0);
+  }
+});
+
+test('YouTube ad skip ignores Skip navigation and countdown text inside an ad player', async () => {
+  const source = await readSource('js/scripting/youtube-ad-skip.js');
+  for (const textContent of ['Skip navigation', 'Skip in 5', 'Skip intro']) {
+    const { context, state, shortPlayerSkipButton } = createHarness();
+    state.skipShowing = false;
+    state.shortPlayerSkipShowing = true;
+    shortPlayerSkipButton.textContent = textContent;
+    vm.runInNewContext(source, context);
+    context.__talonYoutubeAdSkipCreateController(context).tick();
+    assert.equal(state.skipClicks, 0, textContent);
+    assert.equal(state.skipEvents.length, 0);
+  }
+});
+
+test('YouTube ad skip does not let matching noninteractive slots starve the real button', async () => {
+  const source = await readSource('js/scripting/youtube-ad-skip.js');
+  for (const textContent of ['', 'Skip in 5']) {
+    const { context, state } = createHarness();
+    let realClicks = 0;
+    let slotEvents = 0;
+    const slot = createControl({ tagName: 'DIV', className: 'ytp-ad-skip-button-slot', textContent, onEvent: () => { slotEvents += 1; } });
+    const button = createControl({ className: 'ytp-ad-skip-button-modern', textContent: 'Skip', onEvent: event => { if (event.type === 'click') realClicks += 1; } });
+    state.skipCandidates = [slot, button];
+    vm.runInNewContext(source, context);
+    context.__talonYoutubeAdSkipCreateController(context).tick();
+    assert.equal(realClicks, 1, textContent || 'empty slot');
+    assert.equal(slotEvents, 0);
+  }
+});
+
+test('YouTube ad skip chooses the actionable child when a wrapper starts with hidden or disabled controls', async () => {
+  const source = await readSource('js/scripting/youtube-ad-skip.js');
+  for (const unavailable of ['hidden', 'disabled']) {
+    const { context, state } = createHarness();
+    let unavailableEvents = 0;
+    let visibleClicks = 0;
+    let wrapperEvents = 0;
+    const wrapper = createControl({ tagName: 'DIV', className: 'ytp-ad-skip-button-container', onEvent: () => { wrapperEvents += 1; } });
+    wrapper.appendChild(createControl({ [unavailable]: true, textContent: 'Skip in 5', onEvent: () => { unavailableEvents += 1; } }));
+    wrapper.appendChild(createControl({ textContent: 'Skip', onEvent: event => { if (event.type === 'click') visibleClicks += 1; } }));
+    state.skipCandidates = [wrapper];
+    vm.runInNewContext(source, context);
+    context.__talonYoutubeAdSkipCreateController(context).tick();
+    assert.equal(visibleClicks, 1, unavailable);
+    assert.equal(unavailableEvents, 0, unavailable);
+    assert.equal(wrapperEvents, 0);
+  }
+});
+
+test('YouTube ad skip dispatches one click for a wrapper and child matched together', async () => {
+  const source = await readSource('js/scripting/youtube-ad-skip.js');
+  const { context, state } = createHarness();
+  let clicks = 0;
+  const wrapper = createControl({ tagName: 'DIV', className: 'ytp-ad-skip-button-container' });
+  const button = wrapper.appendChild(createControl({ className: 'ytp-ad-skip-button-modern', textContent: 'Skip', onEvent: event => { if (event.type === 'click') clicks += 1; } }));
+  state.skipCandidates = [wrapper, button];
+  vm.runInNewContext(source, context);
+  context.__talonYoutubeAdSkipCreateController(context).tick();
+  assert.equal(clicks, 1);
+});
+
+test('YouTube ad skip preserves legacy roleless native skip controls', async () => {
+  const source = await readSource('js/scripting/youtube-ad-skip.js');
+  const { context, state } = createHarness();
+  let clicks = 0;
+  state.skipCandidates = [createControl({ tagName: 'DIV', className: 'ytp-ad-skip-button', textContent: 'Skip', onEvent: event => { if (event.type === 'click') clicks += 1; } })];
+  vm.runInNewContext(source, context);
+  context.__talonYoutubeAdSkipCreateController(context).tick();
+  assert.equal(clicks, 1);
 });
 
 test('YouTube ad skip ignores non-ad skip navigation controls', async () => {

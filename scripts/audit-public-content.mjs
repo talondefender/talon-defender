@@ -34,6 +34,8 @@ const allowedTestFiles = new Set([
   "test/ubol-parity-status.test.js",
   "test/ubol-parity-watch.test.js",
   "test/youtube-ad-skip.test.js",
+  "test/youtube-ad-feedback.test.js",
+  "test/youtube-entitlement-observer.test.js",
   "test/youtube-player-guard.test.js",
 ]);
 
