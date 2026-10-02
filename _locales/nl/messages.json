@@ -642,6 +642,38 @@
   "optionsFilterExtraProtectionNote": {
     "message": "Blokkeert meer cookiemeldingen, meldingsverzoeken, sociale widgets, door AI gegenereerde ergernissen en andere afleidingen."
   },
+  "youtubeAdFeedbackActiveTitle": {
+    "message": "Talon Defender verkort deze advertentie",
+    "description": "Shown while Talon Defender accelerates a detected YouTube ad. Describe shorter playback, not ad removal or blocking."
+  },
+  "youtubeAdFeedbackActiveDetail": {
+    "message": "Sneller terug naar je video.",
+    "description": "Supporting text during ad acceleration. Do not promise that the ad is removed or completely blocked."
+  },
+  "youtubeAdFeedbackActiveAria": {
+    "message": "Talon Defender verkort deze YouTube-advertentie, zodat je sneller terug bent bij je video.",
+    "description": "Screen-reader announcement while Talon Defender accelerates a YouTube ad, not while removing it."
+  },
+  "youtubeAdFeedbackExpiredTitle": {
+    "message": "Talon Defender kan dit soort advertenties verkorten",
+    "description": "Conditional benefit shown during a YouTube ad when protection has expired and could be reactivated."
+  },
+  "youtubeAdFeedbackExpiredDetail": {
+    "message": "Je bescherming is gepauzeerd. Activeer deze opnieuw om sneller verder te kijken op YouTube.",
+    "description": "Expired-protection message asking the user to reactivate protection. Ad acceleration is not running."
+  },
+  "youtubeAdFeedbackExpiredAria": {
+    "message": "De bescherming van Talon Defender is gepauzeerd. Activeer deze opnieuw om dit soort YouTube-advertenties te verkorten.",
+    "description": "Screen-reader announcement that protection is paused and reactivation can shorten YouTube ads."
+  },
+  "youtubeAdFeedbackRestoreButton": {
+    "message": "Talon Defender opnieuw activeren",
+    "description": "Link label for reactivating expired protection, not reinstalling the extension or recovering files."
+  },
+  "youtubeAdFeedbackRestoreAria": {
+    "message": "Talon Defender opnieuw activeren op de prijspagina",
+    "description": "Accessible link label for reactivating protection on the pricing page."
+  },
   "uiPartial": {
     "message": "Gedeeltelijk actief"
   }

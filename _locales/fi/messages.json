@@ -642,6 +642,38 @@
   "optionsFilterExtraProtectionNote": {
     "message": "Estää tehokkaammin evästeilmoituksia, ilmoituspyyntöjä, sosiaalisen median pienoisohjelmia, tekoälyn luomia häiriöitä ja muita häiriötekijöitä."
   },
+  "youtubeAdFeedbackActiveTitle": {
+    "message": "Talon Defender lyhentää tätä mainosta",
+    "description": "Shown while Talon Defender accelerates a detected YouTube ad. Describe shorter playback, not ad removal or blocking."
+  },
+  "youtubeAdFeedbackActiveDetail": {
+    "message": "Pääset nopeammin takaisin videoosi.",
+    "description": "Supporting text during ad acceleration. Do not promise that the ad is removed or completely blocked."
+  },
+  "youtubeAdFeedbackActiveAria": {
+    "message": "Talon Defender lyhentää tätä YouTube-mainosta, jotta pääset nopeammin takaisin videoosi.",
+    "description": "Screen-reader announcement while Talon Defender accelerates a YouTube ad, not while removing it."
+  },
+  "youtubeAdFeedbackExpiredTitle": {
+    "message": "Talon Defender voisi lyhentää tällaisia mainoksia",
+    "description": "Conditional benefit shown during a YouTube ad when protection has expired and could be reactivated."
+  },
+  "youtubeAdFeedbackExpiredDetail": {
+    "message": "Suojaus on keskeytetty. Ota se uudelleen käyttöön, niin pääset nopeammin jatkamaan YouTube-videoitasi.",
+    "description": "Expired-protection message asking the user to reactivate protection. Ad acceleration is not running."
+  },
+  "youtubeAdFeedbackExpiredAria": {
+    "message": "Talon Defender -suojaus on keskeytetty. Ota se uudelleen käyttöön lyhentääksesi tällaisia YouTube-mainoksia.",
+    "description": "Screen-reader announcement that protection is paused and reactivation can shorten YouTube ads."
+  },
+  "youtubeAdFeedbackRestoreButton": {
+    "message": "Ota Talon Defender taas käyttöön",
+    "description": "Link label for reactivating expired protection, not reinstalling the extension or recovering files."
+  },
+  "youtubeAdFeedbackRestoreAria": {
+    "message": "Ota Talon Defender uudelleen käyttöön hinnastosivulla",
+    "description": "Accessible link label for reactivating protection on the pricing page."
+  },
   "uiPartial": {
     "message": "Osittain käytössä"
   }

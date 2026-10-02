@@ -642,6 +642,38 @@
   "optionsFilterExtraProtectionNote": {
     "message": "Cookie 通知、通知許可の要求、ソーシャルウィジェット、AI 生成の迷惑要素、その他の邪魔な要素をさらにブロックします。"
   },
+  "youtubeAdFeedbackActiveTitle": {
+    "message": "Talon Defender がこの広告の再生時間を短縮しています",
+    "description": "Shown while Talon Defender accelerates a detected YouTube ad. Describe shorter playback, not ad removal or blocking."
+  },
+  "youtubeAdFeedbackActiveDetail": {
+    "message": "動画の続きをより早く視聴できるようにしています。",
+    "description": "Supporting text during ad acceleration. Do not promise that the ad is removed or completely blocked."
+  },
+  "youtubeAdFeedbackActiveAria": {
+    "message": "Talon Defender がこの YouTube 広告の再生時間を短縮し、動画により早く戻れるようにしています。",
+    "description": "Screen-reader announcement while Talon Defender accelerates a YouTube ad, not while removing it."
+  },
+  "youtubeAdFeedbackExpiredTitle": {
+    "message": "Talon Defender なら、このような広告を短縮できます",
+    "description": "Conditional benefit shown during a YouTube ad when protection has expired and could be reactivated."
+  },
+  "youtubeAdFeedbackExpiredDetail": {
+    "message": "保護が一時停止しています。再度有効にすると、YouTube 動画の続きにより早く戻れます。",
+    "description": "Expired-protection message asking the user to reactivate protection. Ad acceleration is not running."
+  },
+  "youtubeAdFeedbackExpiredAria": {
+    "message": "Talon Defender の保護が一時停止しています。再度有効にすると、このような YouTube 広告を短縮できます。",
+    "description": "Screen-reader announcement that protection is paused and reactivation can shorten YouTube ads."
+  },
+  "youtubeAdFeedbackRestoreButton": {
+    "message": "Talon Defender を再度有効にする",
+    "description": "Link label for reactivating expired protection, not reinstalling the extension or recovering files."
+  },
+  "youtubeAdFeedbackRestoreAria": {
+    "message": "料金ページで Talon Defender を再度有効にする",
+    "description": "Accessible link label for reactivating protection on the pricing page."
+  },
   "uiPartial": {
     "message": "一部有効"
   }

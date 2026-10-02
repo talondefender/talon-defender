@@ -24,6 +24,7 @@ const LANGUAGE_ALIASES = { nb: 'no', nn: 'no' };
 
 const OVERLAY_CSS = `
 #${OVERLAY_ID} {
+    box-sizing: border-box;
     position: absolute;
     top: 50%;
     left: 50%;
@@ -186,30 +187,58 @@ const OVERLAY_CSS = `
     70%, 100% { opacity: 0; transform: scale(1.16); }
 }
 
-@media (max-width: 520px) {
-    #${OVERLAY_ID} {
-        max-width: calc(100% - 24px);
-        min-height: 82px;
-        padding: 12px 16px 12px 12px;
-    }
+#${OVERLAY_ID}:where([data-size="narrow"]) {
+    max-width: calc(100% - 24px);
+    min-height: 82px;
+    padding: 12px 16px 12px 12px;
+}
 
-    #${OVERLAY_ID} .talon-youtube-ad-feedback-logo-wrap {
-        width: 60px;
-        height: 60px;
-    }
+#${OVERLAY_ID}:where([data-size="narrow"]) .talon-youtube-ad-feedback-logo-wrap {
+    width: 60px;
+    height: 60px;
+}
 
-    #${OVERLAY_ID} .talon-youtube-ad-feedback-logo {
-        width: 55px;
-        height: 55px;
-    }
+#${OVERLAY_ID}:where([data-size="narrow"]) .talon-youtube-ad-feedback-logo {
+    width: 55px;
+    height: 55px;
+}
 
-    #${OVERLAY_ID} .talon-youtube-ad-feedback-title {
-        font-size: 18px;
-    }
+#${OVERLAY_ID}:where([data-size="narrow"]) .talon-youtube-ad-feedback-title {
+    font-size: 18px;
+}
 
-    #${OVERLAY_ID} .talon-youtube-ad-feedback-detail {
-        font-size: 14px;
-    }
+#${OVERLAY_ID}:where([data-size="narrow"]) .talon-youtube-ad-feedback-detail {
+    font-size: 14px;
+}
+
+#${OVERLAY_ID}[data-mode="expired"]:where([data-size="narrow"]) {
+    gap: 12px;
+    min-height: 0;
+    padding: 12px;
+}
+
+#${OVERLAY_ID}[data-mode="expired"]:where([data-size="narrow"]) .talon-youtube-ad-feedback-logo-wrap {
+    width: 40px;
+    height: 40px;
+}
+
+#${OVERLAY_ID}[data-mode="expired"]:where([data-size="narrow"]) .talon-youtube-ad-feedback-logo {
+    width: 36px;
+    height: 36px;
+}
+
+#${OVERLAY_ID}[data-mode="expired"]:where([data-size="narrow"]) .talon-youtube-ad-feedback-title {
+    font-size: 16px;
+}
+
+#${OVERLAY_ID}[data-mode="expired"]:where([data-size="narrow"]) .talon-youtube-ad-feedback-detail {
+    display: none;
+}
+
+#${OVERLAY_ID}[data-mode="expired"]:where([data-size="narrow"]) .talon-youtube-ad-feedback-cta {
+    margin-top: 8px;
+    padding: 7px 12px;
+    font-size: 14px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -224,6 +253,7 @@ const OVERLAY_CSS = `
 const createController = env => {
     const win = env.window || env;
     const doc = env.document;
+    const messages = new Map();
     let active = false;
     let compact = false;
     let mode = PROTECTED_MODE;
@@ -235,6 +265,27 @@ const createController = env => {
     let ctaElement;
     let collapseGeneration = 0;
     let listening = false;
+
+    // Resolve packaged translations only when the overlay needs them. Keeping
+    // this synchronous avoids delaying the ad feedback or fetching page data.
+    const text = (key, fallback) => {
+        if ( messages.has(key) ) { return messages.get(key); }
+        let value = fallback;
+        try {
+            const i18n = env.chrome?.i18n || win.chrome?.i18n;
+            const translated = i18n?.getMessage?.(key);
+            if (
+                typeof translated === 'string' &&
+                translated.trim() !== '' &&
+                translated !== key
+            ) {
+                value = translated;
+            }
+        } catch {
+        }
+        messages.set(key, value);
+        return value;
+    };
 
     const removeElement = element => {
         if ( !element ) { return; }
@@ -282,9 +333,8 @@ const createController = env => {
         }
         let language = 'en';
         try {
-            const getUILanguage = env.chrome?.i18n?.getUILanguage ||
-                win.chrome?.i18n?.getUILanguage;
-            const rawLanguage = String(getUILanguage?.() || '').toLowerCase();
+            const i18n = env.chrome?.i18n || win.chrome?.i18n;
+            const rawLanguage = String(i18n?.getUILanguage?.() || '').toLowerCase();
             const baseLanguage = rawLanguage.split(/[-_]/)[0];
             const resolved = LANGUAGE_ALIASES[baseLanguage] || baseLanguage;
             if ( SUPPORTED_SITE_LANGS.has(resolved) ) {
@@ -359,8 +409,11 @@ const createController = env => {
         cta.href = pricingUrl();
         cta.target = '_blank';
         cta.rel = 'noopener noreferrer';
-        cta.textContent = 'Restore Talon Defender';
-        cta.setAttribute?.('aria-label', 'Restore Talon Defender on the pricing page');
+        cta.textContent = text('youtubeAdFeedbackRestoreButton', 'Restore Talon Defender');
+        cta.setAttribute?.('aria-label', text(
+            'youtubeAdFeedbackRestoreAria',
+            'Restore Talon Defender on the pricing page'
+        ));
 
         append(logoWrap, logo);
         append(copy, title);
@@ -381,14 +434,16 @@ const createController = env => {
             overlayElement.setAttribute?.('role', 'region');
             overlayElement.setAttribute?.(
                 'aria-label',
-                'Talon Defender protection is paused. Reactivate to shorten YouTube ads like this.'
+                text('youtubeAdFeedbackExpiredAria',
+                    'Talon Defender protection is paused. Reactivate to shorten YouTube ads like this.')
             );
             if ( titleElement ) {
-                titleElement.textContent = 'Talon Defender could shorten ads like this';
+                titleElement.textContent = text('youtubeAdFeedbackExpiredTitle',
+                    'Talon Defender could shorten ads like this');
             }
             if ( detailElement ) {
-                detailElement.textContent =
-                    'Your protection is paused. Reactivate for faster YouTube viewing.';
+                detailElement.textContent = text('youtubeAdFeedbackExpiredDetail',
+                    'Your protection is paused. Reactivate for faster YouTube viewing.');
             }
             if ( ctaElement ) { ctaElement.href = pricingUrl(); }
             return;
@@ -396,13 +451,16 @@ const createController = env => {
         overlayElement.setAttribute?.('role', 'status');
         overlayElement.setAttribute?.(
             'aria-label',
-            'Talon Defender is shortening this YouTube ad and getting you back to your video faster.'
+            text('youtubeAdFeedbackActiveAria',
+                'Talon Defender is shortening this YouTube ad and getting you back to your video faster.')
         );
         if ( titleElement ) {
-            titleElement.textContent = 'Talon Defender is shortening this ad';
+            titleElement.textContent = text('youtubeAdFeedbackActiveTitle',
+                'Talon Defender is shortening this ad');
         }
         if ( detailElement ) {
-            detailElement.textContent = 'Getting you back to your video faster.';
+            detailElement.textContent = text('youtubeAdFeedbackActiveDetail',
+                'Getting you back to your video faster.');
         }
     };
 
@@ -424,6 +482,13 @@ const createController = env => {
         }
         if ( overlayElement && overlayElement.parentElement !== player ) {
             append(player, overlayElement);
+        }
+        // YouTube can use a small player inside a wide browser window. Size the
+        // copy to that player during existing ad updates, without a new watcher.
+        const playerWidth = Number(player.clientWidth) || 0;
+        const size = playerWidth > 0 && playerWidth <= 520 ? 'narrow' : 'regular';
+        if ( overlayElement?.getAttribute?.('data-size') !== size ) {
+            overlayElement?.setAttribute?.('data-size', size);
         }
         overlayElement?.setAttribute?.(
             'data-state',

@@ -642,6 +642,38 @@
   "optionsFilterExtraProtectionNote": {
     "message": "Blocca più avvisi sui cookie, richieste di notifiche, widget social, elementi molesti generati dall'IA e altre distrazioni."
   },
+  "youtubeAdFeedbackActiveTitle": {
+    "message": "Talon Defender sta accorciando questo annuncio",
+    "description": "Shown while Talon Defender accelerates a detected YouTube ad. Describe shorter playback, not ad removal or blocking."
+  },
+  "youtubeAdFeedbackActiveDetail": {
+    "message": "Per tornare prima al tuo video.",
+    "description": "Supporting text during ad acceleration. Do not promise that the ad is removed or completely blocked."
+  },
+  "youtubeAdFeedbackActiveAria": {
+    "message": "Talon Defender sta accorciando questo annuncio di YouTube per farti tornare prima al tuo video.",
+    "description": "Screen-reader announcement while Talon Defender accelerates a YouTube ad, not while removing it."
+  },
+  "youtubeAdFeedbackExpiredTitle": {
+    "message": "Talon Defender potrebbe accorciare annunci come questo",
+    "description": "Conditional benefit shown during a YouTube ad when protection has expired and could be reactivated."
+  },
+  "youtubeAdFeedbackExpiredDetail": {
+    "message": "La tua protezione è in pausa. Riattivala per riprendere prima i tuoi video su YouTube.",
+    "description": "Expired-protection message asking the user to reactivate protection. Ad acceleration is not running."
+  },
+  "youtubeAdFeedbackExpiredAria": {
+    "message": "La protezione di Talon Defender è in pausa. Riattivala per accorciare annunci di YouTube come questo.",
+    "description": "Screen-reader announcement that protection is paused and reactivation can shorten YouTube ads."
+  },
+  "youtubeAdFeedbackRestoreButton": {
+    "message": "Riattiva Talon Defender",
+    "description": "Link label for reactivating expired protection, not reinstalling the extension or recovering files."
+  },
+  "youtubeAdFeedbackRestoreAria": {
+    "message": "Riattiva Talon Defender nella pagina dei prezzi",
+    "description": "Accessible link label for reactivating protection on the pricing page."
+  },
   "uiPartial": {
     "message": "Parzialmente attivo"
   }

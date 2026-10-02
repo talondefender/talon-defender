@@ -642,6 +642,38 @@
   "optionsFilterExtraProtectionNote": {
     "message": "Blockerar fler cookiemeddelanden, aviseringsförfrågningar, sociala widgetar, AI-genererade störningsmoment och andra distraktioner."
   },
+  "youtubeAdFeedbackActiveTitle": {
+    "message": "Talon Defender förkortar den här annonsen",
+    "description": "Shown while Talon Defender accelerates a detected YouTube ad. Describe shorter playback, not ad removal or blocking."
+  },
+  "youtubeAdFeedbackActiveDetail": {
+    "message": "Snabbare tillbaka till din video.",
+    "description": "Supporting text during ad acceleration. Do not promise that the ad is removed or completely blocked."
+  },
+  "youtubeAdFeedbackActiveAria": {
+    "message": "Talon Defender förkortar den här YouTube-annonsen så att du snabbare kommer tillbaka till din video.",
+    "description": "Screen-reader announcement while Talon Defender accelerates a YouTube ad, not while removing it."
+  },
+  "youtubeAdFeedbackExpiredTitle": {
+    "message": "Talon Defender kan förkorta sådana här annonser",
+    "description": "Conditional benefit shown during a YouTube ad when protection has expired and could be reactivated."
+  },
+  "youtubeAdFeedbackExpiredDetail": {
+    "message": "Ditt skydd är pausat. Aktivera det igen för att snabbare återgå till dina YouTube-videor.",
+    "description": "Expired-protection message asking the user to reactivate protection. Ad acceleration is not running."
+  },
+  "youtubeAdFeedbackExpiredAria": {
+    "message": "Skyddet i Talon Defender är pausat. Aktivera det igen för att förkorta sådana här YouTube-annonser.",
+    "description": "Screen-reader announcement that protection is paused and reactivation can shorten YouTube ads."
+  },
+  "youtubeAdFeedbackRestoreButton": {
+    "message": "Återaktivera Talon Defender",
+    "description": "Link label for reactivating expired protection, not reinstalling the extension or recovering files."
+  },
+  "youtubeAdFeedbackRestoreAria": {
+    "message": "Återaktivera Talon Defender på prissidan",
+    "description": "Accessible link label for reactivating protection on the pricing page."
+  },
   "uiPartial": {
     "message": "Delvis aktiv"
   }

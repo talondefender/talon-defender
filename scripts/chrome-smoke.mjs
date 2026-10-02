@@ -421,6 +421,12 @@ const writeEntitlementState = async (page, { local, sync }) => {
 };
 
 const runYouTubePolicySmoke = async (context, control) => {
+  const feedbackCopy = await control.evaluate(() => Object.fromEntries([
+    'ActiveTitle', 'ActiveDetail', 'ActiveAria', 'ExpiredTitle', 'ExpiredDetail',
+    'ExpiredAria', 'RestoreButton', 'RestoreAria',
+  ].map(name => [name, chrome.i18n.getMessage(`youtubeAdFeedback${name}`)])));
+  assert(Object.values(feedbackCopy).every(value => typeof value === 'string' && value.trim()),
+    'YouTube feedback translations are missing from the packaged extension');
   const entitlementBefore = (await getLocalStorage(control, ['talonEntitlement'])).talonEntitlement;
   const syncBefore = (await getSyncStorage(control, ['talonEntitlementSync'])).talonEntitlementSync;
   const origin = 'https:' + '//www.youtube.com';
@@ -432,7 +438,7 @@ const runYouTubePolicySmoke = async (context, control) => {
       localStorage.setItem('yt-enforcement-fixture', 'probe');
       window.fixtureInlineValue = localStorage.getItem('yt-enforcement-fixture');
       window.fixtureDocumentId = Math.random();
-    </script><div id="movie_player" class="html5-video-player ad-showing"><video></video></div>`,
+    </script><div id="movie_player" class="html5-video-player ad-showing" style="position:relative;width:640px;height:360px"><video></video></div>`,
   });
   await context.route(`${origin}/**`, fulfillYouTubeFixture);
   await context.route(`${allowedOrigin}/**`, fulfillYouTubeFixture);
@@ -443,6 +449,26 @@ const runYouTubePolicySmoke = async (context, control) => {
   assert(await setMode(MODE_NONE, 'm.youtube.com') === MODE_NONE, 'YouTube opt-out fixture failed');
   const fixture = await context.newPage();
   const allowedFixture = await context.newPage();
+  const checkNarrowFeedback = async () => {
+    await fixture.evaluate(() => Object.assign(document.getElementById('movie_player').style,
+      { width: '320px', height: '180px' }));
+    await waitFor('YouTube feedback fits a narrow player in a desktop window', () => fixture.evaluate(() => {
+      const player = document.getElementById('movie_player').getBoundingClientRect();
+      const overlay = document.getElementById('talon-youtube-ad-feedback');
+      if (!overlay) { return false; }
+      const bounds = overlay.getBoundingClientRect();
+      return bounds.width > 0 && bounds.left >= player.left && bounds.right <= player.right &&
+        bounds.top >= player.top && bounds.bottom <= player.bottom &&
+        Array.from(overlay.querySelectorAll('a, .talon-youtube-ad-feedback-title')).every(element => {
+          if (getComputedStyle(element).display === 'none') { return true; }
+          const rect = element.getBoundingClientRect();
+          return rect.left >= bounds.left && rect.right <= bounds.right &&
+            rect.top >= bounds.top && rect.bottom <= bounds.bottom;
+        });
+    }));
+    await fixture.evaluate(() => Object.assign(document.getElementById('movie_player').style,
+      { width: '640px', height: '360px' }));
+  };
   try {
     const extensionId = new URL(control.url()).hostname;
     const stoppedBeforeNavigation = await stopExtensionServiceWorker(context, control, extensionId);
@@ -455,14 +481,17 @@ const runYouTubePolicySmoke = async (context, control) => {
     assert(early.beforeInline && early.value === null, 'YouTube document-start guard was late or missing');
     await waitFor('YouTube ad runtime', () => fixture.evaluate(() =>
       document.querySelector('video').playbackRate === 16));
-    await waitFor('YouTube protected feedback', () => fixture.evaluate(() => {
+    await waitFor('YouTube protected feedback', () => fixture.evaluate(expected => {
       const overlay = document.getElementById('talon-youtube-ad-feedback');
       const cta = overlay?.querySelector('.talon-youtube-ad-feedback-cta');
       return overlay?.dataset.mode === 'protected' && overlay.getClientRects().length > 0 &&
-        overlay.textContent.includes('Talon Defender is shortening this ad') &&
+        overlay.querySelector('.talon-youtube-ad-feedback-title')?.textContent === expected.ActiveTitle &&
+        overlay.querySelector('.talon-youtube-ad-feedback-detail')?.textContent === expected.ActiveDetail &&
+        overlay.getAttribute('aria-label') === expected.ActiveAria &&
         getComputedStyle(overlay).pointerEvents === 'none' &&
         getComputedStyle(cta).display === 'none';
-    }));
+    }, feedbackCopy));
+    await checkNarrowFeedback();
     await fixture.evaluate(() => {
       window.fixtureSkipCounts = { plain: 0, native: 0, empty: 0, outside: 0, navigation: 0, content: 0 };
       const player = document.getElementById('movie_player');
@@ -591,13 +620,18 @@ const runYouTubePolicySmoke = async (context, control) => {
     await waitFor('YouTube entitlement teardown', () => fixture.evaluate(() =>
       window.TalonYoutubePlayerGuardController?.isActive?.() === false &&
       document.querySelector('video').playbackRate === 1));
-    await waitFor('YouTube expired feedback', () => fixture.evaluate(() => {
+    await waitFor('YouTube expired feedback', () => fixture.evaluate(expected => {
       const overlay = document.getElementById('talon-youtube-ad-feedback');
       const cta = overlay?.querySelector('.talon-youtube-ad-feedback-cta');
-      return overlay?.dataset.mode === 'expired' && cta?.textContent === 'Restore Talon Defender' &&
+      return overlay?.dataset.mode === 'expired' && cta?.textContent === expected.RestoreButton &&
+        cta.getAttribute('aria-label') === expected.RestoreAria &&
+        overlay.querySelector('.talon-youtube-ad-feedback-title')?.textContent === expected.ExpiredTitle &&
+        overlay.querySelector('.talon-youtube-ad-feedback-detail')?.textContent === expected.ExpiredDetail &&
+        overlay.getAttribute('aria-label') === expected.ExpiredAria &&
         cta.getClientRects().length > 0 && getComputedStyle(cta).pointerEvents === 'auto' &&
         new URL(cta.href).searchParams.get('source') === 'youtube_expired_overlay';
-    }));
+    }, feedbackCopy));
+    await checkNarrowFeedback();
     await fixture.evaluate(() => document.getElementById('movie_player').classList.remove('ad-showing'));
     await waitFor('YouTube expired feedback clears after ad', () => fixture.evaluate(() =>
       document.getElementById('talon-youtube-ad-feedback') === null));

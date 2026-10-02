@@ -6,6 +6,31 @@ import vm from 'node:vm';
 const readSource = relativePath =>
   fs.readFile(new URL(`../${relativePath}`, import.meta.url), 'utf8');
 
+const ENGLISH_FEEDBACK_MESSAGES = {
+  youtubeAdFeedbackActiveTitle: 'Talon Defender is shortening this ad',
+  youtubeAdFeedbackActiveDetail: 'Getting you back to your video faster.',
+  youtubeAdFeedbackActiveAria: 'Talon Defender is shortening this YouTube ad and getting you back to your video faster.',
+  youtubeAdFeedbackExpiredTitle: 'Talon Defender could shorten ads like this',
+  youtubeAdFeedbackExpiredDetail: 'Your protection is paused. Reactivate for faster YouTube viewing.',
+  youtubeAdFeedbackExpiredAria: 'Talon Defender protection is paused. Reactivate to shorten YouTube ads like this.',
+  youtubeAdFeedbackRestoreButton: 'Restore Talon Defender',
+  youtubeAdFeedbackRestoreAria: 'Restore Talon Defender on the pricing page',
+};
+
+function readFeedbackCopy({ document, state }, mode) {
+  const field = suffix => state.elements.find(element =>
+    element.parentElement !== null && element.className === `talon-youtube-ad-feedback-${suffix}`
+  );
+  const prefix = mode === 'expired' ? 'Expired' : 'Active';
+  return {
+    [`youtubeAdFeedback${prefix}Title`]: field('title').textContent,
+    [`youtubeAdFeedback${prefix}Detail`]: field('detail').textContent,
+    [`youtubeAdFeedback${prefix}Aria`]: document.getElementById('talon-youtube-ad-feedback').getAttribute('aria-label'),
+    youtubeAdFeedbackRestoreButton: field('cta').textContent,
+    youtubeAdFeedbackRestoreAria: field('cta').getAttribute('aria-label'),
+  };
+}
+
 function createHarness() {
   const state = {
     elements: [],
@@ -314,4 +339,100 @@ test('YouTube feedback remains local presentation without network or analytics b
   assert.doesNotMatch(source, /\bXMLHttpRequest\b/);
   assert.doesNotMatch(source, /analytics|posthog|telemetry/i);
   assert.doesNotMatch(source, /\.playbackRate\s*=|\.currentTime\s*=|\.muted\s*=/);
+});
+
+test('YouTube feedback localizes visible copy and accessibility labels synchronously in both modes', async () => {
+  const source = await readSource('js/scripting/youtube-ad-feedback.js');
+  const harness = createHarness();
+  const translations = Object.fromEntries(Object.keys(ENGLISH_FEEDBACK_MESSAGES).map((key, index) =>
+    [key, `Texte traduit numéro ${index + 1}`]
+  ));
+  const messageReads = [];
+  harness.context.chrome.i18n.getMessage = key => {
+    messageReads.push(key);
+    return translations[key];
+  };
+  vm.runInNewContext(source, harness.context);
+  const controller = harness.context.__talonYoutubeAdFeedbackCreateController(harness.context);
+  assert.equal(messageReads.length, 0, 'inactive feedback must not do localization work');
+
+  assert.equal(controller.setActive(true), true);
+  const activeCopy = readFeedbackCopy(harness, 'protected');
+  assert.equal(controller.setActive(true, { mode: 'expired' }), true);
+  const expiredCopy = readFeedbackCopy(harness, 'expired');
+  assert.deepEqual({ ...activeCopy, ...expiredCopy }, translations);
+  assert.equal(controller.setActive(true, { mode: 'protected' }), true);
+  assert.deepEqual(readFeedbackCopy(harness, 'protected'), activeCopy);
+});
+
+test('YouTube feedback honors the supplied i18n API and preserves its receiver', async () => {
+  const source = await readSource('js/scripting/youtube-ad-feedback.js');
+  const harness = createHarness();
+  harness.context.chrome.i18n.getMessage = () => 'Wrong window API';
+  vm.runInNewContext(source, harness.context);
+  const i18n = {
+    getMessage(key) {
+      assert.equal(this, i18n, 'Chrome methods must keep the owning API as receiver');
+      return `Übersetzt: ${ENGLISH_FEEDBACK_MESSAGES[key]}`;
+    },
+    getUILanguage: () => 'de-DE',
+  };
+  const controller = harness.context.__talonYoutubeAdFeedbackCreateController({
+    ...harness.context,
+    window: harness.context,
+    chrome: { ...harness.context.chrome, i18n },
+  });
+  controller.setActive(true);
+  const activeCopy = readFeedbackCopy(harness, 'protected');
+  controller.setActive(true, { mode: 'expired' });
+  const copy = { ...activeCopy, ...readFeedbackCopy(harness, 'expired') };
+  for (const [key, english] of Object.entries(ENGLISH_FEEDBACK_MESSAGES)) {
+    assert.equal(copy[key], `Übersetzt: ${english}`, key);
+  }
+});
+
+test('YouTube feedback uses readable English when localization is missing or unusable', async () => {
+  const source = await readSource('js/scripting/youtube-ad-feedback.js');
+  const missingMessages = [
+    undefined,
+    () => undefined,
+    () => null,
+    () => '',
+    () => '  \t\n ',
+    () => 42,
+    key => key,
+    () => { throw new Error('localization unavailable'); },
+  ];
+  for (const getMessage of missingMessages) {
+    const harness = createHarness();
+    harness.context.chrome.i18n.getMessage = getMessage;
+    vm.runInNewContext(source, harness.context);
+    const controller = harness.context.__talonYoutubeAdFeedbackCreateController(harness.context);
+    controller.setActive(true);
+    const activeCopy = readFeedbackCopy(harness, 'protected');
+    controller.setActive(true, { mode: 'expired' });
+    assert.deepEqual({ ...activeCopy, ...readFeedbackCopy(harness, 'expired') }, ENGLISH_FEEDBACK_MESSAGES);
+  }
+});
+
+test('every packaged locale supplies complete YouTube feedback copy and Norwegian aliases agree', async () => {
+  const localeEntries = await fs.readdir(new URL('../_locales/', import.meta.url), { withFileTypes: true });
+  const localeNames = localeEntries.filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
+  assert.deepEqual(localeNames, ['da', 'de', 'en', 'es', 'fi', 'fr', 'it', 'ja', 'ko', 'nb', 'nl', 'no', 'sv']);
+  const catalogs = new Map();
+  for (const locale of localeNames) {
+    const messages = JSON.parse(await readSource(`_locales/${locale}/messages.json`));
+    const feedback = {};
+    for (const key of Object.keys(ENGLISH_FEEDBACK_MESSAGES)) {
+      const message = messages[key]?.message;
+      assert.equal(typeof message, 'string', `${locale}: missing ${key}`);
+      assert.ok(message.trim().length > 0, `${locale}: blank ${key}`);
+      assert.notEqual(message, key, `${locale}: untranslated message key`);
+      assert.doesNotMatch(message, /\uFFFD|__MSG_/, `${locale}: malformed ${key}`);
+      feedback[key] = message;
+    }
+    catalogs.set(locale, feedback);
+  }
+  assert.deepEqual(catalogs.get('en'), ENGLISH_FEEDBACK_MESSAGES);
+  assert.deepEqual(catalogs.get('nb'), catalogs.get('no'));
 });
