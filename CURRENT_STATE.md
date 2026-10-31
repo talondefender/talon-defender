@@ -1,5 +1,10 @@
 # Current State
 
+Release candidate 0.1.17 includes the current welcome/popup startup improvements,
+policy-aware YouTube lifecycle and localized feedback, safer Skip handling,
+bounded community transport, and exact-package release validation. Permissions,
+bundled filter lists, Chrome 122 minimum, and core trial/license rules are unchanged.
+
 The extension is an MV3 blocker with a trial-plus-license entitlement model built on top of the uBOL codebase.
 
 Runtime behavior now:
