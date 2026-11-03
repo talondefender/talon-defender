@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { chromium } from 'playwright';
+import { CHROME_REVIEW_URL, EDGE_REVIEW_URL } from '../shared/links.js';
 
 const rootDir = process.cwd();
 const args = process.argv.slice(2);
@@ -418,7 +419,7 @@ const runPopupSmoke = async (context, controlPage, extensionId) => {
     await controlPage.evaluate(() => chrome.storage.local.remove('popupReviewResponded'));
     await popupPage.reload({ waitUntil: 'domcontentloaded' });
     await popupPage.locator('#reviewStars').waitFor({state:'visible'});
-    const reviewURL = 'https://chromewebstore.google.com/detail/talon-defender/hplelboeopmfomgdkgogphhneoddgilm/reviews';
+    const reviewURL = browserTarget === 'edge' ? EDGE_REVIEW_URL : CHROME_REVIEW_URL;
     await popupPage.locator('[data-review-rating="4"]').click();
     const reviewTabId = await waitFor('popup store review navigation', async () => {
       const id = await getTabIdForUrl(controlPage, reviewURL);

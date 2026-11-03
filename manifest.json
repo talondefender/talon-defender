@@ -337,7 +337,7 @@
   "storage": {
     "managed_schema": "managed_storage.json"
   },
-  "version": "0.1.18",
+  "version": "0.1.19",
   "web_accessible_resources": [
     {
       "resources": [ "icons/icon128.png" ],

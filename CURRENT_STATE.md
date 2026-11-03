@@ -1,4 +1,6 @@
-Release candidate 0.1.18 (November 3, 2026): combines the locally approved YouTube Skip/native-config fixes, faster popup startup, compact localized popup and license-entry layout, persistent review response, and Premium promotion filtering. No new permissions, minimum browser change, or license/trial reset. Store submission remains pending final release verification.
+Release verification correction: the popup review smoke assertion now expects the Edge destination in Edge and the Chrome destination in Chrome, including minimum Chromium runs of both packages. The original 0.1.18 tag remains immutable; no 0.1.18 package was uploaded. Runtime review behavior is unchanged.
+
+Release candidate 0.1.19 (November 3, 2026): combines the locally approved YouTube Skip/native-config fixes, faster popup startup, compact localized popup and license-entry layout, persistent review response, and Premium promotion filtering. No new permissions, minimum browser change, or license/trial reset. Store submission remains pending final release verification.
 
 # Current State
 
