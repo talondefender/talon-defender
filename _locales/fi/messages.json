@@ -655,16 +655,16 @@
     "description": "Screen-reader announcement while Talon Defender accelerates a YouTube ad, not while removing it."
   },
   "youtubeAdFeedbackExpiredTitle": {
-    "message": "Talon Defender voisi lyhentää tällaisia mainoksia",
+    "message": "Talon Defender voisi ohittaa tällaiset mainokset",
     "description": "Conditional benefit shown during a YouTube ad when protection has expired and could be reactivated."
   },
   "youtubeAdFeedbackExpiredDetail": {
-    "message": "Suojaus on keskeytetty. Ota se uudelleen käyttöön, niin pääset nopeammin jatkamaan YouTube-videoitasi.",
+    "message": "Suojauksesi on keskeytetty. Ota se uudelleen käyttöön ohittaaksesi ärsyttävät YouTube-mainokset",
     "description": "Expired-protection message asking the user to reactivate protection. Ad acceleration is not running."
   },
   "youtubeAdFeedbackExpiredAria": {
-    "message": "Talon Defender -suojaus on keskeytetty. Ota se uudelleen käyttöön lyhentääksesi tällaisia YouTube-mainoksia.",
-    "description": "Screen-reader announcement that protection is paused and reactivation can shorten YouTube ads."
+    "message": "Talon Defender voisi ohittaa tällaiset mainokset. Suojauksesi on keskeytetty. Ota se uudelleen käyttöön ohittaaksesi ärsyttävät YouTube-mainokset.",
+    "description": "Screen-reader announcement that protection is paused and reactivation can skip annoying YouTube ads."
   },
   "youtubeAdFeedbackRestoreButton": {
     "message": "Ota Talon Defender taas käyttöön",
@@ -676,5 +676,17 @@
   },
   "uiPartial": {
     "message": "Osittain käytössä"
+  },
+  "popupReviewPrompt": {
+    "message": "Arvioithan Talon Defenderin"
+  },
+  "popupReviewStarAria": {
+    "message": "Anna Talon Defenderille {rating} tähteä viidestä"
+  },
+  "popupReviewThanks": {
+    "message": "Kiitos palautteestasi."
+  },
+  "popupReviewSupportNote": {
+    "message": "(Se auttaa tukemaan laajennustamme)"
   }
 }

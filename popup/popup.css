@@ -10,7 +10,7 @@
 
 body {
   margin: 0;
-  width: 320px;
+  width: 540px;
   padding: 12px;
   background: linear-gradient(145deg, #0f172a 0%, #1e293b 100%);
   color: #f8fafc;
@@ -24,6 +24,48 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.review-card {
+  padding: 10px 14px;
+  text-align: center;
+}
+
+.review-prompt {
+  margin: 0 0 2px;
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.review-stars {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+}
+
+.review-star {
+  appearance: none;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #fbd76b;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font: 30px/1 "Segoe UI Symbol", "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.review-star:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 1px;
+}
+
+.review-thanks {
+  color: #c8f5fa;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .card-style-header {
@@ -1068,4 +1110,142 @@ body {
 .expired-overlay-step-primary .expired-overlay-step-subtitle {
   color: #94a3b8;
 }
+
+/* Put purchase/activation alongside protection details, within the native
+   popup height. Keep the existing typography, colors, and icon dimensions. */
+.popup {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-areas:
+    "header header"
+    "protection subscription"
+    "site subscription"
+    "review review";
+  align-items: start;
+}
+
+.popup > .header { grid-area: header; }
+.popup > .stats-card { grid-area: protection; }
+#allowedSitesCard { grid-area: site; }
+.allowed-sites-header { flex-direction: column; gap: 8px; }
+.allowed-sites-status { align-self: flex-start; max-width: 100%; }
+#subscriptionCard { grid-area: subscription; min-width: 0; }
+#reviewCard { grid-area: review; }
+.shield-icon-wrapper { flex-shrink: 0; }
+.shield-text-group { min-width: 0; }
+.subscription-cta-note .guarantee-icon { flex-shrink: 0; }
+.action-zone { gap: 6px; }
+
+.pill-button.license-entry-action {
+  flex: none;
+  width: 100%;
+  margin-top: 4px;
+  padding: 7px 10px;
+  border-color: #38bdf8;
+  color: #f8fafc;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.license-entry-action:focus-visible,
+#recoverLicenseLink:focus-visible,
+#supportLink:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+#recoverLicenseLink {
+  padding: 4px 2px;
+  color: #47c5ff;
+  font-weight: 600;
+  text-underline-offset: 3px;
+}
+
+#supportLink {
+  min-height: 24px;
+  padding: 3px 6px;
+  line-height: 1.4;
+  text-underline-offset: 3px;
+}
+
+.license-form-row.golden-style {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+.action-zone:has(#licenseForm:not([hidden])) {
+  gap: 4px;
+  padding-top: 8px;
+}
+
+.license-form-row .license-input {
+  min-width: 0;
+  text-align: left;
+}
+
+#licenseKey:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+}
+
+#licenseActivate {
+  width: 100%;
+  min-height: 36px;
+  background: linear-gradient(135deg, #38bdf8 0%, #0ea5e9 100%);
+  border-color: transparent;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+#licenseActivate:hover { filter: brightness(1.08); }
+#licenseActivate:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+.card.review-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+}
+
+.review-prompt { margin: 0; }
+.review-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+}
+.review-stars { flex-shrink: 0; }
+
+.expired-overlay-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  gap: 10px 14px;
+}
+
+.expired-overlay-header { display: contents; }
+.expired-overlay-badge,
+.expired-overlay-title,
+.expired-overlay-meta,
+#expiredOverlayStatus,
+.expired-overlay-links { grid-column: 1 / -1; }
+.expired-overlay-badge { justify-self: center; }
+
+.expired-overlay-bullets {
+  grid-column: 1;
+  grid-row: 3 / span 2;
+  align-self: start;
+  margin: 0;
+  padding: 12px 4px 0;
+  gap: 12px;
+}
+
+.expired-overlay-step-primary { grid-column: 2; grid-row: 3; }
+.expired-overlay-step-secondary { grid-column: 2; grid-row: 4; }
+.expired-overlay-step { min-width: 0; }
 

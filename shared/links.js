@@ -75,3 +75,5 @@ export const PRIVACY_URL = `${LOCALIZED_BASE_URL}/privacy`;
 export const MANAGE_SUBSCRIPTION_URL = `${LOCALIZED_BASE_URL}/account`;
 export const WHATS_NEW_URL = `${LOCALIZED_BASE_URL}/whats-new`;
 export const TERMS_URL = `${LOCALIZED_BASE_URL}/terms`;
+export const CHROME_REVIEW_URL = 'https://chromewebstore.google.com/detail/talon-defender/hplelboeopmfomgdkgogphhneoddgilm/reviews';
+export const EDGE_REVIEW_URL = 'https://microsoftedge.microsoft.com/addons/detail/talon-defender/bgfniaaeknljdjaakgoikmooaohgcpfi';

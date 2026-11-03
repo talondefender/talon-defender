@@ -655,16 +655,16 @@
     "description": "Screen-reader announcement while Talon Defender accelerates a YouTube ad, not while removing it."
   },
   "youtubeAdFeedbackExpiredTitle": {
-    "message": "Talon Defender could shorten ads like this",
+    "message": "Talon Defender could skip ads like this",
     "description": "Conditional benefit shown during a YouTube ad when protection has expired and could be reactivated."
   },
   "youtubeAdFeedbackExpiredDetail": {
-    "message": "Your protection is paused. Reactivate for faster YouTube viewing.",
+    "message": "Your protection is paused. Reactivate to skip annoying YouTube ads",
     "description": "Expired-protection message asking the user to reactivate protection. Ad acceleration is not running."
   },
   "youtubeAdFeedbackExpiredAria": {
-    "message": "Talon Defender protection is paused. Reactivate to shorten YouTube ads like this.",
-    "description": "Screen-reader announcement that protection is paused and reactivation can shorten YouTube ads."
+    "message": "Talon Defender could skip ads like this. Your protection is paused. Reactivate to skip annoying YouTube ads.",
+    "description": "Screen-reader announcement that protection is paused and reactivation can skip annoying YouTube ads."
   },
   "youtubeAdFeedbackRestoreButton": {
     "message": "Restore Talon Defender",
@@ -676,5 +676,17 @@
   },
   "uiPartial": {
     "message": "Partially active"
+  },
+  "popupReviewPrompt": {
+    "message": "Please Rate Talon Defender"
+  },
+  "popupReviewStarAria": {
+    "message": "Rate Talon Defender {rating} out of 5 stars"
+  },
+  "popupReviewThanks": {
+    "message": "Thank you for your feedback."
+  },
+  "popupReviewSupportNote": {
+    "message": "(It helps support our extension)"
   }
 }

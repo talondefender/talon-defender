@@ -1,5 +1,37 @@
 # Release
 
+Native-config loading candidate: content scripts request the fixed packaged JSON
+from a startup-safe background reader. Validate sender rejection, single-flight
+and retry behavior, real isolated-world controller readiness on YouTube, and no
+unsafe resource-load errors. No new permission or arbitrary-file read is added.
+
+Local YouTube cosmetic candidate: the dedicated mealbar promotion renderer is
+hidden under active protection. Validate offer hiding during ads and content,
+ordinary-dialog visibility, zero offer clicks, and full restoration on disable.
+No player, navigation, or generic dialog selector is added for this rule.
+
+Local layout candidate: the popup is 540 px wide with license actions in the
+upper-right column, protection/site details to the left, and reviews below.
+Expired warnings and purchase/key steps also use parallel columns. Validate all
+locales in paid, trial, paused, expired, device-limit, expanded key-entry, and
+error states: content and controls must fit within 600 px without hidden overflow.
+No colors, icons, text styling, wording, or licensing behavior are changed.
+
+Local popup review candidate: five keyboard-accessible stars sit beneath the
+main controls. The transient YouTube overlay no longer asks for feedback.
+Scores 1-3 thank without navigation; 4-5 open the Chrome review page or Edge
+listing in a separate tab. Validate all score branches, both destination URLs,
+all locales, popup startup latency, and uninterrupted Skip before release. No ratings
+are submitted automatically. Selective store routing requires store-policy
+review before submission; this local candidate is not a store approval claim.
+The popup now persists only a local responded boolean before store navigation;
+check both low/high-score persistence and absence of a prompt flash on reopen.
+
+Local popup performance candidate: dependencies preload in parallel and usable
+cached state releases the loading lock before worker panel refresh completes.
+Validate rapid reopen cycles with a stalled panel response, missing storage,
+fresh-install welcome, and newer-state/mutation preservation before release.
+
 Chrome release:
 - `npm run release:extension`
 
@@ -90,7 +122,7 @@ Compatibility and rollout:
 - deploy the shared 4 MiB decoded-body publisher prevalidation before API enforcement and Extension rollout. Existing signed schemas and verification keys are unchanged
 - use the store staged rollout controls where available, verify real playback and Allowed Sites in the private browser lab, and expand only after the existing paid/trial and browser gates pass
 - legacy YouTube documents keep their old controller until natural navigation; do not force reloads or clear user playback/storage state
-- YouTube feedback validation covers the protected overlay, four-second compaction, stationary expired CTA, policy uncertainty, Allowed Sites/backoff suppression, and live protected/expired transitions. Expired tests must retain zero registered dynamic protection scripts. Static presentation code is not a protection-registration exception.
+- YouTube feedback validation covers the stable expanded protected overlay, native callback activation for controls rejecting software DOM clicks, modern ad surfaces with Skip left available, stationary expired CTA, policy uncertainty, Allowed Sites/backoff suppression, and live protected/expired transitions. Expired tests must retain zero registered dynamic protection scripts. Static presentation code is not a protection-registration exception.
 - rollback requires a new higher extension version built from the known-good source and fresh browser evidence. Preserve storage schemas and independently revoke faulty signed overlays through the backend controls
 
 License and trial preservation gate:

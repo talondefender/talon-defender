@@ -1,4 +1,92 @@
+Release candidate 0.1.18 (November 3, 2026): combines the locally approved YouTube Skip/native-config fixes, faster popup startup, compact localized popup and license-entry layout, persistent review response, and Premium promotion filtering. No new permissions, minimum browser change, or license/trial reset. Store submission remains pending final release verification.
+
 # Current State
+
+Native heuristics now obtains its packaged JSON from a fixed-file background
+reader through an authenticated extension message. The content script no longer
+fetches a page-visible dynamic extension URL. The reader is startup-safe,
+single-flight, and retryable after failures; it returns no user data and accepts
+no caller-supplied path. Remote-config merge and fail-closed readiness remain.
+This addresses the reported YouTube resource-loading error without changing
+permissions or falling back to an incomplete default configuration.
+
+The local YouTube protection stylesheet now hides the dedicated mealbar
+promotion renderer used for Premium offers. It does not target a generic popup
+or dialog container, read offer wording, or click subscription controls. Existing
+entitlement, Allowed Sites, and teardown policy applies to this cosmetic rule.
+
+The expanded existing-license form now stacks a full-width key field above a
+full-width cyan activation button, matching the expired view. Field focus uses
+the existing cyan palette. Recovery and compact Help links follow the form.
+Translated labels and activation behavior are unchanged.
+
+The existing-license entry in the subscription card is now a full-width outlined
+secondary button with brighter text. License recovery uses a distinct cyan link;
+Help is a compact text link rather than a full-width button. Existing wording,
+destinations, activation, and recovery behavior are unchanged.
+
+The popup review heading now says "Please Rate Talon Defender", with
+"(It helps support our extension)" directly underneath. Both strings are
+localized in all 13 catalogs; the note also describes the star group for
+screen readers. Rating behavior and the saved response flag are unchanged.
+
+The local popup layout is now 540 px wide. Protection and site controls sit
+beside subscription/purchase actions; the license CTA is near the top of the
+right column, and optional reviews are in the footer. Expired-mode warnings
+sit beside purchase and key-entry steps, including the expanded activation form.
+Existing colors, icon dimensions, wording, and typography are retained. Content
+fits the native 600 px popup height rather than hiding overflow. Browser layout
+checks cover paid, trial, paused trial, expanded forms, expired errors, and the
+device-limit state across all 13 locale catalogs. This remains a local candidate.
+
+The local review opportunity has moved from the short-lived YouTube ad overlay
+to a compact footer card in the extension popup, below the main controls. It stays
+available while the popup is open. Scores 1-3 show a localized thank-you without
+navigation; 4-5 open Talon's Chrome review page or Edge listing in a separate tab,
+using the existing direct tab-opening helper. A local boolean now remembers
+that the user responded and suppresses the entire card on future openings in
+that browser profile. The card starts hidden to avoid flashing before storage
+is read. No score is stored or transmitted, and no store rating is submitted
+automatically. All 13 locale catalogs
+include the prompt, individual star labels, and thank-you. Keyboard activation
+and paid/trial popup layouts are covered. The ad overlay is status-only again;
+its expired reactivation message and ad skipping behavior remain unchanged.
+This is a local candidate; selective store routing still needs store-policy
+review before submission. The store URLs are classified as navigation only.
+
+The local popup candidate preloads its module dependencies together and unlocks
+the protection toggle as soon as saved entitlement/filtering state and active-tab
+lookup settle, without waiting for the worker's panel response. Live snapshots
+still refresh in the background; mutations retain authoritative rereads, revision
+checks, and serialization. Cache hydration cannot overwrite a newer update.
+Browser smoke repeats six openings with deliberately stalled panel responses.
+This is a local candidate, not a new store submission.
+
+The local candidate's expired YouTube message now says "Talon Defender could skip
+ads like this" and "Your protection is paused. Reactivate to skip annoying YouTube
+ads" in all 13 packaged locale catalogs (12 languages plus the Norwegian alias).
+Accessible announcements and English fallbacks match. The reactivation button,
+pricing destination and expired-protection policy are unchanged.
+
+Local post-0.1.17 candidate (not submitted): native YouTube Skip activation now
+restores Talon's owned mute/rate changes before delivering the click. Acceleration
+and forced play stay suspended during the existing one-second Skip cooldown so
+asynchronous ad-UI teardown cannot immediately reapply them to returning content.
+Automatic Skip activation and bounded retries remain enabled; a failed transition
+does not permanently disable ad handling. Controlled browser checks cover delayed
+ad-class teardown; live ad availability remains outside fixture coverage.
+Protected feedback stays mounted throughout acceleration, native Skip handoff,
+and consecutive ads while ad signals remain. Its expanded layout stays stable;
+the four-second compaction timer is removed. Content return and policy teardown
+still remove it immediately; playback restoration is unchanged.
+The page-world guard records native click callbacks only on known Skip controls,
+leaves their ordinary DOM listeners/events intact, and accepts bounded requests
+only while a connected, visible, enabled control belongs to an ad-showing player.
+This activates the native callback when current YouTube controls reject software
+DOM clicks; it does not manufacture trusted browser events or add permissions.
+Policy stop removes the observer hooks and request listener. Weak callback records
+allow that same document to resume protection. Modern in-player ad cards/info and
+companion slots are hidden separately, leaving the Skip/preview container intact.
 
 Release candidate 0.1.17 includes the current welcome/popup startup improvements,
 policy-aware YouTube lifecycle and localized feedback, safer Skip handling,
@@ -13,7 +101,7 @@ Runtime behavior now:
 - Chrome 122 userScripts availability probing guards the namespace getter as well as method calls; ordinary startup and paywall cleanup stay available when Developer mode is off, while pending managed-script cleanup evidence is preserved.
 - YouTube MAIN and isolated scripts register together at document start only for entitled, enabled scopes. Parent opt-outs, descendant exceptions, and subsystem backoff reconcile with live document-targeted teardown; no static guard or loader bypass remains. Stopped wrappers become pass-through and owned page/media changes are restored without navigation, seeking, cookie clearing, or full storage clearing. Existing legacy guards are not stacked or unsafely unwrapped; they migrate after natural navigation.
 - YouTube skip detection accepts an exact `Skip` label only inside the same player carrying an independent `ad-showing` signal. Skip-related containers resolve to actionable controls, so empty/countdown wrappers and hidden or disabled children cannot consume the click attempt ahead of a usable button. Each attempt delivers one click, while the existing cooldown, policy gates, and playback restoration remain in place. Synthetic browser checks cover actual button activation as well as policy teardown; they do not establish coverage of every live YouTube experiment.
-- The integrated YouTube feedback overlay shows "Talon Defender is shortening this ad" while the ad handler verifies accelerated playback, compacts after four seconds, and clears when the ad ends or protection stops. Both overlay states, the restore button, and accessibility labels use the browser's extension language through all 13 packaged locale catalogs, with English fallback. Translation lookup is synchronous and cached when feedback is first needed. A separate presentation-only static observer can show the stationary expired-protection CTA during a visible ad, but only after the background confirms initialized entitlement, an enabled YouTube site, and no subsystem backoff. It does not block requests, start protection, or change playback. Expired entitlement still removes all dynamic protection registrations; Allowed Sites and unknown or failed policy checks suppress the expired message.
+- The integrated YouTube feedback overlay shows "Talon Defender is shortening this ad" throughout ad handling and native Skip handoffs, stays expanded, and clears when the ad ends or protection stops. Both protected/expired modes, the restore button, and accessibility labels use the browser's extension language through all 13 packaged locale catalogs, with English fallback. Translation lookup is synchronous and cached when feedback is first needed. A separate presentation-only static observer can show the stationary expired-protection CTA during a visible ad, but only after the background confirms initialized entitlement, an enabled YouTube site, and no subsystem backoff. It does not block requests, start protection, or change playback. Expired entitlement still removes all dynamic protection registrations; Allowed Sites and unknown or failed policy checks suppress the expired message.
 - `runtime.onInstalled` opens `https://talondefender.com/welcome/?source=install` on fresh install.
 - the first popup flow can open `https://talondefender.com/welcome-live/?source=first_popup_open`.
 - the uninstall URL is always set to `https://talondefender.com/uninstall/` with `source` and `version` query parameters.

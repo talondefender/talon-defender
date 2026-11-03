@@ -79,6 +79,11 @@ const AD_SURFACE_CSS = [
     '.ytp-ad-text-overlay,',
     '.ytp-ad-survey,',
     '.ytp-ad-companion-slot,',
+    '.ytp-ad-player-overlay-layout__player-card-container,',
+    '.ytp-ad-player-overlay-layout__ad-info-container,',
+    '.ytp-ad-player-overlay-layout__ad-disclosure-banner-container,',
+    'ytd-companion-slot-renderer,',
+    'yt-mealbar-promo-renderer,',
     'ytd-ad-slot-renderer {',
     '  display: none !important;',
     '  visibility: hidden !important;',
@@ -118,6 +123,7 @@ const createController = env => {
     let lastNoticeCheckAt = 0;
     let noticeScanPending = false;
     let lastSkipClickAt = 0;
+    let skipTransitionUntil = 0;
     let skipActivationCount = 0;
 
     const markState = value => {
@@ -265,6 +271,19 @@ const createController = env => {
     };
 
     const dispatchSkipActivationEvents = button => {
+        // The page-world guard records only native Skip-control callbacks.
+        // Current players reject synthetic DOM clicks before running them.
+        try {
+            if ( typeof win.CustomEvent === 'function' ) {
+                const request = new win.CustomEvent('talon-youtube-native-skip', {
+                    bubbles: true, composed: true, cancelable: true,
+                });
+                if ( button.dispatchEvent(request) === false ) {
+                    markSkipActivation(button);
+                    return true;
+                }
+            }
+        } catch { }
         const eventTypes = [
             'pointerover',
             'mouseover',
@@ -318,8 +337,12 @@ const createController = env => {
         if ( now - lastSkipClickAt < SKIP_CLICK_COOLDOWN_MS ) { return false; }
         for ( const button of skipButtonCandidates() ) {
             if ( elementIsActionable(button) === false ) { continue; }
+            // YouTube can start switching media inside its native click handler,
+            // before its ad classes disappear. Hand it the user's media state.
+            restoreVideos();
             if ( dispatchSkipActivationEvents(button) ) {
                 lastSkipClickAt = now;
+                skipTransitionUntil = now + SKIP_CLICK_COOLDOWN_MS;
                 return true;
             }
         }
@@ -546,10 +569,23 @@ const createController = env => {
             suppressedNotice = suppressInterruptionNotices();
         }
         let adShowing = isAdShowing();
-        const skipClicked = adShowing ? clickSkipButtons() : false;
+        const transitionTimedOut = skipTransitionUntil !== 0 && now >= skipTransitionUntil;
+        if ( transitionTimedOut ) { skipTransitionUntil = 0; }
+        // Give a still-running ad one ordinary handling tick before retrying a
+        // no-op control; otherwise repeated no-op clicks could suspend speedup.
+        const skipClicked = adShowing && !transitionTimedOut ? clickSkipButtons() : false;
         // A native Skip click can synchronously return to the video. Do not
         // speed up that content or leave feedback visible until the next tick.
         if ( skipClicked ) { adShowing = isAdShowing(); }
+        if ( adShowing && now < skipTransitionUntil ) {
+            // Do not reapply 16x/mute/play while native Skip is settling. If the
+            // click did nothing, ordinary bounded ad handling resumes afterward.
+            // Feedback describes the whole ad-handling session, including the
+            // native handoff. Hiding here recreates it on every retry/next ad.
+            setAdFeedbackActive(true);
+            lastAdState = true;
+            return true;
+        }
         if ( adShowing ) {
             const adVideos = videos();
             for ( const video of adVideos ) {
@@ -564,6 +600,7 @@ const createController = env => {
             lastAdState = false;
         }
         setAdFeedbackActive(false);
+        skipTransitionUntil = 0;
         return suppressedNotice || skipClicked;
     };
 
@@ -680,6 +717,7 @@ const createController = env => {
         } catch {
         }
         lastAdState = false;
+        skipTransitionUntil = 0;
         markState('stopped');
     };
 

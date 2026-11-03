@@ -3515,6 +3515,7 @@ const overlaySessions = createOverlaySessionStore();
 const AUTO_GENERIC_HIGH_KEY = 'autoGenericHighHosts'; // legacy cleanup only
 const AUTO_PROMOTE_ENABLED = true;
 const STARTUP_SAFE_MESSAGE_TYPES = new Set([
+    'getPackagedNativeHeuristicsConfig',
     'getYoutubeFeedbackPolicy',
     'maybeOpenFirstPopupWelcome',
     'popupWarmup',
@@ -4124,10 +4125,46 @@ async function recoverStartupCoreFromPopupWarmup() {
     }));
 }
 
+const isPackagedHeuristicsConfigSender = sender => {
+    if ( sender?.id !== runtime.id ) { return false; }
+    if ( isTrustedExtensionSender(sender) ) { return true; }
+    return Number.isInteger(sender?.tab?.id) && sender.tab.id >= 0 &&
+        sender.frameId === 0 &&
+        typeof sender.documentId === 'string' && sender.documentId !== '' &&
+        normalizeHttpHostname(sender.url || sender.tab.url || '') !== '';
+};
+
+let packagedNativeHeuristicsConfigPromise;
+const readPackagedNativeHeuristicsConfig = () => {
+    if ( packagedNativeHeuristicsConfigPromise !== undefined ) {
+        return packagedNativeHeuristicsConfigPromise;
+    }
+    // Fixed local path: no caller-supplied URL, page fetch, or remote data.
+    const pending = fetch('/automation/native-heuristics.json').then(response => {
+        if ( response.ok === false ) { throw new Error('Packaged heuristic config read failed'); }
+        return response.json();
+    }).then(config => {
+        if ( config === null || typeof config !== 'object' || Array.isArray(config) ) {
+            throw new Error('Invalid packaged heuristic config');
+        }
+        return config;
+    });
+    packagedNativeHeuristicsConfigPromise = pending;
+    pending.catch(() => {
+        if ( packagedNativeHeuristicsConfigPromise === pending ) {
+            packagedNativeHeuristicsConfigPromise = undefined;
+        }
+    });
+    return pending;
+};
+
 function shouldHandleMessageBeforeFullInitialization(request, sender) {
     if ( request instanceof Object === false ) { return false; }
     const what = typeof request.what === 'string' ? request.what : '';
     if ( STARTUP_SAFE_MESSAGE_TYPES.has(what) === false ) { return false; }
+    if ( what === 'getPackagedNativeHeuristicsConfig' ) {
+        return isPackagedHeuristicsConfigSender(sender);
+    }
     if ( what === 'removeCSS' || what === 'getYoutubeFeedbackPolicy' ) {
         return isExtensionRuntimeSender(sender) &&
             Number.isInteger(sender?.tab?.id) &&
@@ -9992,6 +10029,16 @@ function onMessage(
     // Does not require trusted origin.
 
     switch (what) {
+
+        case 'getPackagedNativeHeuristicsConfig':
+            if ( isPackagedHeuristicsConfigSender(sender) === false ) {
+                callback({ ok: false, error: 'invalid_sender' });
+                return true;
+            }
+            readPackagedNativeHeuristicsConfig().then(config => {
+                callback({ ok: true, config });
+            }).catch(() => callback({ ok: false, error: 'packaged_config_unavailable' }));
+            return true;
 
         case 'getYoutubeFeedbackPolicy':
             readYoutubeFeedbackPolicy(sender).then(callback).catch(() => {

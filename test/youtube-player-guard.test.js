@@ -816,3 +816,83 @@ test('YouTube guard removes hooks before page caching and waits for authorized r
   assert.equal(controller.install(), true);
   assert.equal(controller.isActive(), true);
 });
+
+test('Native Skip callbacks work without changing DOM event trust and stop with policy', async () => {
+  class Target {
+    addEventListener(type, callback, options) { (this.events ||= []).push({type,callback,options}); }
+    removeEventListener(type, callback) { this.events = (this.events || []).filter(e=>e.type!==type || e.callback!==callback); }
+  }
+  class Mouse {
+    constructor(type, options) { Object.assign(this, options, {type,isTrusted:false}); }
+    preventDefault() { this.defaultPrevented = true; }
+  }
+  let adShowing = true;
+  let visible = true;
+  const player = {classList:{contains:()=>adShowing}};
+  const button = Object.assign(new Target(), {
+    isConnected:true, matches:()=>true, closest:()=>player,
+    getClientRects:()=>visible?[{}]:[], getAttribute:()=>null,
+  });
+  const { controller } = await createController({EventTarget:Target,MouseEvent:Mouse});
+  const nativeAdd = Target.prototype.addEventListener;
+  const nativeRemove = Target.prototype.removeEventListener;
+  controller.install();
+  let clicks = 0;
+  const callback = function(event) {
+    if (event.isTrusted === false) return;
+    assert.equal(this,button);
+    assert.equal(event.target,button);
+    assert.equal(event.type,'click');
+    assert.equal(event.composedPath()[0],button);
+    clicks++;
+  };
+  button.addEventListener('click',callback);
+  assert.equal(button.events[0].callback,callback,'native listeners must remain unwrapped');
+  const softwareEvent = new Mouse('click',{});
+  callback(softwareEvent);
+  assert.equal(clicks,0,'an ordinary software event still has its original trust flag');
+  let accepted = 0;
+  const request={target:button,composedPath:()=>[button,player],preventDefault:()=>accepted++};
+  assert.equal(controller.activateSkipControl(request),true);
+  assert.equal(clicks,1);
+  assert.equal(accepted,1);
+  assert.equal(softwareEvent.isTrusted,false);
+  visible=false;
+  assert.equal(controller.activateSkipControl(request),false);
+  visible=true; adShowing=false;
+  assert.equal(controller.activateSkipControl(request),false);
+  adShowing=true;
+  const capturedAdd=Target.prototype.addEventListener;
+  controller.stop();
+  assert.equal(Target.prototype.addEventListener,nativeAdd);
+  assert.equal(Target.prototype.removeEventListener,nativeRemove);
+  assert.equal(controller.activateSkipControl(request),false);
+  assert.equal(button.events[0].callback,callback);
+  controller.install();
+  assert.equal(controller.activateSkipControl(request),true,'same document can resume after policy restoration');
+  button.removeEventListener('click',callback);
+  assert.equal(controller.activateSkipControl(request),false,'removed callbacks cannot be invoked');
+  controller.stop();
+  capturedAdd.call(button,'click',callback);
+  assert.equal(controller.activateSkipControl(request),false);
+});
+
+test('Native Skip bridge ignores unrelated, once-only and aborted listeners', async () => {
+  class Target { addEventListener() {} removeEventListener() {} }
+  class Mouse { constructor(type) { this.type=type; } }
+  const { controller }=await createController({EventTarget:Target,MouseEvent:Mouse});
+  controller.install();
+  const player={classList:{contains:()=>true}};
+  const button=Object.assign(new Target(),{matches:()=>true,closest:()=>player,getAttribute:()=>null,getClientRects:()=>[{}]});
+  let calls=0;
+  button.addEventListener('click',()=>calls++,{once:true});
+  const signal={aborted:false};
+  button.addEventListener('click',()=>calls++,{signal});
+  signal.aborted=true;
+  assert.equal(controller.activateSkipControl({target:button}),false);
+  button.matches=()=>false;
+  button.addEventListener('click',()=>calls++);
+  assert.equal(controller.activateSkipControl({target:button}),false);
+  assert.equal(calls,0);
+  controller.stop();
+});

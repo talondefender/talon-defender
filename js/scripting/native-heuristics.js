@@ -10,7 +10,6 @@
         return;
     }
 
-    const CONFIG_PATH = 'automation/native-heuristics.json';
     const REMOTE_CONFIG_KEY = 'communityBundleHeuristics';
     const BOOST_STORAGE_PREFIX = 'nativeHeuristicsBoost';
     const BOOST_TTL_MS = 7 * 24 * 3600 * 1000;
@@ -18,7 +17,6 @@
     const BOOST_MAX = 50;
 
     const runtime = self.browser?.runtime || self.chrome?.runtime;
-    const getURL = runtime?.getURL?.bind(runtime) || (p => p);
     const storage = self.browser?.storage?.local || self.chrome?.storage?.local;
     const guard = self.TalonBreakageGuard;
     const shadowController = self.TalonShadowRootController;
@@ -99,9 +97,16 @@
     let configPromise;
     const loadConfig = () => {
         if (configPromise !== undefined) { return configPromise; }
-        const pending = fetch(getURL(CONFIG_PATH)).then(r => {
-            if (r.ok === false) { throw new Error(r.statusText); }
-            return r.json();
+        // Read packaged data in the extension context, not through a dynamic
+        // web-accessible URL requested from the page's loading context.
+        const pending = Promise.resolve().then(() => runtime.sendMessage({
+            what: 'getPackagedNativeHeuristicsConfig',
+        })).then(response => {
+            if (response?.ok !== true || response.config === null ||
+                typeof response.config !== 'object' || Array.isArray(response.config)) {
+                throw new Error(response?.error || 'Packaged heuristic config unavailable');
+            }
+            return response.config;
         });
         configPromise = pending;
         pending.catch(() => {

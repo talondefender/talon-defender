@@ -12,7 +12,6 @@ if ( global.TalonYoutubeAdFeedbackController ) {
 const OVERLAY_ID = 'talon-youtube-ad-feedback';
 const STYLE_ID = 'talon-youtube-ad-feedback-style';
 const PLAYER_SELECTOR = '.html5-video-player,#movie_player';
-const COLLAPSE_DELAY_MS = 4000;
 const LOGO_PATH = 'icons/icon128.png';
 const PROTECTED_MODE = 'protected';
 const EXPIRED_MODE = 'expired';
@@ -145,43 +144,6 @@ const OVERLAY_CSS = `
     color: #ffe2aa;
 }
 
-#${OVERLAY_ID}[data-state="compact"] {
-    gap: 12px;
-    min-height: 60px;
-    padding: 8px 18px 8px 9px;
-    border-radius: 999px;
-}
-
-#${OVERLAY_ID}[data-state="compact"] .talon-youtube-ad-feedback-logo-wrap {
-    width: 46px;
-    height: 46px;
-}
-
-#${OVERLAY_ID}[data-state="compact"] .talon-youtube-ad-feedback-logo {
-    width: 42px;
-    height: 42px;
-}
-
-#${OVERLAY_ID}[data-state="compact"] .talon-youtube-ad-feedback-title {
-    font-size: 17px;
-}
-
-#${OVERLAY_ID}[data-state="compact"] .talon-youtube-ad-feedback-detail {
-    display: none;
-}
-
-#${OVERLAY_ID}[data-mode="expired"][data-state="compact"] .talon-youtube-ad-feedback-copy {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-#${OVERLAY_ID}[data-mode="expired"][data-state="compact"] .talon-youtube-ad-feedback-cta {
-    margin-top: 0;
-    padding: 7px 13px;
-    font-size: 14px;
-}
-
 @keyframes talon-youtube-ad-feedback-pulse {
     0% { opacity: 0.7; transform: scale(0.92); }
     70%, 100% { opacity: 0; transform: scale(1.16); }
@@ -255,15 +217,12 @@ const createController = env => {
     const doc = env.document;
     const messages = new Map();
     let active = false;
-    let compact = false;
     let mode = PROTECTED_MODE;
-    let collapseTimer;
     let overlayElement;
     let styleElement;
     let titleElement;
     let detailElement;
     let ctaElement;
-    let collapseGeneration = 0;
     let listening = false;
 
     // Resolve packaged translations only when the overlay needs them. Keeping
@@ -392,7 +351,7 @@ const createController = env => {
         }
 
         root.id = OVERLAY_ID;
-        root.setAttribute?.('data-state', compact ? 'compact' : 'expanded');
+        root.setAttribute?.('data-state', 'expanded');
         root.setAttribute?.('data-mode', mode);
         root.setAttribute?.('role', 'status');
 
@@ -435,15 +394,15 @@ const createController = env => {
             overlayElement.setAttribute?.(
                 'aria-label',
                 text('youtubeAdFeedbackExpiredAria',
-                    'Talon Defender protection is paused. Reactivate to shorten YouTube ads like this.')
+                    'Talon Defender could skip ads like this. Your protection is paused. Reactivate to skip annoying YouTube ads.')
             );
             if ( titleElement ) {
                 titleElement.textContent = text('youtubeAdFeedbackExpiredTitle',
-                    'Talon Defender could shorten ads like this');
+                    'Talon Defender could skip ads like this');
             }
             if ( detailElement ) {
                 detailElement.textContent = text('youtubeAdFeedbackExpiredDetail',
-                    'Your protection is paused. Reactivate for faster YouTube viewing.');
+                    'Your protection is paused. Reactivate to skip annoying YouTube ads');
             }
             if ( ctaElement ) { ctaElement.href = pricingUrl(); }
             return;
@@ -492,33 +451,10 @@ const createController = env => {
         }
         overlayElement?.setAttribute?.(
             'data-state',
-            compact ? 'compact' : 'expanded'
+            'expanded'
         );
         updateOverlayContent();
         return { root: overlayElement, created };
-    };
-
-    const clearCollapseTimer = () => {
-        collapseGeneration += 1;
-        if ( collapseTimer === undefined ) { return; }
-        try {
-            win.clearTimeout?.(collapseTimer);
-        } catch {
-        }
-        collapseTimer = undefined;
-    };
-
-    const scheduleCollapse = () => {
-        clearCollapseTimer();
-        if ( typeof win.setTimeout !== 'function' ) { return; }
-        const generation = collapseGeneration;
-        collapseTimer = win.setTimeout(() => {
-            if ( generation !== collapseGeneration ) { return; }
-            collapseTimer = undefined;
-            if ( active === false || mode !== PROTECTED_MODE ) { return; }
-            compact = true;
-            overlayElement?.setAttribute?.('data-state', 'compact');
-        }, COLLAPSE_DELAY_MS);
     };
 
     const setActive = (value, options = {}) => {
@@ -536,8 +472,6 @@ const createController = env => {
             }
             const changed = active || overlayElement !== undefined;
             active = false;
-            compact = false;
-            clearCollapseTimer();
             removeElement(overlayElement);
             overlayElement = undefined;
             titleElement = undefined;
@@ -546,25 +480,14 @@ const createController = env => {
             return changed;
         }
 
-        const entering = active === false;
-        const modeChanged = mode !== requestedMode;
         if ( listening === false ) {
             win.addEventListener?.('pagehide', stop);
             listening = true;
         }
         active = true;
         mode = requestedMode;
-        if ( entering || modeChanged ) { compact = false; }
-        const { root, created } = ensureOverlay();
+        const { root } = ensureOverlay();
         if ( root === null ) { return false; }
-        if ( entering || modeChanged || (created && compact === false) ) {
-            root.setAttribute?.('data-state', 'expanded');
-            if ( mode === EXPIRED_MODE ) {
-                clearCollapseTimer();
-            } else {
-                scheduleCollapse();
-            }
-        }
         return true;
     };
 
@@ -582,7 +505,7 @@ const createController = env => {
     };
 
     return {
-        revision: 2,
+        revision: 4,
         isActive: () => active,
         getMode: () => mode,
         refresh,

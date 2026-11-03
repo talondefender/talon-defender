@@ -655,16 +655,16 @@
     "description": "Screen-reader announcement while Talon Defender accelerates a YouTube ad, not while removing it."
   },
   "youtubeAdFeedbackExpiredTitle": {
-    "message": "Talon Defender kan dit soort advertenties verkorten",
+    "message": "Talon Defender kan dit soort advertenties overslaan",
     "description": "Conditional benefit shown during a YouTube ad when protection has expired and could be reactivated."
   },
   "youtubeAdFeedbackExpiredDetail": {
-    "message": "Je bescherming is gepauzeerd. Activeer deze opnieuw om sneller verder te kijken op YouTube.",
+    "message": "Je bescherming is gepauzeerd. Activeer deze opnieuw om vervelende YouTube-advertenties over te slaan",
     "description": "Expired-protection message asking the user to reactivate protection. Ad acceleration is not running."
   },
   "youtubeAdFeedbackExpiredAria": {
-    "message": "De bescherming van Talon Defender is gepauzeerd. Activeer deze opnieuw om dit soort YouTube-advertenties te verkorten.",
-    "description": "Screen-reader announcement that protection is paused and reactivation can shorten YouTube ads."
+    "message": "Talon Defender kan dit soort advertenties overslaan. Je bescherming is gepauzeerd. Activeer deze opnieuw om vervelende YouTube-advertenties over te slaan.",
+    "description": "Screen-reader announcement that protection is paused and reactivation can skip annoying YouTube ads."
   },
   "youtubeAdFeedbackRestoreButton": {
     "message": "Talon Defender opnieuw activeren",
@@ -676,5 +676,17 @@
   },
   "uiPartial": {
     "message": "Gedeeltelijk actief"
+  },
+  "popupReviewPrompt": {
+    "message": "Beoordeel Talon Defender alstublieft"
+  },
+  "popupReviewStarAria": {
+    "message": "Geef Talon Defender {rating} van de 5 sterren"
+  },
+  "popupReviewThanks": {
+    "message": "Bedankt voor je feedback."
+  },
+  "popupReviewSupportNote": {
+    "message": "(Dit helpt onze extensie te ondersteunen)"
   }
 }

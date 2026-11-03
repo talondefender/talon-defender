@@ -655,16 +655,16 @@
     "description": "Screen-reader announcement while Talon Defender accelerates a YouTube ad, not while removing it."
   },
   "youtubeAdFeedbackExpiredTitle": {
-    "message": "Talon Defender는 이런 광고의 재생 시간을 줄일 수 있습니다",
+    "message": "Talon Defender는 이런 광고를 건너뛸 수 있습니다",
     "description": "Conditional benefit shown during a YouTube ad when protection has expired and could be reactivated."
   },
   "youtubeAdFeedbackExpiredDetail": {
-    "message": "보호가 일시 중지되었습니다. 다시 활성화하면 YouTube 동영상을 더 빨리 이어서 볼 수 있습니다.",
+    "message": "보호가 일시 중지되었습니다. 다시 활성화하여 성가신 YouTube 광고를 건너뛰세요",
     "description": "Expired-protection message asking the user to reactivate protection. Ad acceleration is not running."
   },
   "youtubeAdFeedbackExpiredAria": {
-    "message": "Talon Defender 보호가 일시 중지되었습니다. 다시 활성화하여 이런 YouTube 광고의 재생 시간을 줄이세요.",
-    "description": "Screen-reader announcement that protection is paused and reactivation can shorten YouTube ads."
+    "message": "Talon Defender는 이런 광고를 건너뛸 수 있습니다. 보호가 일시 중지되었습니다. 다시 활성화하여 성가신 YouTube 광고를 건너뛰세요.",
+    "description": "Screen-reader announcement that protection is paused and reactivation can skip annoying YouTube ads."
   },
   "youtubeAdFeedbackRestoreButton": {
     "message": "Talon Defender 다시 활성화",
@@ -676,5 +676,17 @@
   },
   "uiPartial": {
     "message": "일부 활성화"
+  },
+  "popupReviewPrompt": {
+    "message": "Talon Defender를 평가해 주세요"
+  },
+  "popupReviewStarAria": {
+    "message": "Talon Defender에 별 5개 중 {rating}개 주기"
+  },
+  "popupReviewThanks": {
+    "message": "의견을 보내 주셔서 감사합니다."
+  },
+  "popupReviewSupportNote": {
+    "message": "(확장 프로그램을 지원하는 데 도움이 됩니다)"
   }
 }

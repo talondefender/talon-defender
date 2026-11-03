@@ -39,6 +39,14 @@ const GENERATED_PACKAGE_FILES = new Set([
 
 const URL_ALLOWLIST = [
   {
+    re: /^https:\/\/chromewebstore\.google\.com\/detail\/talon-defender\/hplelboeopmfomgdkgogphhneoddgilm\/reviews$/,
+    reason: 'user-clicked Talon Chrome Store review navigation; not a fetch or executable source',
+  },
+  {
+    re: /^https:\/\/microsoftedge\.microsoft\.com\/addons\/detail\/talon-defender\/bgfniaaeknljdjaakgoikmooaohgcpfi$/,
+    reason: 'user-clicked Talon Edge Add-ons review navigation; not a fetch or executable source',
+  },
+  {
     re: /^https:\/\/talondefender\.com(?:\/|$)/,
     reason: 'owned website, legal, onboarding, and support links',
   },

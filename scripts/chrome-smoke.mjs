@@ -336,14 +336,19 @@ const runPopupSmoke = async (context, controlPage, extensionId) => {
     body: '<!doctype html><title>Local welcome navigation fixture</title>',
   }));
   const popupPage = await context.newPage();
+  await popupPage.setViewportSize({ width: 540, height: 600 });
   const pageErrors = [];
   popupPage.on('pageerror', error => pageErrors.push(String(error)));
   await popupPage.addInitScript(() => {
     window.__popupSmokeExpiredShown = false;
+    window.__popupSmokeReviewShown = false;
     new MutationObserver(() => {
       const overlay = document.getElementById('expiredOverlay');
       if (overlay && overlay.hidden === false) {
         window.__popupSmokeExpiredShown = true;
+      }
+      if (document.getElementById('reviewCard')?.hidden === false) {
+        window.__popupSmokeReviewShown = true;
       }
     }).observe(document, { subtree: true, childList: true, attributes: true });
   });
@@ -373,6 +378,15 @@ const runPopupSmoke = async (context, controlPage, extensionId) => {
         summary?.entitlementStatus?.status === 'trial' && visible;
     }, { timeoutMs: 45000 });
     const controlsReadyMs = Date.now() - startedAt;
+    const layout = await popupPage.evaluate(() => {
+      const cta = document.getElementById('subscribeNow').getBoundingClientRect();
+      return { width: document.body.getBoundingClientRect().width,
+        height: Math.max(document.body.scrollHeight, document.documentElement.scrollHeight),
+        ctaTop: cta.top, ctaBottom: cta.bottom };
+    });
+    assert(layout.width === 540 && layout.height <= 600 &&
+      layout.ctaTop >= 0 && layout.ctaBottom <= 600,
+    `popup purchase CTA requires scrolling: ${JSON.stringify(layout)}`);
     assert(await popupPage.evaluate(() => window.__popupSmokeExpiredShown) === false,
       'fresh popup displayed an expired-subscription overlay');
 
@@ -388,8 +402,64 @@ const runPopupSmoke = async (context, controlPage, extensionId) => {
     const repeatedState = await getLocalStorage(controlPage, welcomeKeys);
     assert(repeatedState.firstPopupWelcomeSeenAt === welcomeState.firstPopupWelcomeSeenAt,
       'repeated popup changed its original welcome receipt');
+    const tabsBeforeRating = context.pages().length;
+    await popupPage.locator('[data-review-rating="3"]').click();
+    assert(await popupPage.locator('#reviewThanks').isVisible(), 'popup rating did not show its receipt');
+    assert(await popupPage.locator('#reviewStars').isHidden(), 'popup rating controls did not settle');
+    assert(context.pages().length === tabsBeforeRating, 'a low popup rating opened a tab');
+    await waitFor('saved popup review response', async () =>
+      (await getLocalStorage(controlPage, ['popupReviewResponded'])).popupReviewResponded === true);
+    await popupPage.reload({ waitUntil: 'domcontentloaded' });
+    await popupPage.waitForFunction(() => document.getElementById('toggleProtection')?.disabled === false);
+    assert(await popupPage.locator('#reviewCard').isHidden(), 'review prompt returned after reopening');
+    assert(await popupPage.evaluate(() => window.__popupSmokeReviewShown) === false,
+      'review stars flashed before the saved response was read');
+    // Reset only this disposable test profile to cover the independent high-score path.
+    await controlPage.evaluate(() => chrome.storage.local.remove('popupReviewResponded'));
+    await popupPage.reload({ waitUntil: 'domcontentloaded' });
+    await popupPage.locator('#reviewStars').waitFor({state:'visible'});
+    const reviewURL = 'https://chromewebstore.google.com/detail/talon-defender/hplelboeopmfomgdkgogphhneoddgilm/reviews';
+    await popupPage.locator('[data-review-rating="4"]').click();
+    const reviewTabId = await waitFor('popup store review navigation', async () => {
+      const id = await getTabIdForUrl(controlPage, reviewURL);
+      return id >= 0 ? id : null;
+    });
+    await controlPage.evaluate(tabId => chrome.tabs.remove(tabId), reviewTabId);
+    // Each reopening gets a new document. Even an unresponsive worker panel
+    // read must not hold usable local state behind the message timeout.
+    const cachedReopenMs = [];
+    const reopen = await context.newPage();
+    try {
+      await reopen.addInitScript(() => {
+        const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+        chrome.runtime.sendMessage = (message, ...args) =>
+          message?.what === 'popupPanelData'
+            ? new Promise(() => {})
+            : send(message, ...args);
+        window.__cachedPopupReadyMs = null;
+        new MutationObserver(() => {
+          if (window.__cachedPopupReadyMs !== null) return;
+          const root = document.querySelector('.popup');
+          const toggle = document.getElementById('toggleProtection');
+          if (root?.hidden === false && toggle?.disabled === false) {
+            window.__cachedPopupReadyMs = performance.now();
+          }
+        }).observe(document, { subtree: true, childList: true, attributes: true });
+      });
+      for (let cycle = 0; cycle < 6; cycle += 1) {
+        await reopen.goto(popupURL, { waitUntil: 'domcontentloaded' });
+        await reopen.waitForFunction(() => window.__cachedPopupReadyMs !== null);
+        cachedReopenMs.push(await reopen.evaluate(() => window.__cachedPopupReadyMs));
+        assert(await reopen.locator('#reviewCard').isHidden(), 'saved high rating returned during rapid reopening');
+        await reopen.goto('about:blank');
+      }
+      assert(cachedReopenMs.every(ms => ms < 1800),
+        `cached popup waited for the 2-second panel timeout: ${cachedReopenMs.join(', ')}`);
+    } finally {
+      await reopen.close().catch(() => {});
+    }
     assert(pageErrors.length === 0, `popup page errors: ${pageErrors.join(' | ')}`);
-    return { welcomeAcknowledgedMs, controlsReadyMs };
+    return { welcomeAcknowledgedMs, controlsReadyMs, cachedReopenMs };
   } finally {
     await popupPage.close().catch(() => {});
     await context.unroute(welcomeRoute);
@@ -438,9 +508,18 @@ const runYouTubePolicySmoke = async (context, control) => {
       localStorage.setItem('yt-enforcement-fixture', 'probe');
       window.fixtureInlineValue = localStorage.getItem('yt-enforcement-fixture');
       window.fixtureDocumentId = Math.random();
-    </script><div id="movie_player" class="html5-video-player ad-showing" style="position:relative;width:640px;height:360px"><video></video></div>`,
+      window.fixturePromoClicks = 0;
+    </script><div id="movie_player" class="html5-video-player ad-showing" style="position:relative;width:640px;height:360px"><video></video><div class="ytp-ad-player-overlay-layout"><div class="ytp-ad-player-overlay-layout__player-card-container">Ad card</div><div class="ytp-ad-player-overlay-layout__ad-info-container">Ad information</div><div class="ytp-ad-player-overlay-layout__ad-disclosure-banner-container">Sponsored</div><div class="ytp-ad-player-overlay-layout__skip-or-preview-container" style="width:100px;height:40px"></div></div></div><ytd-companion-slot-renderer>Companion ad</ytd-companion-slot-renderer>`,
   });
-  await context.route(`${origin}/**`, fulfillYouTubeFixture);
+  const fulfillWithPromo = async route => {
+    // Separate a non-modal promotional renderer from ordinary popup content.
+    const response = {
+      fulfill: options => route.fulfill({...options, body: options.body +
+        '<ytd-popup-container><yt-mealbar-promo-renderer id="fixturePremiumPromo">Premium promotion<button onclick="window.fixturePromoClicks++">Promotion action</button></yt-mealbar-promo-renderer><div id="fixtureUserDialog" role="dialog"><button>Ordinary dialog action</button></div></ytd-popup-container>'}),
+    };
+    return fulfillYouTubeFixture(response);
+  };
+  await context.route(`${origin}/**`, fulfillWithPromo);
   await context.route(`${allowedOrigin}/**`, fulfillYouTubeFixture);
   const setMode = (level, hostname = 'www.youtube.com') => sendRuntimeMessage(control, {
     what: 'setFilteringMode', hostname, level,
@@ -448,6 +527,12 @@ const runYouTubePolicySmoke = async (context, control) => {
   assert(await setMode(MODE_OPTIMAL) === MODE_OPTIMAL, 'YouTube enable failed');
   assert(await setMode(MODE_NONE, 'm.youtube.com') === MODE_NONE, 'YouTube opt-out fixture failed');
   const fixture = await context.newPage();
+  const configLoadErrors = [];
+  fixture.on('console', message => {
+    if (message.type() === 'error' && /native-heuristics\.json|Unsafe attempt to load URL/.test(message.text())) {
+      configLoadErrors.push(message.text());
+    }
+  });
   const allowedFixture = await context.newPage();
   const checkNarrowFeedback = async () => {
     await fixture.evaluate(() => Object.assign(document.getElementById('movie_player').style,
@@ -491,10 +576,48 @@ const runYouTubePolicySmoke = async (context, control) => {
         getComputedStyle(overlay).pointerEvents === 'none' &&
         getComputedStyle(cta).display === 'none';
     }, feedbackCopy));
+    const nativeTabId = await getTabIdForUrl(control, fixture.url());
+    await waitFor('native heuristic config from extension background', () => control.evaluate(async tabId => {
+      const rows = await chrome.scripting.executeScript({
+        target:{tabId,frameIds:[0]},world:'ISOLATED',
+        func:async()=>{
+          if (!self.TalonNativeHeuristicsController) return false;
+          const ready = await self.TalonNativeHeuristicsReady;
+          const response = await chrome.runtime.sendMessage({what:'getPackagedNativeHeuristicsConfig'});
+          return ready?.applied === true && response?.ok === true && Array.isArray(response.config?.labelRegexes);
+        },
+      });
+      return rows[0]?.result === true;
+    },nativeTabId));
+    assert(configLoadErrors.length === 0, `native config resource errors: ${configLoadErrors.join(' | ')}`);
     await checkNarrowFeedback();
+    assert(await fixture.evaluate(() =>
+      getComputedStyle(document.getElementById('fixturePremiumPromo')).display === 'none' &&
+      document.getElementById('fixtureUserDialog').getClientRects().length > 0 &&
+      document.querySelector('#fixtureUserDialog button').getClientRects().length > 0 &&
+      window.fixturePromoClicks === 0),
+    'YouTube promotion remained visible, hid an ordinary dialog, or clicked an offer');
+    assert(await fixture.evaluate(() => [
+      '.ytp-ad-player-overlay-layout__player-card-container',
+      '.ytp-ad-player-overlay-layout__ad-info-container',
+      '.ytp-ad-player-overlay-layout__ad-disclosure-banner-container',
+      'ytd-companion-slot-renderer',
+    ].every(selector => getComputedStyle(document.querySelector(selector)).display === 'none') &&
+      getComputedStyle(document.querySelector('.ytp-ad-player-overlay-layout__skip-or-preview-container')).display !== 'none'),
+    'YouTube modern ad surfaces remained visible or the Skip container was hidden');
     await fixture.evaluate(() => {
       window.fixtureSkipCounts = { plain: 0, native: 0, empty: 0, outside: 0, navigation: 0, content: 0 };
       const player = document.getElementById('movie_player');
+      window.fixtureFeedbackElement = document.getElementById('talon-youtube-ad-feedback');
+      window.fixtureFeedbackRemovals = 0;
+      window.fixtureFeedbackObserver = new MutationObserver(records => {
+        for (const record of records) {
+          for (const node of record.removedNodes) {
+            if (node === window.fixtureFeedbackElement) { window.fixtureFeedbackRemovals++; }
+          }
+        }
+      });
+      window.fixtureFeedbackObserver.observe(player, { childList: true });
       const addControl = (parent, label, name) => {
         const button = document.createElement('button');
         button.textContent = label;
@@ -521,13 +644,19 @@ const runYouTubePolicySmoke = async (context, control) => {
       empty.style.cssText = 'width:80px;height:24px;';
       empty.addEventListener('click', () => { window.fixtureSkipCounts.empty += 1; });
       const button = document.createElement('button');
-      button.className = 'ytp-ad-skip-button';
+      button.className = 'ytp-skip-ad-button';
       button.textContent = 'Skip ads';
-      button.addEventListener('click', () => {
+      button.addEventListener('click', event => {
+        // Modern native controls reject a software-generated DOM click.
+        if (event.isTrusted === false) { return; }
         window.fixtureSkipCounts.native += 1;
+        const video = player.querySelector('video');
+        window.fixtureSkipMediaState = { rate: video.playbackRate, muted: video.muted };
         button.hidden = true;
+        // Native media switching can precede ad-class teardown.
+        setTimeout(() => player.classList.remove('ad-showing'), 800);
       });
-      player.append(empty, button);
+      player.querySelector('.ytp-ad-player-overlay-layout__skip-or-preview-container').append(empty, button);
     });
     await waitFor('YouTube native Skip after empty wrapper', () => fixture.evaluate(() =>
       window.fixtureSkipCounts.native > 0));
@@ -535,15 +664,30 @@ const runYouTubePolicySmoke = async (context, control) => {
       window.fixtureSkipCounts.empty === 0 && window.fixtureSkipCounts.outside === 0 &&
       window.fixtureSkipCounts.navigation === 0),
     'YouTube Skip activation clicked a wrapper, duplicate, or unrelated control');
+    assert(await fixture.evaluate(() => window.fixtureSkipMediaState.rate === 1 &&
+      window.fixtureSkipMediaState.muted === false),
+    'YouTube native Skip received accelerated or muted media');
+    await sleep(500);
+    assert(await fixture.evaluate(() => document.querySelector('video').playbackRate === 1 &&
+      document.querySelector('video').muted === false),
+    'YouTube reapplied ad acceleration during the asynchronous Skip transition');
+    assert(await fixture.evaluate(() => window.fixtureFeedbackRemovals === 0 &&
+      document.getElementById('talon-youtube-ad-feedback') === window.fixtureFeedbackElement &&
+      window.fixtureFeedbackElement.getClientRects().length > 0),
+    'YouTube feedback disappeared or restarted between ad acceleration and native Skip');
+    await fixture.evaluate(() => window.fixtureFeedbackObserver.disconnect());
     await fixture.evaluate(() => {
       const player = document.getElementById('movie_player');
       player.querySelector('.ytp-ad-skip-button-container').remove();
-      player.querySelector('.ytp-ad-skip-button').remove();
+      player.querySelector('.ytp-skip-ad-button').remove();
       player.classList.remove('ad-showing');
     });
     await waitFor('YouTube playback restoration after Skip fixtures', () => fixture.evaluate(() =>
       document.querySelector('video').playbackRate === 1 &&
       document.getElementById('talon-youtube-ad-feedback') === null));
+    assert(await fixture.evaluate(() =>
+      getComputedStyle(document.getElementById('fixturePremiumPromo')).display === 'none'),
+    'YouTube promotion hiding stopped when the main video resumed');
     await fixture.evaluate(() => {
       const button = document.createElement('button');
       button.textContent = 'Skip';
@@ -567,7 +711,13 @@ const runYouTubePolicySmoke = async (context, control) => {
       window.TalonYoutubePlayerGuardController?.isActive?.() === false &&
       document.querySelector('video').playbackRate === 1 &&
       document.getElementById('talon-youtube-ad-feedback') === null &&
+      document.getElementById('talon-youtube-ad-skip-style') === null &&
       document.getElementById('talon-youtube-ad-feedback-style') === null));
+    assert(await fixture.evaluate(() =>
+      document.getElementById('fixturePremiumPromo').getClientRects().length > 0 &&
+      document.getElementById('fixtureUserDialog').getClientRects().length > 0 &&
+      window.fixturePromoClicks === 0),
+    'YouTube promotion rule survived disable or interacted with the offer');
     const stopped = await fixture.evaluate(() => {
       localStorage.setItem('yt-enforcement-fixture', 'allowed');
       document.dispatchEvent(new Event('visibilitychange'));

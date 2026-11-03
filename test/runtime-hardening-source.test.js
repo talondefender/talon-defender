@@ -6,6 +6,7 @@ import { createSingleFlightRunner } from '../js/single-flight.js';
 import { computeEntitlementState } from '../js/entitlement-logic.js';
 import { INTERNAL_UNFILTERED_DOMAINS } from '../js/breakage-policy.js';
 import { isIgnorableRuntimeError } from '../js/runtime-errors.js';
+import { CHROME_REVIEW_URL, EDGE_REVIEW_URL } from '../shared/links.js';
 
 import {
   isPackagedStaticScriptletDirectiveId,
@@ -1964,16 +1965,64 @@ test('early welcome and compact popup requests remain restricted to trusted exte
   assert.equal(accepts({ what: 'setFilteringMode' }, trusted), false, 'fast reads must not enable early mutations');
 });
 
-test('popup starts cache hydration and active-tab lookup together before its panel read', async () => {
+test('popup rating stays available for deliberate feedback and routes only scores 4–5', async () => {
+  const source = await readSource('popup/popup.js');
+  const reviewSource = sourceBetween(source, 'function wirePopupReview()', 'function wireEvents()');
+  for (const edge of [false, true]) {
+    for (let score = 1; score <= 5; score++) {
+      const opened = [];
+      const writes = [];
+      const element = () => ({
+        hidden: false, handlers: {}, attributes: {}, textContent: '☆',
+        addEventListener(name, fn) { this.handlers[name] = fn; },
+        setAttribute(name, value) { this.attributes[name] = value; },
+      });
+      const buttons = Array.from({length:5}, (_, i) => ({...element(), dataset: {reviewRating:String(i+1)}}));
+      const stars = {...element(), querySelectorAll: () => buttons};
+      const thanks = {...element(), hidden:true};
+      const elements = {reviewPrompt:element(), reviewStars:stars, reviewThanks:thanks};
+      const build = new Function('document', 'navigator', 'openUrlInTab', 't', 'CHROME_REVIEW_URL', 'EDGE_REVIEW_URL', 'chrome', `
+        const POPUP_REVIEW_RESPONDED_STORAGE_KEY = 'popupReviewResponded';
+        ${reviewSource}; return wirePopupReview;
+      `);
+      const write = Promise.withResolvers();
+      build({getElementById:id=>elements[id]}, {userAgent:edge?'Edg/152.0.0.0':'Chrome/152.0.0.0'},
+        url=>opened.push(url), ()=>'Rate Talon Defender {rating} out of 5 stars', CHROME_REVIEW_URL, EDGE_REVIEW_URL,
+        {storage:{local:{set(value) { writes.push(value); return write.promise; }}}})();
+      assert.equal(stars.hidden, false);
+      assert.equal(thanks.hidden, true);
+      assert.match(buttons[score-1].attributes['aria-label'], new RegExp(`${score} out of 5`));
+      buttons[score-1].handlers.focus();
+      assert.equal(buttons.filter(b=>b.textContent==='★').length, score);
+      const response = buttons[score-1].handlers.click();
+      buttons[score-1].handlers.click();
+      assert.equal(stars.hidden, true);
+      assert.equal(thanks.hidden, false);
+      assert.equal(elements.reviewPrompt.hidden, false, 'retain the named section heading');
+      assert.deepEqual(writes, [{popupReviewResponded:true}], 'save only one responded flag, without the score');
+      assert.deepEqual(opened, [], 'finish persistence before a store tab closes the popup');
+      write.resolve();
+      await response;
+      assert.deepEqual(opened, score>=4 ? [edge?EDGE_REVIEW_URL:CHROME_REVIEW_URL] : []);
+    }
+  }
+  assert.equal(new URL(CHROME_REVIEW_URL).hostname, 'chromewebstore.google.com');
+  assert.equal(new URL(EDGE_REVIEW_URL).hostname, 'microsoftedge.microsoft.com');
+});
+
+test('popup accepts cached state before a slow panel read without serializing cache and tab lookup', async () => {
   const source = await readSource('popup/popup.js');
   const initSource = sourceBetween(source, 'async function init()', 'function wireRuntimeStateUpdates()');
   const cache = Promise.withResolvers();
   const activeTab = Promise.withResolvers();
+  const panel = Promise.withResolvers();
   const calls = [];
+  const locks = [];
   const buildInit = new Function('deps', `
     const {
       hydrateFromLocalCache, resolveActiveHost, refreshPopupPanelSnapshot,
       showInitialPopupShell, maybeOpenFirstPopupWelcome,
+      setToggleLoading,
     } = deps;
     const setDocumentLanguage = () => {};
     const localizeHtml = () => {};
@@ -1983,7 +2032,6 @@ test('popup starts cache hydration and active-tab lookup together before its pan
     let popupPanelRefreshDeadline = 0;
     const POPUP_PANEL_RETRY_WINDOW_MS = 30000;
     const clearPopupLoadingFailSafe = () => {};
-    const setToggleLoading = () => {};
     const refreshFilterCatalog = async () => {};
     ${initSource}
     return init;
@@ -1991,7 +2039,8 @@ test('popup starts cache hydration and active-tab lookup together before its pan
   const init = buildInit({
     hydrateFromLocalCache() { calls.push('cache'); return cache.promise; },
     resolveActiveHost() { calls.push('tab'); return activeTab.promise; },
-    async refreshPopupPanelSnapshot() { calls.push('panel'); },
+    refreshPopupPanelSnapshot() { calls.push('panel'); return panel.promise; },
+    setToggleLoading(loading) { locks.push(loading); },
     showInitialPopupShell() { calls.push('shell'); },
     maybeOpenFirstPopupWelcome() { calls.push('welcome'); },
   });
@@ -2005,9 +2054,63 @@ test('popup starts cache hydration and active-tab lookup together before its pan
   activeTab.resolve();
   await Promise.resolve();
   assert.equal(calls.includes('panel'), false, 'cache must settle before runtime data can supersede it');
-  cache.resolve();
+  cache.resolve(true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(locks, [false], 'cached state must unlock controls while the worker is still pending');
+  panel.resolve();
   await initialized;
   assert.equal(calls.filter(call => call === 'panel').length, 1);
+});
+
+test('popup cache hydration cannot overwrite a newer filtering or entitlement update', async () => {
+  const source = await readSource('popup/popup.js');
+  const hydrate = sourceBetween(source, 'async function hydrateFromLocalCache()', 'function createPauseSnapshotRecord(');
+  const pending = Promise.withResolvers();
+  const build = new Function('read', 'card', `
+    let filteringStateRevision = 0;
+    let entitlementStatusRevision = 0;
+    let defaultFilteringMode = 0;
+    let currentEnabledState = false;
+    let entitlementStatus = { status: 'paid' };
+    const ENTITLEMENT_LOCAL_STORAGE_KEY = 'talonEntitlement';
+    const FILTERING_MODE_STORAGE_KEY = 'filteringModeDetails';
+    const POPUP_REVIEW_RESPONDED_STORAGE_KEY = 'popupReviewResponded';
+    const POPUP_STORAGE_TIMEOUT_MS = 1000;
+    const MODE_NONE = 0;
+    const chrome = { storage: { local: { get: read } } };
+    const document = {getElementById: () => card};
+    const runWithTimeout = task => task();
+    const deriveStatusFromStoredEntitlement = value => value;
+    const deriveDefaultFilteringModeFromCache = value => value ?? null;
+    const renderToggle = () => {};
+    const applyEntitlementStatus = status => { entitlementStatus = status; };
+    ${hydrate}
+    return {
+      hydrate: hydrateFromLocalCache,
+      mutate() { filteringStateRevision++; entitlementStatusRevision++; },
+      state: () => ({defaultFilteringMode, currentEnabledState, entitlementStatus}),
+    };
+  `);
+  const harness = build(() => pending.promise);
+  const hydration = harness.hydrate();
+  harness.mutate();
+  pending.resolve({ filteringModeDetails: 2, talonEntitlement: { status: 'trial' } });
+  assert.equal(await hydration, true);
+  assert.deepEqual(harness.state(), {
+    defaultFilteringMode: 0, currentEnabledState: false, entitlementStatus: {status: 'paid'},
+  });
+  const empty = build(async () => ({}));
+  assert.equal(await empty.hydrate(), false, 'missing storage must not count as a usable cache');
+  for (const responded of [false,true]) {
+    const read = Promise.withResolvers();
+    const card = {hidden:true};
+    const reopened = build(() => read.promise, card);
+    const hydration = reopened.hydrate();
+    assert.equal(card.hidden, true, 'do not flash stars while their saved state is loading');
+    read.resolve({popupReviewResponded:responded});
+    await hydration;
+    assert.equal(card.hidden, responded, 'a saved response must hide the card on each opening');
+  }
 });
 
 test('popup loading deadline preserves the active tab and an in-flight filtering lock', async () => {
@@ -6886,6 +6989,60 @@ test('diagnostic-only community timestamps do not invalidate injectable runtime 
   const after = await harness.computeInjectableRuntimeFingerprint();
   assert.equal(after, before);
   assert.equal(readKeys.includes('communityBundleMeta'), false);
+});
+
+test('native config uses the extension message channel, deduplicates reads and retries failures', async () => {
+  const source = await readSource('js/scripting/native-heuristics.js');
+  const loader = sourceBetween(source, 'let configPromise;', 'let remoteConfigPromise;');
+  const pending = Promise.withResolvers();
+  const requests = [];
+  let response = pending.promise;
+  const runtime = {sendMessage(message) { requests.push(message); return response; }};
+  const read = new Function('runtime', `${loader}; return loadConfig;`)(runtime);
+  const first = read();
+  assert.equal(read(), first);
+  await Promise.resolve();
+  assert.deepEqual(requests, [{what:'getPackagedNativeHeuristicsConfig'}]);
+  pending.resolve({ok:false,error:'packaged_config_unavailable'});
+  await assert.rejects(first, /packaged_config_unavailable/);
+  const config = {disableHosts:[],labelRegexes:['sponsored']};
+  response = Promise.resolve({ok:true,config});
+  assert.equal(await read(), config);
+  assert.equal(await read(), config);
+  assert.equal(requests.length, 2);
+  assert.doesNotMatch(source, /\bfetch\s*\(/, 'content script must not issue a page-context fetch');
+});
+
+test('packaged native config accepts only its own extension and caches a fixed local file', async () => {
+  const source = await readSource('js/background.js');
+  const helpers = sourceBetween(source, 'const isPackagedHeuristicsConfigSender =', 'function shouldHandleMessageBeforeFullInitialization(');
+  const calls = [];
+  let fail = true;
+  const config = {disableHosts:[],minScore:4};
+  const runtime = {id:'test-extension'};
+  const normalize = value => {try {const u=new URL(value);return /^https?:$/.test(u.protocol)?u.hostname:'';}catch{return '';}};
+  const trusted = sender => sender.origin === 'chrome-extension://test-extension';
+  const harness = new Function('runtime','isTrustedExtensionSender','normalizeHttpHostname','fetch', `${helpers};return {accepts:isPackagedHeuristicsConfigSender,read:readPackagedNativeHeuristicsConfig};`)(runtime,trusted,normalize,async path=>{
+    calls.push(path);if(fail)throw Error('transient read failure');return {ok:true,json:async()=>config};
+  });
+  const web = {id:runtime.id,tab:{id:1},frameId:0,documentId:'document-1',url:'https://example.com/'};
+  assert.equal(harness.accepts(web),true);
+  assert.equal(harness.accepts({id:runtime.id,origin:'chrome-extension://test-extension'}),true);
+  for(const changed of [{id:'other-extension'},{id:''},{frameId:1},{documentId:''},{url:'file:///fixture.html'}]) {
+    assert.equal(harness.accepts({...web,...changed}),false,JSON.stringify(changed));
+  }
+  const first = harness.read();assert.equal(harness.read(),first);
+  await assert.rejects(first,/transient read failure/);
+  fail=false;
+  assert.equal(await harness.read(),config);
+  assert.equal(await harness.read(),config);
+  assert.deepEqual(calls,['/automation/native-heuristics.json','/automation/native-heuristics.json']);
+  const handler = sourceBetween(source, "case 'getPackagedNativeHeuristicsConfig':", "case 'getYoutubeFeedbackPolicy':");
+  let reads=0,reply;
+  const dispatch = new Function('request','sender','callback','isPackagedHeuristicsConfigSender','readPackagedNativeHeuristicsConfig', `switch(request.what){${handler}}`);
+  dispatch({what:'getPackagedNativeHeuristicsConfig'}, {...web,id:'other-extension'},value=>reply=value,harness.accepts,()=>{reads++;});
+  assert.deepEqual(reply,{ok:false,error:'invalid_sender'});
+  assert.equal(reads,0);
 });
 
 test('authoritative live runtime reads fail closed and expose awaited readiness', async () => {

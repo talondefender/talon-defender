@@ -655,16 +655,16 @@
     "description": "Screen-reader announcement while Talon Defender accelerates a YouTube ad, not while removing it."
   },
   "youtubeAdFeedbackExpiredTitle": {
-    "message": "Talon Defender kan förkorta sådana här annonser",
+    "message": "Talon Defender kan hoppa över sådana här annonser",
     "description": "Conditional benefit shown during a YouTube ad when protection has expired and could be reactivated."
   },
   "youtubeAdFeedbackExpiredDetail": {
-    "message": "Ditt skydd är pausat. Aktivera det igen för att snabbare återgå till dina YouTube-videor.",
+    "message": "Ditt skydd är pausat. Aktivera det igen för att hoppa över irriterande YouTube-annonser",
     "description": "Expired-protection message asking the user to reactivate protection. Ad acceleration is not running."
   },
   "youtubeAdFeedbackExpiredAria": {
-    "message": "Skyddet i Talon Defender är pausat. Aktivera det igen för att förkorta sådana här YouTube-annonser.",
-    "description": "Screen-reader announcement that protection is paused and reactivation can shorten YouTube ads."
+    "message": "Talon Defender kan hoppa över sådana här annonser. Ditt skydd är pausat. Aktivera det igen för att hoppa över irriterande YouTube-annonser.",
+    "description": "Screen-reader announcement that protection is paused and reactivation can skip annoying YouTube ads."
   },
   "youtubeAdFeedbackRestoreButton": {
     "message": "Återaktivera Talon Defender",
@@ -676,5 +676,17 @@
   },
   "uiPartial": {
     "message": "Delvis aktiv"
+  },
+  "popupReviewPrompt": {
+    "message": "Betygsätt gärna Talon Defender"
+  },
+  "popupReviewStarAria": {
+    "message": "Ge Talon Defender {rating} av 5 stjärnor"
+  },
+  "popupReviewThanks": {
+    "message": "Tack för din feedback."
+  },
+  "popupReviewSupportNote": {
+    "message": "(Det hjälper till att stödja vårt tillägg)"
   }
 }

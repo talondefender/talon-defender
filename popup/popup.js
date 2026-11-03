@@ -1,5 +1,5 @@
 import { t, pluralSuffix } from "../shared/i18n.js";
-import { SUBSCRIBE_URL, TRIAL_EXPIRED_URL, SUPPORT_URL, PRIVACY_URL, RECOVER_LICENSE_URL } from "../shared/links.js";
+import { SUBSCRIBE_URL, TRIAL_EXPIRED_URL, SUPPORT_URL, PRIVACY_URL, RECOVER_LICENSE_URL, CHROME_REVIEW_URL, EDGE_REVIEW_URL } from "../shared/links.js";
 import { ignoreRuntimeError, ignoreRuntimeLastError, isIgnorableRuntimeError } from "../js/runtime-errors.js";
 import {
   applyFilteringModeMutationWithRetry,
@@ -81,6 +81,7 @@ const GLOBAL_PAUSE_SNAPSHOT_KEY = "globalPauseFilteringModesSnapshot";
 const GLOBAL_PAUSE_SNAPSHOT_VERSION = 1;
 const ENTITLEMENT_LOCAL_STORAGE_KEY = "talonEntitlement";
 const FILTERING_MODE_STORAGE_KEY = "filteringModeDetails";
+const POPUP_REVIEW_RESPONDED_STORAGE_KEY = "popupReviewResponded";
 const PAUSED_FILTERING_MODES = {
   none: ["all-urls"],
   basic: [],
@@ -182,11 +183,18 @@ async function init() {
   showInitialPopupShell();
 
   try {
-    await Promise.allSettled([
+    const [cache] = await Promise.allSettled([
       hydrateFromLocalCache(),
       resolveActiveHost()
     ]);
     popupInitialHydrationComplete = true;
+    // Saved state is enough to accept an action: mutations still reread and
+    // validate the authoritative state in the worker. Do not hold the toggle
+    // behind a cold worker or a slow panel response on every reopen.
+    if (cache.status === "fulfilled" && cache.value === true) {
+      clearPopupLoadingFailSafe();
+      setToggleLoading(false);
+    }
     popupPanelRefreshDeadline = Date.now() + POPUP_PANEL_RETRY_WINDOW_MS;
     await refreshPopupPanelSnapshot();
   } finally {
@@ -466,23 +474,29 @@ function deriveStatusFromStoredEntitlement(stored) {
 
 async function hydrateFromLocalCache() {
   const statusRevision = entitlementStatusRevision;
+  const filteringRevision = filteringStateRevision;
   let cachedEntitlement = null;
   let cachedDefaultMode = null;
   try {
     const cached = await runWithTimeout(() => chrome.storage.local.get([
       ENTITLEMENT_LOCAL_STORAGE_KEY,
-      FILTERING_MODE_STORAGE_KEY
+      FILTERING_MODE_STORAGE_KEY,
+      POPUP_REVIEW_RESPONDED_STORAGE_KEY
     ]), {
       timeoutMs: POPUP_STORAGE_TIMEOUT_MS,
       label: "popup local cache read timeout"
     });
     cachedEntitlement = deriveStatusFromStoredEntitlement(cached?.[ENTITLEMENT_LOCAL_STORAGE_KEY]);
     cachedDefaultMode = deriveDefaultFilteringModeFromCache(cached?.[FILTERING_MODE_STORAGE_KEY]);
+    const reviewCard = document.getElementById("reviewCard");
+    if (reviewCard) {
+      reviewCard.hidden = cached?.[POPUP_REVIEW_RESPONDED_STORAGE_KEY] === true;
+    }
   } catch (_error) {
-    return;
+    return false;
   }
 
-  if (cachedDefaultMode !== null) {
+  if (cachedDefaultMode !== null && filteringRevision === filteringStateRevision) {
     defaultFilteringMode = cachedDefaultMode;
     currentEnabledState = cachedDefaultMode !== MODE_NONE;
     renderToggle(currentEnabledState);
@@ -490,6 +504,8 @@ async function hydrateFromLocalCache() {
   if (cachedEntitlement && statusRevision === entitlementStatusRevision) {
     applyEntitlementStatus(cachedEntitlement);
   }
+  return cachedDefaultMode !== null &&
+    ["paid", "trial", "expired"].includes(entitlementStatus?.status);
 }
 
 function createPauseSnapshotRecord(modes) {
@@ -666,7 +682,45 @@ function openUrlInTab(url) {
   }
 }
 
+function wirePopupReview() {
+  const prompt = document.getElementById("reviewPrompt");
+  const stars = document.getElementById("reviewStars");
+  const thanks = document.getElementById("reviewThanks");
+  if (!prompt || !stars || !thanks) { return; }
+  const buttons = Array.from(stars.querySelectorAll("[data-review-rating]"));
+  let submitted = false;
+  const highlight = rating => buttons.forEach((button, index) => {
+    button.textContent = index < rating ? "★" : "☆";
+  });
+  stars.addEventListener("pointerleave", () => highlight(0));
+  for (const button of buttons) {
+    const rating = Number(button.dataset.reviewRating);
+    button.setAttribute("aria-label", t("popupReviewStarAria").replace("{rating}", String(rating)));
+    button.addEventListener("pointerenter", () => highlight(rating));
+    button.addEventListener("focus", () => highlight(rating));
+    button.addEventListener("blur", () => highlight(0));
+    button.addEventListener("click", async () => {
+      if (submitted || !Number.isInteger(rating) || rating < 1 || rating > 5) { return; }
+      submitted = true;
+      // Keep the section's accessible heading while replacing its controls.
+      stars.hidden = true;
+      thanks.hidden = false;
+      try {
+        // Store only that a response was given, never its score. Finish this
+        // write before opening a store tab closes the popup.
+        await chrome.storage.local.set({ [POPUP_REVIEW_RESPONDED_STORAGE_KEY]: true });
+      } catch (error) {
+        console.warn("Could not remember the popup review response", error);
+      }
+      if (rating >= 4) {
+        openUrlInTab(/\bEdg\//.test(navigator.userAgent) ? EDGE_REVIEW_URL : CHROME_REVIEW_URL);
+      }
+    });
+  }
+}
+
 function wireEvents() {
+  wirePopupReview();
   bindLicenseKeyFormatter(licenseKeyEl);
   bindLicenseKeyFormatter(expiredLicenseKeyEl);
 

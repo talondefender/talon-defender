@@ -10,9 +10,9 @@ const ENGLISH_FEEDBACK_MESSAGES = {
   youtubeAdFeedbackActiveTitle: 'Talon Defender is shortening this ad',
   youtubeAdFeedbackActiveDetail: 'Getting you back to your video faster.',
   youtubeAdFeedbackActiveAria: 'Talon Defender is shortening this YouTube ad and getting you back to your video faster.',
-  youtubeAdFeedbackExpiredTitle: 'Talon Defender could shorten ads like this',
-  youtubeAdFeedbackExpiredDetail: 'Your protection is paused. Reactivate for faster YouTube viewing.',
-  youtubeAdFeedbackExpiredAria: 'Talon Defender protection is paused. Reactivate to shorten YouTube ads like this.',
+  youtubeAdFeedbackExpiredTitle: 'Talon Defender could skip ads like this',
+  youtubeAdFeedbackExpiredDetail: 'Your protection is paused. Reactivate to skip annoying YouTube ads',
+  youtubeAdFeedbackExpiredAria: 'Talon Defender could skip ads like this. Your protection is paused. Reactivate to skip annoying YouTube ads.',
   youtubeAdFeedbackRestoreButton: 'Restore Talon Defender',
   youtubeAdFeedbackRestoreAria: 'Restore Talon Defender on the pricing page',
 };
@@ -173,13 +173,13 @@ test('YouTube feedback shows a branded non-interactive message only while accele
     'chrome-extension://talon-test/icons/icon128.png'
   );
   assert.equal(title.textContent, 'Talon Defender is shortening this ad');
-  assert.equal(state.timeoutEntries.length, 1);
-  assert.equal(state.timeoutEntries[0].delay, 4000);
+  assert.equal(state.elements.some(element => element.tagName === 'BUTTON'), false,
+    'the transient ad status must not ask for a rating');
+  assert.equal(state.timeoutEntries.length, 0);
 
   assert.equal(controller.setActive(false), true);
   assert.equal(document.getElementById('talon-youtube-ad-feedback'), null);
   assert.ok(document.getElementById('talon-youtube-ad-feedback-style'));
-  assert.equal(state.timeoutEntries[0].cleared, true);
 });
 
 test('YouTube feedback renders an expired CTA with campaign tracking and mode-safe cleanup', async () => {
@@ -205,7 +205,7 @@ test('YouTube feedback renders an expired CTA with campaign tracking and mode-sa
   const cta = state.elements.find(element =>
     element.className === 'talon-youtube-ad-feedback-cta'
   );
-  assert.equal(title.textContent, 'Talon Defender could shorten ads like this');
+  assert.equal(title.textContent, 'Talon Defender could skip ads like this');
   assert.match(detail.textContent, /protection is paused/i);
   assert.equal(cta.textContent, 'Restore Talon Defender');
   assert.equal(cta.target, '_blank');
@@ -234,7 +234,7 @@ test('YouTube feedback renders an expired CTA with campaign tracking and mode-sa
   assert.equal(document.getElementById('talon-youtube-ad-feedback'), null);
 });
 
-test('YouTube feedback collapses once without duplicate overlays or timers', async () => {
+test('YouTube feedback keeps one expanded overlay without resize timers', async () => {
   const source = await readSource('js/scripting/youtube-ad-feedback.js');
   const { context, document, player, state } = createHarness();
   vm.runInNewContext(source, context);
@@ -247,15 +247,13 @@ test('YouTube feedback collapses once without duplicate overlays or timers', asy
     player.children.filter(child => child.id === 'talon-youtube-ad-feedback').length,
     1
   );
-  assert.equal(state.timeoutEntries.length, 1);
-
-  state.timeoutEntries[0].handler();
+  assert.equal(state.timeoutEntries.length, 0);
   assert.equal(
     document.getElementById('talon-youtube-ad-feedback').getAttribute('data-state'),
-    'compact'
+    'expanded'
   );
   controller.setActive(true);
-  assert.equal(state.timeoutEntries.length, 1);
+  assert.equal(state.timeoutEntries.length, 0);
 });
 
 test('YouTube feedback waits for a player and cleans every owned node on stop', async () => {
@@ -280,30 +278,24 @@ test('YouTube feedback waits for a player and cleans every owned node on stop', 
   assert.equal(state.listeners.some(entry => entry.name === 'pagehide'), false);
 });
 
-test('YouTube feedback ignores a previous ad collapse after stop or mode change', async () => {
+test('YouTube feedback keeps its expanded state after stop, restart and mode changes', async () => {
   const source = await readSource('js/scripting/youtube-ad-feedback.js');
   const { context, document, state } = createHarness();
   vm.runInNewContext(source, context);
   const controller = context.__talonYoutubeAdFeedbackCreateController(context);
 
   controller.setActive(true);
-  const previousAd = state.timeoutEntries.at(-1);
   controller.stop();
   controller.setActive(true);
-  const currentAd = state.timeoutEntries.at(-1);
-  previousAd.handler();
   assert.equal(document.getElementById('talon-youtube-ad-feedback').getAttribute('data-state'), 'expanded');
-  currentAd.handler();
-  assert.equal(document.getElementById('talon-youtube-ad-feedback').getAttribute('data-state'), 'compact');
 
   controller.setActive(false);
   controller.setActive(true);
-  const protectedAd = state.timeoutEntries.at(-1);
   controller.setActive(true, { mode: 'expired' });
-  protectedAd.handler();
   const expired = document.getElementById('talon-youtube-ad-feedback');
   assert.equal(expired.getAttribute('data-state'), 'expanded');
   assert.equal(expired.getAttribute('data-mode'), 'expired');
+  assert.equal(state.timeoutEntries.length, 0);
 });
 
 test('YouTube feedback can resume after teardown without duplicate listeners or stale modes', async () => {
@@ -320,7 +312,7 @@ test('YouTube feedback can resume after teardown without duplicate listeners or 
   assert.equal(overlay.getAttribute('data-mode'), 'protected');
   assert.equal(overlay.getAttribute('role'), 'status');
   assert.equal(state.listeners.filter(entry => entry.name === 'pagehide').length, 1);
-  assert.equal(state.timeoutEntries.filter(entry => !entry.cleared).length, 1);
+  assert.equal(state.timeoutEntries.filter(entry => !entry.cleared).length, 0);
   controller.stop({ mode: 'expired' });
   assert.equal(document.getElementById('talon-youtube-ad-feedback'), overlay);
   assert.ok(document.getElementById('talon-youtube-ad-feedback-style'));
@@ -430,6 +422,13 @@ test('every packaged locale supplies complete YouTube feedback copy and Norwegia
       assert.notEqual(message, key, `${locale}: untranslated message key`);
       assert.doesNotMatch(message, /\uFFFD|__MSG_/, `${locale}: malformed ${key}`);
       feedback[key] = message;
+    }
+    for (const key of ['ReviewPrompt', 'ReviewStarAria', 'ReviewThanks']) {
+      const message = messages[`popup${key}`]?.message;
+      assert.ok(typeof message === 'string' && message.trim(), `${locale}: missing review ${key}`);
+      if (key === 'ReviewStarAria') {
+        assert.equal(message.split('{rating}').length, 2, `${locale}: rating placeholder`);
+      }
     }
     catalogs.set(locale, feedback);
   }

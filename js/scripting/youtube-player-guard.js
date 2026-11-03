@@ -13,6 +13,8 @@ if ( global.TalonYoutubePlayerGuardController ) {
 }
 
 const YOUTUBE_HOST_RE = /(^|\.)youtube(?:-nocookie)?\.com$/i;
+const SKIP_REQUEST_EVENT = 'talon-youtube-native-skip';
+const NATIVE_SKIP_SELECTOR = '.ytp-skip-ad-button,.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-ad-skip-button-slot';
 const PLAYER_RESPONSE_URL_RE =
     /(?:\/youtubei\/v1\/player\b|\/player(?:\?|$)|\/watch\?|\/get_watch\?|\/playlist\?list=)/i;
 const DRM_LICENSE_RE = /get_drm_license/i;
@@ -77,6 +79,7 @@ const createController = env => {
         Function.prototype.toString;
     const nativeAppendChild = win.Node?.prototype?.appendChild;
     let installed = false;
+    const skipCallbacks = new WeakMap();
     const ownedListeners = [];
     let ownedHooks = [];
     const listen = (target, type, handler) => {
@@ -88,7 +91,83 @@ const createController = env => {
         [ win.Storage?.prototype, 'setItem' ],
         [ win.Storage?.prototype, 'key' ],
         [ win.Promise?.prototype, 'then' ],
+        [ win.EventTarget?.prototype, 'addEventListener' ],
+        [ win.EventTarget?.prototype, 'removeEventListener' ],
     ].filter(([target]) => target);
+
+    const activateSkipControl = request => {
+        if ( !installed ) { return false; }
+        const button = request?.target;
+        try {
+            if ( !button?.matches?.(NATIVE_SKIP_SELECTOR) || button.isConnected === false ||
+                button.disabled || button.hidden || button.getAttribute?.('aria-disabled') === 'true' ) { return false; }
+            const player = button.closest?.('.html5-video-player,#movie_player');
+            if ( player?.classList?.contains('ad-showing') !== true ) { return false; }
+            const style = win.getComputedStyle?.(button);
+            if ( style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) ) { return false; }
+            const rects = button.getClientRects?.();
+            if ( rects && rects.length === 0 ) { return false; }
+            const callbacks = (skipCallbacks.get(button) || []).filter(entry => !entry.signal?.aborted);
+            if ( callbacks.length === 0 || typeof win.MouseEvent !== 'function' ) { return false; }
+            const rect = button.getBoundingClientRect?.();
+            const event = new win.MouseEvent('click', { bubbles: true, cancelable: true, composed: true,
+                view: win, button: 0, detail: 1,
+                clientX: rect ? rect.x + rect.width / 2 : 0,
+                clientY: rect ? rect.y + rect.height / 2 : 0 });
+            // Invoke the page's native Skip callback, rather than claiming that
+            // a software DOM click is trusted browser input. The callback-only
+            // context omits that browser-input flag; genuine DOM events and all
+            // ordinary page listeners remain untouched.
+            const context = new Proxy(event, { get(target, key) {
+                if ( key === 'isTrusted' ) { return undefined; }
+                if ( key === 'target' || key === 'currentTarget' ) { return button; }
+                if ( key === 'composedPath' ) { return () => request.composedPath?.() || [button, player]; }
+                const value = Reflect.get(target, key, target);
+                return typeof value === 'function' ? value.bind(target) : value;
+            } });
+            let invoked = false;
+            for ( const { callback } of callbacks.slice(0, 8) ) {
+                try {
+                    if ( typeof callback === 'function' ) { callback.call(button, context); }
+                    else { callback.handleEvent(context); }
+                    invoked = true;
+                } catch { }
+            }
+            if ( invoked ) { request.preventDefault?.(); }
+            return invoked;
+        } catch { }
+        return false;
+    };
+
+    const installSkipControlBridge = () => {
+        const proto = win.EventTarget?.prototype;
+        if ( !proto ) { return; }
+        for ( const method of ['addEventListener', 'removeEventListener'] ) {
+            const native = proto[method];
+            if ( typeof native !== 'function' ) { continue; }
+            proto[method] = new Proxy(native, { apply(target, thisArg, args) {
+                const result = Reflect.apply(target, thisArg, args);
+                if ( !installed || args[0] !== 'click' ) { return result; }
+                try {
+                    if ( thisArg.matches?.(NATIVE_SKIP_SELECTOR) !== true ) { return result; }
+                    const callback = args[1];
+                    const options = args[2];
+                    const capture = options === true || options?.capture === true;
+                    let entries = skipCallbacks.get(thisArg) || [];
+                    if ( method === 'removeEventListener' ) {
+                        entries = entries.filter(entry => entry.callback !== callback || entry.capture !== capture);
+                    } else if ( options?.once !== true &&
+                        (typeof callback === 'function' || typeof callback?.handleEvent === 'function') &&
+                        entries.length < 8 && !entries.some(entry => entry.callback === callback && entry.capture === capture) ) {
+                        entries.push({ callback, capture, signal: options?.signal });
+                    }
+                    skipCallbacks.set(thisArg, entries);
+                } catch { }
+                return result;
+            } });
+        }
+        listen(doc, SKIP_REQUEST_EVENT, activateSkipControl);
+    };
 
     let lastHref = String(win.location?.href || '');
     let ssapRanges = [];
@@ -1151,6 +1230,7 @@ const createController = env => {
             target, key, before: Object.getOwnPropertyDescriptor(target, key),
         }));
         installed = true;
+        installSkipControlBridge();
         installStorageResetLiteGuard();
         cleanupSuspiciousWebStorage();
         // YouTube now treats player-response ad metadata pruning as an
@@ -1168,6 +1248,7 @@ const createController = env => {
         revision: 2,
         stop,
         isActive: () => installed,
+        activateSkipControl,
         correctSsapLoop,
         getLatestSsapRange,
         getAbnormalityGuardStats: () => ({

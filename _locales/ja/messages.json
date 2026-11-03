@@ -655,16 +655,16 @@
     "description": "Screen-reader announcement while Talon Defender accelerates a YouTube ad, not while removing it."
   },
   "youtubeAdFeedbackExpiredTitle": {
-    "message": "Talon Defender なら、このような広告を短縮できます",
+    "message": "Talon Defender なら、このような広告をスキップできます",
     "description": "Conditional benefit shown during a YouTube ad when protection has expired and could be reactivated."
   },
   "youtubeAdFeedbackExpiredDetail": {
-    "message": "保護が一時停止しています。再度有効にすると、YouTube 動画の続きにより早く戻れます。",
+    "message": "保護が一時停止しています。再度有効にして、煩わしい YouTube 広告をスキップしましょう。",
     "description": "Expired-protection message asking the user to reactivate protection. Ad acceleration is not running."
   },
   "youtubeAdFeedbackExpiredAria": {
-    "message": "Talon Defender の保護が一時停止しています。再度有効にすると、このような YouTube 広告を短縮できます。",
-    "description": "Screen-reader announcement that protection is paused and reactivation can shorten YouTube ads."
+    "message": "Talon Defender なら、このような広告をスキップできます。 保護が一時停止しています。再度有効にして、煩わしい YouTube 広告をスキップしましょう。",
+    "description": "Screen-reader announcement that protection is paused and reactivation can skip annoying YouTube ads."
   },
   "youtubeAdFeedbackRestoreButton": {
     "message": "Talon Defender を再度有効にする",
@@ -676,5 +676,17 @@
   },
   "uiPartial": {
     "message": "一部有効"
+  },
+  "popupReviewPrompt": {
+    "message": "Talon Defenderの評価をお願いします"
+  },
+  "popupReviewStarAria": {
+    "message": "Talon Defenderを5つ星中{rating}つ星で評価"
+  },
+  "popupReviewThanks": {
+    "message": "フィードバックありがとうございます。"
+  },
+  "popupReviewSupportNote": {
+    "message": "(拡張機能のサポートにつながります)"
   }
 }

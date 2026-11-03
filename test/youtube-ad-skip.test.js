@@ -238,18 +238,23 @@ function createHarness() {
   return { context, interruptionToast, state, video, playerElement, shortPlayerSkipButton };
 }
 
-test('YouTube ad skip clicks native skip controls and speeds visible ads without seeking', async () => {
+test('YouTube ad skip speeds ads then restores playback before native Skip without seeking', async () => {
   const source = await readSource('js/scripting/youtube-ad-skip.js');
   const { context, state, video } = createHarness();
+  state.skipShowing = false;
   vm.runInNewContext(source, context);
 
   const controller = context.__talonYoutubeAdSkipCreateController(context);
   assert.equal(controller.tick(), true);
+  assert.equal(video.muted, true);
+  assert.equal(video.playbackRate, 16);
+  state.skipShowing = true;
+  controller.tick();
   assert.equal(state.skipClicks, 1);
   assert.equal(state.skipEvents.includes('click'), true);
   assert.equal(state.skipFocuses, 1);
-  assert.equal(video.muted, true);
-  assert.equal(video.playbackRate, 16);
+  assert.equal(video.muted, false);
+  assert.equal(video.playbackRate, 1);
   assert.equal(video.currentTime, 2);
   assert.equal(state.styles.length, 1);
   assert.equal(state.styles[0].id, 'talon-youtube-ad-skip-style');
@@ -265,16 +270,18 @@ test('YouTube ad skip recognizes visible ad indicators when ad-showing class is 
   const source = await readSource('js/scripting/youtube-ad-skip.js');
   const { context, state, video } = createHarness();
   state.playerClassShowing = false;
+  state.skipShowing = false;
+  state.fallbackSkipShowing = true;
   video.paused = true;
   vm.runInNewContext(source, context);
 
   const controller = context.__talonYoutubeAdSkipCreateController(context);
   assert.equal(controller.tick(), true);
   assert.equal(state.skipClicks, 1);
-  assert.equal(video.muted, true);
-  assert.equal(video.playbackRate, 16);
-  assert.equal(video.paused, false);
-  assert.equal(video.playCalls, 1);
+  assert.equal(video.muted, false);
+  assert.equal(video.playbackRate, 1);
+  assert.equal(video.paused, true);
+  assert.equal(video.playCalls, 0);
 });
 
 test('Skip that immediately resumes content does not accelerate content or show stale feedback', async () => {
@@ -325,8 +332,146 @@ test('YouTube ad skip accepts labeled fallback skip controls', async () => {
   assert.equal(controller.tick(), true);
   assert.equal(state.skipClicks, 1);
   assert.equal(state.skipEvents.includes('click'), true);
-  assert.equal(video.muted, true);
+  assert.equal(video.muted, false);
+  assert.equal(video.playbackRate, 1);
+});
+
+test('Skip hands normal media state to the native handler and tolerates delayed ad UI teardown', async () => {
+  const source = await readSource('js/scripting/youtube-ad-skip.js');
+  const { context, state, video } = createHarness();
+  let now = 10000;
+  context.Date = { now: () => now };
+  state.skipShowing = false;
+  video.playbackRate = 1.5;
+  vm.runInNewContext(source, context);
+  const controller = context.__talonYoutubeAdSkipCreateController(context);
+  controller.tick();
   assert.equal(video.playbackRate, 16);
+  let clicks = 0;
+  const skip = createControl({ className: 'ytp-ad-skip-button', onClick() {
+    clicks++;
+    assert.equal(video.playbackRate, 1.5, 'native Skip must see the user rate');
+    assert.equal(video.muted, false, 'native Skip must see the user mute state');
+    skip.hidden = true;
+    video.paused = true; // Native player is switching from ad to content.
+  } });
+  state.skipCandidates = [skip];
+  controller.tick();
+  now += 500;
+  controller.tick();
+  assert.equal(clicks, 1);
+  assert.equal(video.playbackRate, 1.5);
+  assert.equal(video.muted, false);
+  assert.equal(video.playCalls, 0, 'do not issue play while the native transition is pending');
+  state.adShowing = false;
+  state.skipCandidates = [];
+  now += 300;
+  controller.tick();
+  assert.equal(video.playbackRate, 1.5);
+  assert.equal(video.currentTime, 2);
+  // The next genuine ad is handled immediately after content has returned.
+  state.adShowing = true;
+  controller.tick();
+  assert.equal(video.playbackRate, 16);
+  controller.stop();
+  assert.equal(video.playbackRate, 1.5);
+});
+
+test('An ineffective Skip gets bounded retries and cannot permanently suspend ad handling', async () => {
+  const source = await readSource('js/scripting/youtube-ad-skip.js');
+  const { context, state, video } = createHarness();
+  let now = 10000;
+  context.Date = { now: () => now };
+  vm.runInNewContext(source, context);
+  const controller = context.__talonYoutubeAdSkipCreateController(context);
+  controller.tick();
+  now += 999;
+  controller.tick();
+  assert.equal(state.skipClicks, 1);
+  now += 1;
+  controller.tick();
+  assert.equal(state.skipClicks, 1);
+  assert.equal(video.playbackRate, 16, 'a visible no-op button must not starve acceleration');
+  now += 500;
+  controller.tick();
+  assert.equal(state.skipClicks, 2);
+  state.skipShowing = false;
+  now += 1000;
+  controller.tick();
+  assert.equal(video.playbackRate, 16);
+  assert.equal(video.muted, true);
+  controller.stop();
+  assert.equal(video.playbackRate, 1);
+});
+
+test('Feedback stays active through acceleration, Skip handoffs and the next ad until content returns', async () => {
+  const source = await readSource('js/scripting/youtube-ad-skip.js');
+  const { context, state, video } = createHarness();
+  let now = 10000;
+  const feedback = [];
+  context.Date = { now: () => now };
+  context.TalonYoutubeAdFeedbackController = {
+    setActive(value) { feedback.push(value); },
+    stop() { feedback.push(false); },
+  };
+  state.skipShowing = false;
+  vm.runInNewContext(source, context);
+  const controller = context.__talonYoutubeAdSkipCreateController(context);
+  controller.tick();
+  assert.equal(video.playbackRate, 16);
+  for (let ad = 0; ad < 2; ad++) {
+    let clicks = 0;
+    const button = createControl({ className: 'ytp-ad-skip-button', onClick() {
+      clicks++;
+      button.hidden = true;
+    } });
+    state.skipCandidates = [button];
+    controller.tick();
+    assert.equal(clicks, 1);
+    assert.equal(video.playbackRate, 1, 'native Skip still receives restored media');
+    now += 500;
+    controller.tick();
+    assert.equal(video.playbackRate, 1, 'native handoff remains protected');
+    now += 500;
+    controller.tick();
+    assert.equal(video.playbackRate, 16, 'next ad or no-op recovery resumes acceleration');
+  }
+  assert.ok(feedback.length > 4);
+  assert.equal(feedback.every(Boolean), true, 'no false/true cycles while ads remain');
+  state.adShowing = false;
+  state.skipCandidates = [];
+  controller.tick();
+  assert.equal(feedback.at(-1), false, 'remove feedback when content returns');
+  assert.equal(video.playbackRate, 1);
+  controller.stop();
+  assert.equal(feedback.at(-1), false);
+});
+
+test('Skip requests the native page callback once and does not also send a rejected DOM click', async () => {
+  const source=await readSource('js/scripting/youtube-ad-skip.js');
+  const {context,state,video}=createHarness();
+  state.skipShowing=false;
+  context.CustomEvent=class { constructor(type) { this.type=type; } };
+  vm.runInNewContext(source,context);
+  const controller=context.__talonYoutubeAdSkipCreateController(context);
+  controller.tick();
+  assert.equal(video.playbackRate,16);
+  let requests=0;
+  const button=createControl({className:'ytp-skip-ad-button'});
+  button.dispatchEvent=event=> {
+    assert.equal(event.type,'talon-youtube-native-skip');
+    assert.equal(video.playbackRate,1);
+    requests++;
+    state.adShowing=false;
+    state.skipCandidates=[];
+    return false;
+  };
+  state.skipCandidates=[button];
+  controller.tick();
+  assert.equal(requests,1);
+  assert.equal(state.skipClicks,0);
+  assert.equal(state.skipEvents.length,0);
+  assert.equal(video.playbackRate,1);
 });
 
 test('YouTube ad skip ignores plain Skip controls without an ad-specific label or class', async () => {

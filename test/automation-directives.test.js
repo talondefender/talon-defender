@@ -1603,6 +1603,9 @@ const createContentScriptHarness = ({
     getURL: input => input,
     sendMessage: async message => {
       messages.push(structuredClone(message));
+      if (message.what === 'getPackagedNativeHeuristicsConfig') {
+        return {ok:true,config:structuredClone(fetchJson)};
+      }
       return {};
     },
   };

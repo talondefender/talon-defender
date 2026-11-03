@@ -5,6 +5,11 @@
   <meta charset="UTF-8" />
   <title data-i18n="extensionName">Talon Defender</title>
   <link rel="stylesheet" href="popup.css" />
+  <link rel="modulepreload" href="popup.js" />
+  <link rel="modulepreload" href="../shared/i18n.js" />
+  <link rel="modulepreload" href="../shared/links.js" />
+  <link rel="modulepreload" href="../js/runtime-errors.js" />
+  <link rel="modulepreload" href="../options/ruleset-toggle-state.js" />
 </head>
 
 <body>
@@ -32,6 +37,48 @@
         </button>
       </div>
     </header>
+
+    <section id="subscriptionCard" class="subscription-section" hidden>
+      <div class="subscription-zone status-zone">
+        <h2 class="section-title golden" data-i18n="subscriptionSectionTitle">_</h2>
+        <div id="subscriptionStatus" class="status-note bold-status" data-i18n="subscriptionStatusLoading">_</div>
+        <div id="subscriptionSubstatus" class="status-note muted text-center" data-i18n="subscriptionTrialAfterNote" hidden>_</div>
+      </div>
+
+      <div class="subscription-zone action-zone">
+        <button id="subscribeNow" class="pill-button golden-hero" type="button" data-i18n="licenseGetButton">_</button>
+
+        <div class="subscription-cta-note" aria-live="polite">
+          <svg class="guarantee-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            <path d="M9 12l2 2 4-4"></path>
+          </svg>
+          <span data-i18n="popupSubscriptionGuarantee">_</span>
+        </div>
+
+        <button id="showLicenseEntry" class="pill-button outline license-entry-action" type="button" data-i18n="licenseAlreadyPurchasedLink">_</button>
+
+        <form id="licenseForm" class="license-form-row golden-style" hidden>
+          <label for="licenseKey" class="sr-only" data-i18n="licenseKeyLabel">_</label>
+          <input id="licenseKey" class="license-input golden" type="text" autocomplete="off" autocapitalize="characters"
+            spellcheck="false" inputmode="text" placeholder="licenseKeyPlaceholder" data-i18n="licenseKeyPlaceholder" />
+          <button id="licenseActivate" class="pill-button outline" type="submit"
+            data-i18n="licenseActivateButton">_</button>
+        </form>
+        <div id="licenseStatus" class="status-note muted text-center" aria-live="polite" hidden></div>
+        <button id="useThisDeviceButton" class="pill-button outline" type="button" hidden
+          data-i18n="licenseUseThisDeviceButton">_</button>
+
+        <button id="recoverLicenseLink" class="secondary-link" type="button" data-i18n="licenseRecoverLink">_</button>
+
+        <div class="subscription-actions-row">
+          <button id="supportLink" class="secondary-link" type="button" data-i18n="licenseHelpButton">_</button>
+        </div>
+        <div class="subscription-footnote">
+          <span data-i18n="popupSubscriptionDeviceLimit">_</span>
+        </div>
+      </div>
+    </section>
 
     <section class="card stats-card shield-style">
       <div class="shield-container">
@@ -84,45 +131,19 @@
       </div>
     </section>
 
-    <section id="subscriptionCard" class="subscription-section" hidden>
-      <div class="subscription-zone status-zone">
-        <h2 class="section-title golden" data-i18n="subscriptionSectionTitle">_</h2>
-        <div id="subscriptionStatus" class="status-note bold-status" data-i18n="subscriptionStatusLoading">_</div>
-        <div id="subscriptionSubstatus" class="status-note muted text-center" data-i18n="subscriptionTrialAfterNote" hidden>_</div>
+    <section id="reviewCard" class="card review-card" aria-labelledby="reviewPrompt" hidden>
+      <div class="review-copy">
+        <h2 id="reviewPrompt" class="review-prompt" data-i18n="popupReviewPrompt">_</h2>
+        <div id="reviewSupportNote" class="status-note muted" data-i18n="popupReviewSupportNote">_</div>
       </div>
-
-      <div class="subscription-zone action-zone">
-        <button id="subscribeNow" class="pill-button golden-hero" type="button" data-i18n="licenseGetButton">_</button>
-
-        <div class="subscription-cta-note" aria-live="polite">
-          <svg class="guarantee-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-            <path d="M9 12l2 2 4-4"></path>
-          </svg>
-          <span data-i18n="popupSubscriptionGuarantee">_</span>
-        </div>
-
-        <button id="showLicenseEntry" class="secondary-link" type="button" data-i18n="licenseAlreadyPurchasedLink">_</button>
-        <button id="recoverLicenseLink" class="secondary-link" type="button" data-i18n="licenseRecoverLink">_</button>
-
-        <form id="licenseForm" class="license-form-row golden-style" hidden>
-          <label for="licenseKey" class="sr-only" data-i18n="licenseKeyLabel">_</label>
-          <input id="licenseKey" class="license-input golden" type="text" autocomplete="off" autocapitalize="characters"
-            spellcheck="false" inputmode="text" placeholder="licenseKeyPlaceholder" data-i18n="licenseKeyPlaceholder" />
-          <button id="licenseActivate" class="pill-button outline" type="submit"
-            data-i18n="licenseActivateButton">_</button>
-        </form>
-        <div id="licenseStatus" class="status-note muted text-center" aria-live="polite" hidden></div>
-        <button id="useThisDeviceButton" class="pill-button outline" type="button" hidden
-          data-i18n="licenseUseThisDeviceButton">_</button>
-
-        <div class="subscription-actions-row">
-          <button id="supportLink" class="pill-button outline" type="button" data-i18n="licenseHelpButton">_</button>
-        </div>
-        <div class="subscription-footnote">
-          <span data-i18n="popupSubscriptionDeviceLimit">_</span>
-        </div>
+      <div id="reviewStars" class="review-stars" role="group" data-i18n-aria-label="popupReviewPrompt" aria-describedby="reviewSupportNote">
+        <button type="button" class="review-star" data-review-rating="1">☆</button>
+        <button type="button" class="review-star" data-review-rating="2">☆</button>
+        <button type="button" class="review-star" data-review-rating="3">☆</button>
+        <button type="button" class="review-star" data-review-rating="4">☆</button>
+        <button type="button" class="review-star" data-review-rating="5">☆</button>
       </div>
+      <div id="reviewThanks" class="review-thanks" role="status" data-i18n="popupReviewThanks" hidden>_</div>
     </section>
 
   </div>
