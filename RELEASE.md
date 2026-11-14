@@ -1,5 +1,17 @@
 # Release
 
+Local 0.1.20 parity candidate: pinned upstream Chromium `2026.1110.1816`,
+commit `04195b17ed1b505395ac739a12cd09f65d5cdc0d`. Archive the previous
+handoff before importing. Validate shared begin/list/end order in both worlds,
+removal of obsolete per-list registrations, retained YouTube exclusions, and
+separate French Stream guard registration. Both packaged worlds must retain
+their `scriptlet-begin.js` and `scriptlet-end.js` files after pruning. Validate
+custom-filter recompilation, trust rejection, backup round trips, permission
+grant races, managed exclusions, scoped cosmetic restoration and the current
+Chrome/Edge plus minimum-Chromium smoke lanes. The source/package version is
+0.1.20; no store submission, public source push or watcher-baseline advance is
+implied by these local checks.
+
 Native-config loading candidate: content scripts request the fixed packaged JSON
 from a startup-safe background reader. Validate sender rejection, single-flight
 and retry behavior, real isolated-world controller readiness on YouTube, and no

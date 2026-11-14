@@ -275,6 +275,15 @@ export const applyManagedFilteringModes = (
                 effectiveModes.none.delete(hn.slice(1));
             } else {
                 applyFilteringMode(effectiveModes, hn, MODE_NONE);
+                // Managed exclusions must also prune explicit descendant
+                // grants when a user parent exclusion already existed. Keep
+                // raw user choices intact so removing policy restores them.
+                effectiveModes.none.add(hn);
+                for ( const set of [ effectiveModes.basic,
+                    effectiveModes.optimal, effectiveModes.complete ] ) {
+                    set.delete(hn);
+                    pruneDescendantHostnamesFromSet(hn, set);
+                }
             }
         }
     }

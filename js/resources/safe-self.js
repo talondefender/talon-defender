@@ -35,8 +35,7 @@ export function safeSelf() {
     const safe = {
         'Array_from': Array.from,
         'Error': self.Error,
-        'Function_toStringFn': self.Function.prototype.toString,
-        'Function_toString': thisArg => safe.Function_toStringFn.call(thisArg),
+        'Function_toString': Function.prototype.call.bind(self.Function.prototype.toString),
         'Math_floor': Math.floor,
         'Math_max': Math.max,
         'Math_min': Math.min,
@@ -49,21 +48,23 @@ export function safeSelf() {
         'Object_hasOwn': Object.hasOwn.bind(Object),
         'Object_toString': Object.prototype.toString,
         'RegExp': self.RegExp,
-        'RegExp_test': self.RegExp.prototype.test,
+        'RegExp_test': Function.prototype.call.bind(self.RegExp.prototype.test),
         'RegExp_exec': self.RegExp.prototype.exec,
         'Request_clone': self.Request.prototype.clone,
         'String': self.String,
         'String_fromCharCode': String.fromCharCode,
+        'String_includes': String.prototype.includes,
         'String_split': String.prototype.split,
         'XMLHttpRequest': self.XMLHttpRequest,
+        'XMLHttpRequest_open': Function.prototype.call.bind(self.XMLHttpRequest.prototype.open),
+        'XMLHttpRequest_send': Function.prototype.call.bind(self.XMLHttpRequest.prototype.send),
         'addEventListener': self.EventTarget.prototype.addEventListener,
         'removeEventListener': self.EventTarget.prototype.removeEventListener,
         'fetch': self.fetch,
         'JSON': self.JSON,
-        'JSON_parseFn': self.JSON.parse,
-        'JSON_stringifyFn': self.JSON.stringify,
-        'JSON_parse': (...args) => safe.JSON_parseFn.call(safe.JSON, ...args),
-        'JSON_stringify': (...args) => safe.JSON_stringifyFn.call(safe.JSON, ...args),
+        'JSON_parse': Function.prototype.call.bind(self.JSON.parse, self.JSON),
+        'JSON_stringify': Function.prototype.call.bind(self.JSON.stringify, self.JSON),
+        'structuredClone': Function.prototype.call.bind(self.structuredClone, self),
         'log': console.log.bind(console),
         // Properties
         logLevel: 0,
@@ -116,9 +117,9 @@ export function safeSelf() {
         testPattern(details, haystack) {
             if ( details.matchAll ) { return true; }
             if ( details.re ) {
-                return this.RegExp_test.call(details.re, haystack) === details.expect;
+                return this.RegExp_test(details.re, haystack) === details.expect;
             }
-            return haystack.includes(details.pattern) === details.expect;
+            return this.String_includes.call(`${haystack}`, details.pattern) === details.expect;
         },
         patternToRegex(pattern, flags = undefined, verbatim = false) {
             if ( pattern === '' ) { return /^/; }

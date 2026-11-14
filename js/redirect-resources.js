@@ -74,6 +74,11 @@ export default new Map([
     [ 'fingerprint3.js', {
         data: 'text',
     } ],
+    [ 'freestar_pubfig.js', {
+        data: 'text',
+        // Descriptor only in this pinned upstream build; no packaged target.
+        packaged: false,
+    } ],
     [ 'google-analytics_analytics.js', {
         alias: [
             'google-analytics.com/analytics.js',
@@ -95,6 +100,12 @@ export default new Map([
     [ 'google-ima.js', {
         alias: 'google-ima3',                       /* adguard compatibility */
         data: 'text',
+    } ],
+    [ 'google-ima-dai.js', {
+        alias: 'google-ima3-dai',                   /* adguard compatibility */
+        data: 'text',
+        requiresTrust: true,
+        packaged: false,
     } ],
     [ 'googlesyndication_adsbygoogle.js', {
         alias: [

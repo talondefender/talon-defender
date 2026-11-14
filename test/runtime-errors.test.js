@@ -6,6 +6,7 @@ import {
   ignoreRuntimeLastError,
   ignoreRuntimeError,
   isIgnorableRuntimeError,
+  isExpectedStyleInjectionError,
   runtimeLastErrorFrom,
 } from '../js/runtime-errors.js';
 
@@ -30,6 +31,17 @@ test('isIgnorableRuntimeError recognizes the approved benign runtime errors', ()
 
 test('isIgnorableRuntimeError does not classify unrelated failures as benign', () => {
   assert.equal(isIgnorableRuntimeError(new Error('Permission denied')), false);
+});
+
+test('style injection treats removed documents as expected without hiding permission failures', () => {
+  for (const message of ['No frame with id 12 in tab 3.', 'No document with id abc in tab 3.',
+    'Frame with ID 12 was removed.']) {
+    assert.equal(isExpectedStyleInjectionError(new Error(message)), true);
+    assert.equal(isIgnorableRuntimeError(new Error(message)), false);
+  }
+  for (const message of ['Permission denied', 'content CSS insertion timed out', 'subscription_required']) {
+    assert.equal(isExpectedStyleInjectionError(new Error(message)), false);
+  }
 });
 
 test('ignoreRuntimeError swallows benign failures and rethrows unexpected ones', () => {

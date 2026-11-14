@@ -7,6 +7,7 @@ import { computeEntitlementState } from '../js/entitlement-logic.js';
 import { INTERNAL_UNFILTERED_DOMAINS } from '../js/breakage-policy.js';
 import { isIgnorableRuntimeError } from '../js/runtime-errors.js';
 import { CHROME_REVIEW_URL, EDGE_REVIEW_URL } from '../shared/links.js';
+import { JSONPath } from '../js/jsonpath.js';
 
 import {
   isPackagedStaticScriptletDirectiveId,
@@ -40,6 +41,163 @@ const pathExists = async relativePath => {
   }
 };
 
+test('shared scriptlet registration orders frameworks and retains Talon host exclusions', async () => {
+  const source = await readSource('js/scripting-manager.js');
+  const register = source.slice(source.indexOf('function registerScriptlet(context'),
+    source.indexOf('function registerRemoteScriptlets(context'));
+  const matchesFromHostnames = hostnames => [...hostnames].map(hostname =>
+    hostname === '*' || hostname === 'all-urls' ? '<all_urls>' : `*://*.${hostname}/*`);
+  const context = vm.createContext({
+    Object, Set, Map,
+    getScriptletExcludedHostnames: () => ['youtube.com', 'youtube-nocookie.com'],
+    normalizeMatches(matches) {
+      if (matches.includes('<all_urls>')) matches.splice(0, matches.length, '<all_urls>');
+    },
+    ut: {
+      matchesFromHostnames,
+      intersectHostnameIters: (a, b) => a.filter(h => b.includes(h)),
+      subtractHostnameIters: (a, b) => a.filter(h => !b.includes(h)),
+    },
+    reconcileContentScript: (state, directive) => state.toAdd.push(directive),
+  });
+  vm.runInContext(register, context);
+  const details = new Map([
+    ['ublock-filters', { MAIN: ['*'], ISOLATED: ['*'] }],
+    ['easyprivacy', { MAIN: ['*'] }],
+    ['talon-site-fixes', { MAIN: ['example.com'] }],
+  ]);
+  const state = {
+    filteringModeDetails: { none: new Set(['allowed.example']), basic: new Set(),
+      optimal: new Set(['all-urls']), complete: new Set() },
+    rulesetsDetails: [...details.keys()].map(id => ({ id })), toAdd: [],
+  };
+  context.registerScriptlet(state, details);
+  assert.equal(state.toAdd.length, 2);
+  for (const directive of state.toAdd) {
+    const world = directive.world.toLowerCase();
+    assert.equal(directive.js[0], `/rulesets/scripting/scriptlet/${world}/scriptlet-begin.js`);
+    assert.equal(directive.js.at(-1), `/rulesets/scripting/scriptlet/${world}/scriptlet-end.js`);
+    assert.equal(directive.js.some(path => path.endsWith('/talon-site-fixes.js')), false);
+    assert.deepEqual([...directive.matches], ['<all_urls>']);
+    assert.equal(directive.excludeMatches.includes('*://*.youtube.com/*'), true);
+    assert.equal(directive.excludeMatches.includes('*://*.youtube-nocookie.com/*'), true);
+    assert.equal(directive.excludeMatches.includes('*://*.allowed.example/*'), true);
+    assert.equal(isPackagedStaticScriptletDirectiveId(directive.id), true);
+  }
+  state.toAdd = [];
+  state.filteringModeDetails.optimal = new Set(['example.com']);
+  context.registerScriptlet(state, details);
+  assert.equal(state.toAdd.length, 2);
+  for (const directive of state.toAdd) {
+    assert.deepEqual([...directive.matches], ['*://*.example.com/*']);
+  }
+  state.toAdd = [];
+  state.filteringModeDetails.optimal.clear();
+  context.registerScriptlet(state, details);
+  assert.equal(state.toAdd.length, 0);
+});
+
+test('immediate cosmetic hiding removes its temporary sheet after success and failure', async () => {
+  const source = await readSource('js/scripting/css-api.js');
+  const siteSheet = {};
+  let finish;
+  const context = vm.createContext({
+    document: { adoptedStyleSheets: [siteSheet] },
+    CSSStyleSheet: class { replaceSync(css) { this.css = css; } },
+    chrome: { runtime: { sendMessage() {
+      return new Promise(resolve => { finish = resolve; });
+    } } },
+  });
+  context.self = context;
+  vm.runInContext(source, context);
+  const inserting = context.cssAPI.insert('.ad{display:none}', 'sandbox', true);
+  assert.equal(context.document.adoptedStyleSheets.length, 2);
+  await new Promise(resolve => setImmediate(resolve));
+  finish({ ok: true });
+  await inserting;
+  assert.deepEqual([...context.document.adoptedStyleSheets], [siteSheet]);
+  const failed = context.cssAPI.insert('.other{display:none}', true);
+  assert.equal(context.document.adoptedStyleSheets.length, 2);
+  await new Promise(resolve => setImmediate(resolve));
+  finish({ ok: false, error: 'insertion refused' });
+  await assert.rejects(failed, /insertion refused/);
+  assert.deepEqual([...context.document.adoptedStyleSheets], [siteSheet]);
+  const removing = context.cssAPI.removeAll('sandbox');
+  await new Promise(resolve => setImmediate(resolve));
+  finish({ ok: true });
+  await removing;
+  assert.deepEqual([...context.document.adoptedStyleSheets], [siteSheet]);
+});
+
+test('unrelated browser permission grants reconcile while a site request is pending', async () => {
+  const source = await readSource('js/background.js');
+  const fn = source.slice(source.indexOf('async function onPermissionsAdded('),
+    source.indexOf('async function onPermissionsChanged('));
+  let reconciliations = 0;
+  const context = vm.createContext({
+    pendingPermissionRequest: { hostname: 'first.example', afterLevel: 2 },
+    hostnamesFromMatches: () => ['other.example'],
+    syncWithBrowserPermissions() {}, updateSessionRules() {},
+    async reconcileFilteringModeMutation(operation, options) {
+      assert.equal(operation, context.syncWithBrowserPermissions);
+      assert.equal(options.beforeSync, context.updateSessionRules);
+      reconciliations += 1;
+      return { mutationResult: true, syncResult: { ok: true } };
+    },
+  });
+  vm.runInContext(fn, context);
+  assert.equal((await context.onPermissionsAdded({ origins: ['other'] })).ok, true);
+  assert.equal(reconciliations, 1);
+});
+
+test('settings backup restores popup and sandbox preferences without touching entitlement', async () => {
+  const source = (await readSource('js/backup-restore.js'))
+    .replace(/^import[\s\S]*?from '\.\/ext\.js';/m, '').replace(/export /g, '');
+  const entitlement = { status: 'paid', trialStart: 123, trialExpiry: 456, graceUntil: 789 };
+  const stored = { talonEntitlement: structuredClone(entitlement), sandboxFilters: 'example.com##.custom' };
+  const calls = [];
+  let rejectSandbox = false;
+  const defaults = { autoReload: true, developerMode: false, strictBlockMode: true,
+    popupBlockMode: true, rulesets: [], filteringModes: {} };
+  const context = vm.createContext({
+    runtime: { getManifest: () => ({ version: '0.1.20' }) },
+    browser: { storage: { local: { async get(key) { return { [key]: stored[key] }; } } } },
+    localRead: async key => stored[key],
+    localWrite: async (key, value) => { stored[key] = value; },
+    localRemove: async key => { delete stored[key]; },
+    async sendMessage(message) {
+      calls.push(message);
+      switch (message.what) {
+      case 'getDefaultConfig': return defaults;
+      case 'getFilteringModeDetails': return {};
+      case 'getAllCustomFilters': return [['example.com', ['.ad']]];
+      case 'setSandboxFilters':
+        if (rejectSandbox) return { error: 'subscription_required' };
+        stored.sandboxFilters = message.text;
+        return;
+      }
+    },
+  });
+  vm.runInContext(source, context);
+  const backup = await context.backupToObject({ ...defaults, enabledRulesets: [], popupBlockMode: false });
+  assert.equal(backup.popupBlockMode, false);
+  assert.equal(backup.sandboxFilters, stored.sandboxFilters);
+  assert.equal(Object.hasOwn(backup, 'talonEntitlement'), false);
+  await context.restoreFromObject(backup);
+  assert.equal(calls.some(m => m.what === 'setPopupBlockMode' && m.state === false), true);
+  assert.equal(stored.sandboxFilters, backup.sandboxFilters);
+  assert.deepEqual(stored.talonEntitlement, entitlement);
+  calls.length = 0;
+  await assert.rejects(context.restoreFromObject({ sandboxFilters: [] }), /invalid sandbox/);
+  assert.equal(calls.length, 0);
+  await context.restoreFromObject({ cosmeticFilters: ['example.com##.legacy'] });
+  assert.equal(calls.some(m => m.what === 'setPopupBlockMode' && m.state === true), true);
+  assert.equal(calls.some(m => m.what === 'addCustomFilters' && m.selectors.includes('.legacy')), true);
+  rejectSandbox = true;
+  await assert.rejects(context.restoreFromObject(backup), /subscription_required/);
+  assert.deepEqual(stored.talonEntitlement, entitlement);
+});
+
 test('userScripts availability catches a Chrome 122 namespace getter rejection', async () => {
   const source = await readSource('js/ext.js');
   const probe = source.slice(source.indexOf('export const isUserScriptsAvailable'),
@@ -51,6 +209,85 @@ test('userScripts availability catches a Chrome 122 namespace getter rejection',
   const context = vm.createContext({ browser });
   vm.runInContext(probe.replace('export const ', 'globalThis.probe = '), context);
   assert.equal(context.probe(), false);
+});
+
+test('custom scriptlet compiler emits a self-contained November framework and enforces trust', async () => {
+  const previous = { self: globalThis.self, chrome: globalThis.chrome,
+    browser: globalThis.browser, fetch: globalThis.fetch };
+  try {
+    const browser = { declarativeNetRequest: { ResourceType: {} } };
+    globalThis.self = { chrome: browser, crypto: globalThis.crypto,
+      location: { href: 'chrome-extension://test/js/offscreen/compile-filters.html' } };
+    globalThis.fetch = async path => ({ ok: true,
+      text: () => readSource(`js/offscreen/${path.replace('./', '')}`) });
+    const { compileFilters, toMv3Data } = await import('../js/offscreen/compile-filters.js');
+    const compiled = compileFilters('sandbox',
+      'example.com##+js(set-constant, talonParityProbe, true)',
+      { localSource: true, nativeCssHas: true, trustedSource: true });
+    assert.equal(compiled.scriptletDetails.size, 1);
+    const result = await toMv3Data('sandbox', compiled);
+    const entries = [...(result.isolated ?? []), ...(result.main ?? [])];
+    assert.equal(entries.length, 1);
+    const code = entries[0].code;
+    assertOrderedIncludes(code, ['function uBOL_scriptletFrameworkBegin',
+      'function uBOL_scriptlets', 'function uBOL_scriptletFrameworkEnd'], 'compiled scriptlet order');
+    const context = vm.createContext({
+      document: { location: { origin: 'https://example.com', href: 'https://example.com/' },
+        readyState: 'complete', addEventListener() {} },
+      Request, Response, EventTarget, structuredClone,
+      XMLHttpRequest: class { open() {} send() {} },
+      addEventListener() {}, removeEventListener() {},
+    });
+    context.self = context;
+    context.window = context;
+    vm.runInContext(code, context);
+    assert.equal(context.talonParityProbe, true);
+    const rejected = compileFilters('untrusted',
+      'example.com##+js(trusted-set-constant, talonParityProbe, true)',
+      { trustedSource: false });
+    assert.equal(rejected.scriptletDetails.size, 0);
+    const unsupported = compileFilters('sandbox',
+      '||example.com^$replace=/old/new/', { trustedSource: true });
+    assert.equal(unsupported.dnrRules.length, 0);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete globalThis[key];
+      else globalThis[key] = value;
+    }
+  }
+});
+
+test('procedural path navigation listeners are released on Talon teardown', async () => {
+  const source = await readSource('js/scripting/css-procedural-api.js');
+  const task = sourceBetween(source, 'class PSelectorMatchesPathTask ',
+    'class PSelectorMatchesPropTask ');
+  let changes = 0;
+  const navigation = new EventTarget();
+  const context = vm.createContext({
+    PSelectorTask: class { destructor() {} },
+    regexFromString: value => new RegExp(value),
+    navigation, location: { pathname: '/', search: '' },
+  });
+  context.self = context;
+  vm.runInContext(task + '\nglobalThis.PathTask = PSelectorMatchesPathTask;', context);
+  const selector = new context.PathTask({ uBOL_DOMChanged() { changes += 1; } }, ['matches-path', '/']);
+  navigation.dispatchEvent(new Event('navigate'));
+  assert.equal(changes, 1);
+  selector.destructor();
+  navigation.dispatchEvent(new Event('navigate'));
+  assert.equal(changes, 1);
+});
+
+test('upgraded JSON filters append arrays and terminate on cyclic page objects', () => {
+  const value = { items: [1], secret: 'ad', child: { secret: 'tracker' } };
+  JSONPath.create('.items+=[2,3]').apply(value);
+  JSONPath.create('.items+={"entry":4}').apply(value);
+  assert.deepEqual(value.items, [1, 2, 3, { entry: 4 }]);
+  value.self = value;
+  JSONPath.create('..secret').apply(value);
+  assert.equal(Object.hasOwn(value, 'secret'), false);
+  assert.equal(Object.hasOwn(value.child, 'secret'), false);
+  assert.equal(value.self, value);
 });
 
 const countMatches = (source, pattern) => (source.match(pattern) ?? []).length;
@@ -193,7 +430,9 @@ test('reviewed popup parity assets and metadata stay aligned', async () => {
     compiledPopupCount(japanesePopup)
   );
   assert.equal(await pathExists('rulesets/scripting/popup/annoyances-overlays.js'), true);
-  assert.equal(await pathExists('rulesets/scripting/popup/kor-1.js'), true);
+  // The reviewed November Korean provider no longer emits popup rules.
+  assert.equal(await pathExists('rulesets/scripting/popup/kor-1.js'), false);
+  assert.equal(details.find(entry => entry.id === 'kor-1').popups ?? 0, 0);
 });
 
 test('packaged uBO scriptlet bundles are wired while Talon token compatibility stays separate', async () => {

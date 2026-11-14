@@ -996,11 +996,7 @@ test('packaged static scriptlet registration wires add, update, and removal relo
 
   assert.match(
     registerSource,
-    /recordPackagedStaticScriptletReloadTransition\([\s\S]*undefined,[\s\S]*directive/
-  );
-  assert.match(
-    registerSource,
-    /recordPackagedStaticScriptletReloadTransition\([\s\S]*registered,[\s\S]*directive/
+    /reconcileContentScript\(context, directive\)/
   );
   assert.match(
     removalSource,
@@ -1013,8 +1009,10 @@ test('packaged static scriptlet registration wires add, update, and removal relo
   );
   assert.match(
     reconcileSource,
-    /recordPackagedStaticScriptletReloadTransition\([\s\S]*directive/
+    /recordPackagedStaticScriptletReloadTransition\([\s\S]*undefined,[\s\S]*directive/
   );
+  assert.match(reconcileSource,
+    /recordPackagedStaticScriptletReloadTransition\([\s\S]*registered,[\s\S]*directive/);
 });
 
 test('public injectable registration does not include remote tactics lanes', async () => {

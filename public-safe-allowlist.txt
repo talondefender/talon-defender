@@ -1116,7 +1116,6 @@ rulesets/scripting/popup/irn-0.js
 rulesets/scripting/popup/isr-0.js
 rulesets/scripting/popup/ita-0.js
 rulesets/scripting/popup/jpn-1.js
-rulesets/scripting/popup/kor-1.js
 rulesets/scripting/popup/ltu-0.js
 rulesets/scripting/popup/lva-0.js
 rulesets/scripting/popup/nld-0.js
@@ -1450,3 +1449,12 @@ scripts/install-current-chrome.ps1
 scripts/install-minimum-chrome.ps1
 scripts/minimum-chrome.json
 scripts/verify-release.mjs
+js/offscreen/scriptlet-begin.template.js
+js/offscreen/scriptlet-end.template.js
+js/resources/vod.js
+js/trusted-tokens.js
+rulesets/scripting/scriptlet/isolated/scriptlet-begin.js
+rulesets/scripting/scriptlet/isolated/scriptlet-end.js
+rulesets/scripting/scriptlet/main/scriptlet-begin.js
+rulesets/scripting/scriptlet/main/scriptlet-end.js
+web_accessible_resources/3x2.png

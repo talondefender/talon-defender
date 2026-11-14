@@ -36,9 +36,9 @@ import './prevent-fetch.js';
 import './prevent-innerHTML.js';
 import './prevent-navigation.js';
 import './prevent-settimeout.js';
-import './prevent-xhr.js';
 import './replace-argument.js';
 import './spoof-css.js';
+import './vod.js';
 
 import {
     collateFetchArgumentsFn,
@@ -49,11 +49,15 @@ import {
     onIdleFn,
     parsePropertiesToMatchFn,
 } from './utils.js';
-import { runAt, runAtHtmlElementFn } from './run-at.js';
+import {
+    runAt,
+    runAtHtmlElementFn,
+} from './run-at.js';
 
 import { getAllCookiesFn } from './cookie.js';
 import { getAllLocalStorageFn } from './localstorage.js';
 import { matchesStackTraceFn } from './stack-trace.js';
+import { modifyXhrResponseFn } from './prevent-xhr.js';
 import { proxyApplyFn } from './proxy-apply.js';
 import { registeredScriptlets } from './base.js';
 import { safeSelf } from './safe-self.js';
@@ -66,7 +70,7 @@ export const builtinScriptlets = registeredScriptlets;
 /*******************************************************************************
 
     Helper functions
-    
+
     These are meant to be used as dependencies to injectable scriptlets.
 
 /******************************************************************************/
@@ -97,15 +101,6 @@ function replaceNodeTextFn(
     const reExcludes = extraArgs.excludes
         ? safe.patternToRegex(extraArgs.excludes, 'ms')
         : null;
-    const stop = (takeRecord = true) => {
-        if ( takeRecord ) {
-            handleMutations(observer.takeRecords());
-        }
-        observer.disconnect();
-        if ( safe.logLevel > 1 ) {
-            safe.uboLog(logPrefix, 'Quitting');
-        }
-    };
     const textContentFactory = (( ) => {
         const out = { createScript: s => s };
         const { trustedTypes: tt } = self;
@@ -118,19 +113,19 @@ function replaceNodeTextFn(
         }
         return out;
     })();
-    let sedCount = extraArgs.sedCount || 0;
+    let sedCount = extraArgs.sedCount ?? Number.MAX_SAFE_INTEGER;
     const handleNode = node => {
         const before = node.textContent;
         if ( reIncludes ) {
             reIncludes.lastIndex = 0;
-            if ( safe.RegExp_test.call(reIncludes, before) === false ) { return true; }
+            if ( safe.RegExp_test(reIncludes, before) === false ) { return; }
         }
         if ( reExcludes ) {
             reExcludes.lastIndex = 0;
-            if ( safe.RegExp_test.call(reExcludes, before) ) { return true; }
+            if ( safe.RegExp_test(reExcludes, before) ) { return; }
         }
         rePattern.lastIndex = 0;
-        if ( safe.RegExp_test.call(rePattern, before) === false ) { return true; }
+        if ( safe.RegExp_test(rePattern, before) === false ) { return; }
         rePattern.lastIndex = 0;
         const after = pattern !== ''
             ? before.replace(rePattern, replacement)
@@ -142,44 +137,65 @@ function replaceNodeTextFn(
             safe.uboLog(logPrefix, `Text before:\n${before.trim()}`);
         }
         safe.uboLog(logPrefix, `Text after:\n${after.trim()}`);
-        return sedCount === 0 || (sedCount -= 1) !== 0;
+        sedCount -= 1;
+    };
+    const handleTree = root => {
+        const treeWalker = document.createTreeWalker(root,
+            NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT
+        );
+        const { currentScript } = document;
+        let count = 0;
+        for (;;) {
+            const node = treeWalker.nextNode();
+            if ( node === null ) { break; }
+            count += 1;
+            if ( node === currentScript ) { continue; }
+            if ( reNodeName.test(node.nodeName) ) {
+                handleNode(node);
+            } else if ( node.nodeName === 'TEMPLATE' ) {
+                count += handleTree(node.content);
+            } else {
+                continue;
+            }
+            if ( sedCount === 0 ) { break; }
+        }
+        return count;
+    };
+    if ( document.documentElement ) {
+        const count = handleTree(document.documentElement);
+        safe.uboLog(logPrefix, `${count} nodes present before installing mutation observer`);
+    }
+    const stay = Boolean(extraArgs.stay);
+    if ( sedCount === 0 && stay === false ) { return; }
+    const stop = (takeRecord = true) => {
+        const mutations = takeRecord ? observer.takeRecords() : [];
+        observer.disconnect();
+        handleMutations(mutations);
+        if ( safe.logLevel > 1 ) {
+            safe.uboLog(logPrefix, 'Quitting');
+        }
     };
     const handleMutations = mutations => {
         for ( const mutation of mutations ) {
             for ( const node of mutation.addedNodes ) {
-                if ( reNodeName.test(node.nodeName) === false ) { continue; }
-                if ( handleNode(node) ) { continue; }
-                stop(false); return;
+                if ( reNodeName.test(node.nodeName) ) {
+                    handleNode(node);
+                } else if ( node.nodeName === 'TEMPLATE' ) {
+                    handleTree(node.content);
+                } else {
+                    continue;
+                }
+                if ( sedCount === 0 ) { return stop(false); }
             }
         }
     };
     const observer = new MutationObserver(handleMutations);
     observer.observe(document, { childList: true, subtree: true });
-    if ( document.documentElement ) {
-        const treeWalker = document.createTreeWalker(
-            document.documentElement,
-            NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT
-        );
-        let count = 0;
-        for (;;) {
-            const node = treeWalker.nextNode();
-            count += 1;
-            if ( node === null ) { break; }
-            if ( reNodeName.test(node.nodeName) === false ) { continue; }
-            if ( node === document.currentScript ) { continue; }
-            if ( handleNode(node) ) { continue; }
-            stop(); break;
-        }
-        safe.uboLog(logPrefix, `${count} nodes present before installing mutation observer`);
-    }
-    if ( extraArgs.stay ) { return; }
+    if ( stay ) { return; }
     runAt(( ) => {
-        const quitAfter = extraArgs.quitAfter || 0;
-        if ( quitAfter !== 0 ) {
-            setTimeout(( ) => { stop(); }, quitAfter);
-        } else {
-            stop();
-        }
+        const quitAfter = extraArgs.quitAfter ?? 0;
+        if ( quitAfter === 0 ) { return stop(); }
+        setTimeout(( ) => { stop(); }, quitAfter);
     }, 'interactive');
 }
 
@@ -659,19 +675,19 @@ function webrtcIf(
  *
  * @description
  * Prevent a webpage from opening new tabs through `window.open()`.
- * 
+ *
  * @param pattern
  * A plain string or regex to match against the `url` argument for the
  * prevention to be triggered. If not provided, all calls to `window.open()`
  * are prevented.
  * If set to the special value `debug` *and* the logger is opened, the scriptlet
  * will trigger a `debugger` statement and the prevention will not occur.
- * 
+ *
  * @param [delay]
  * If provided, a decoy will be created or opened, and this parameter states
  * the number of seconds to wait for before the decoy is terminated, i.e.
  * either removed from the DOM or closed.
- * 
+ *
  * @param [decoy]
  * A string representing the type of decoy to use:
  * - `blank`: replace the `url` parameter with `about:blank`
@@ -679,13 +695,13 @@ function webrtcIf(
  *   its `contentWindow` property.
  * - `frame`: create and append an `iframe` element to the DOM, and return
  *   its `contentWindow` property.
- * 
+ *
  * @example
  * ##+js(prevent-window-open, ads.example.com/)
- * 
+ *
  * @example
  * ##+js(prevent-window-open, ads.example.com/, 1, iframe)
- * 
+ *
  * */
 
 builtinScriptlets.push({
@@ -984,6 +1000,7 @@ builtinScriptlets.push({
     name: 'xml-prune.js',
     fn: xmlPrune,
     dependencies: [
+        'modify-xhr-response.fn',
         'safe-self.fn',
     ],
 });
@@ -1089,41 +1106,14 @@ function xmlPrune(
             });
         }
     });
-    self.XMLHttpRequest.prototype.open = new Proxy(self.XMLHttpRequest.prototype.open, {
-        apply: async (target, thisArg, args) => {
-            if ( reUrl.test(urlFromArg(args[1])) === false ) {
-                return Reflect.apply(target, thisArg, args);
-            }
-            thisArg.addEventListener('readystatechange', function() {
-                if ( thisArg.readyState !== 4 ) { return; }
-                const type = thisArg.responseType;
-                if (
-                    type === 'document' ||
-                    type === '' && thisArg.responseXML instanceof XMLDocument
-                ) {
-                    pruneFromDoc(thisArg.responseXML);
-                    const serializer = new XMLSerializer();
-                    const textout = serializer.serializeToString(thisArg.responseXML);
-                    Object.defineProperty(thisArg, 'responseText', { value: textout });
-                    if ( typeof thisArg.response === 'string' ) {
-                        Object.defineProperty(thisArg, 'response', { value: textout });
-                    }
-                    return;
-                }
-                if (
-                    type === 'text' ||
-                    type === '' && typeof thisArg.responseText === 'string'
-                ) {
-                    const textin = thisArg.responseText;
-                    const textout = pruneFromText(textin);
-                    if ( textout === textin ) { return; }
-                    Object.defineProperty(thisArg, 'response', { value: textout });
-                    Object.defineProperty(thisArg, 'responseText', { value: textout });
-                    return;
-                }
-            });
-            return Reflect.apply(target, thisArg, args);
+    modifyXhrResponseFn(urlPattern, (xhr, before) => {
+        if ( before instanceof XMLDocument ) {
+            return pruneFromDoc(before);
         }
+        if ( typeof before === 'string' ) {
+            return pruneFromText(before);
+        }
+        return before;
     });
 }
 
@@ -1298,27 +1288,27 @@ function m3uPrune(
 }
 
 /*******************************************************************************
- * 
+ *
  * @scriptlet call-nothrow
- * 
+ *
  * @description
  * Prevent a function call from throwing. The function will be called, however
  * should it throw, the scriptlet will silently process the exception and
  * returns as if no exception has occurred.
- * 
+ *
  * ### Syntax
- * 
+ *
  * ```text
  * example.org##+js(call-nothrow, propertyChain)
  * ```
- * 
+ *
  * - `propertyChain`: a chain of dot-separated properties which leads to the
  * function to be trapped.
- * 
+ *
  * ### Examples
- * 
+ *
  * example.org##+js(call-nothrow, Object.defineProperty)
- * 
+ *
  * */
 
 builtinScriptlets.push({
@@ -1379,46 +1369,46 @@ function removeNodeText(
 }
 
 /*******************************************************************************
- * 
+ *
  * @scriptlet prevent-canvas
- * 
+ *
  * @description
  * Prevent usage of specific or all (default) canvas APIs.
  *
  * ### Syntax
- * 
+ *
  * ```text
  * example.com##+js(prevent-canvas [, contextType])
  * ```
- * 
+ *
  * - `contextType`: A specific type of canvas API to prevent (default to all
  *   APIs). Can be a string or regex which will be matched against the type
  *   used in getContext() call. Prepend with `!` to test for no-match.
- * 
+ *
  * ### Examples
- * 
+ *
  * 1. Prevent `example.com` from accessing all canvas APIs
- * 
+ *
  * ```adblock
  * example.com##+js(prevent-canvas)
  * ```
- * 
+ *
  * 2. Prevent access to any flavor of WebGL API, everywhere
- * 
+ *
  * ```adblock
  * *##+js(prevent-canvas, /webgl/)
  * ```
- * 
+ *
  * 3. Prevent `example.com` from accessing any flavor of canvas API except `2d`
- * 
+ *
  * ```adblock
  * example.com##+js(prevent-canvas, !2d)
  * ```
- * 
+ *
  * ### References
- * 
+ *
  * https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/getContext
- * 
+ *
  * */
 
 builtinScriptlets.push({
@@ -1486,39 +1476,39 @@ function breakOnCall(target) {
 
 
 /*******************************************************************************
- * 
+ *
  * Scriplets below this section are only available for filter lists from
  * trusted sources. They all have the property `requiresTrust` set to `true`.
- * 
+ *
  * Trusted sources are:
  *
  * - uBO's own filter lists, which name starts with "uBlock filters – ", and
  *   maintained at: https://github.com/uBlockOrigin/uAssets
- * 
- * - The user's own filters as seen in "My filters" pane in uBO's dashboard. 
- * 
+ *
+ * - The user's own filters as seen in "My filters" pane in uBO's dashboard.
+ *
  * The trustworthiness of filters using these privileged scriptlets are
  * evaluated at filter list compiled time: when a filter using one of the
  * privileged scriptlet originates from a non-trusted filter list source, it
  * is discarded at compile time, specifically from within:
- * 
+ *
  * - Source: ./src/js/scriptlet-filtering.js
  * - Method: scriptletFilteringEngine.compile(), via normalizeRawFilter()
- * 
+ *
  **/
 
 /*******************************************************************************
- * 
+ *
  * replace-node-text.js
- * 
+ *
  * Replace text instance(s) with another text instance inside specific
  * DOM nodes. By default, the scriplet stops and quits at the interactive
  * stage of a document.
- * 
+ *
  * See commit messages for usage:
  * - https://github.com/gorhill/uBlock/commit/99ce027fd702
  * - https://github.com/gorhill/uBlock/commit/41876336db48
- * 
+ *
  **/
 
 builtinScriptlets.push({
@@ -1545,15 +1535,15 @@ function replaceNodeText(
 }
 
 /*******************************************************************************
- * 
+ *
  * trusted-replace-fetch-response.js
- * 
+ *
  * Replaces response text content of fetch requests if all given parameters
  * match.
- * 
+ *
  * Reference:
  * https://github.com/AdguardTeam/Scriptlets/blob/master/src/scriptlets/trusted-replace-fetch-response.js
- * 
+ *
  **/
 
 builtinScriptlets.push({
@@ -1655,7 +1645,7 @@ function trustedReplaceXhrResponse(
 }
 
 /*******************************************************************************
- * 
+ *
  * @scriptlet trusted-click-element
  *
  * @description
@@ -1865,18 +1855,18 @@ function trustedReplaceOutboundText(
 }
 
 /*******************************************************************************
- * 
+ *
  * Reference:
  * https://github.com/AdguardTeam/Scriptlets/blob/5a92d79489/wiki/about-trusted-scriptlets.md#trusted-suppress-native-method
- * 
+ *
  * This is a first version with current limitations:
  * - Does not support matching arguments which are object or array
  * - Does not support `stack` parameter
- * 
+ *
  * If `signatureStr` parameter is not declared, the scriptlet will log all calls
  * to `methodPath` along with the arguments passed and will not prevent the
  * trapped method.
- * 
+ *
  * */
 
 builtinScriptlets.push({
@@ -1935,7 +1925,7 @@ function trustedSuppressNativeMethod(
                 }
             }
             if ( signatureArg.type === 'pattern' ) {
-                if ( safe.RegExp_test.call(signatureArg.re, targetArg) === false ) {
+                if ( safe.RegExp_test(signatureArg.re, targetArg) === false ) {
                     return context.reflect();
                 }
             }
@@ -1959,35 +1949,35 @@ function trustedSuppressNativeMethod(
 
 /**
  * @trustedScriptlet trusted-prevent-dom-bypass
- * 
+ *
  * @description
  * Prevent the bypassing of uBO scriptlets through anonymous embedded context.
- * 
+ *
  * Ensure that a target method in the embedded context is using the
  * corresponding parent context's method (which is assumed to be
  * properly patched), or to replace the embedded context with that of the
  * parent context.
- * 
+ *
  * Root issue:
  * https://issues.chromium.org/issues/40202434
- * 
+ *
  * @param methodPath
  * The method which calls must be intercepted. The arguments
  * of the intercepted calls are assumed to be HTMLElement, anything else will
  * be ignored.
- * 
- * @param [targetProp]
- * The method in the embedded context which should be delegated to the
- * parent context. If no method is specified, the embedded context becomes
- * the parent one, i.e. all  properties of the embedded context will be that
- * of the parent context.
- * 
+ *
+ * @param [targetProps]
+ * The space-separated methods in the embedded context which should be
+ * delegated to the parent context. If no method is specified, the embedded
+ * context becomes the parent one, i.e. all  properties of the embedded context
+ * will be that of the parent context.
+ *
  * @example
  * ##+js(trusted-prevent-dom-bypass, Element.prototype.append, open)
- * 
+ *
  * @example
- * ##+js(trusted-prevent-dom-bypass, Element.prototype.appendChild, XMLHttpRequest)
- * 
+ * ##+js(trusted-prevent-dom-bypass, Element.prototype.appendChild, XMLHttpRequest JSON.parse)
+ *
  * */
 
 builtinScriptlets.push({
@@ -2019,16 +2009,18 @@ function trustedPreventDomBypass(
                     }
                 }
                 if ( targetProp !== '' ) {
+                    const chains = targetProp.split(/\s+/);
                     let me = self, it = elem.contentWindow;
-                    let chain = targetProp;
-                    for (;;) {
-                        const pos = chain.indexOf('.');
-                        if ( pos === -1 ) { break; }
-                        const prop = chain.slice(0, pos);
-                        me = me[prop]; it = it[prop];
-                        chain = chain.slice(pos+1);
+                    for ( let chain of chains ) {
+                        for (;;) {
+                            const pos = chain.indexOf('.');
+                            if ( pos === -1 ) { break; }
+                            const prop = chain.slice(0, pos);
+                            me = me[prop]; it = it[prop];
+                            chain = chain.slice(pos+1);
+                        }
+                        it[chain] = me[chain];
                     }
-                    it[chain] = me[chain];
                 } else {
                     Object.defineProperty(elem, 'contentWindow', { value: self });
                 }
@@ -2042,26 +2034,26 @@ function trustedPreventDomBypass(
 
 /**
  * @trustedScriptlet trusted-override-element-method
- * 
+ *
  * @description
  * Override the behavior of a method on matching elements.
- * 
+ *
  * @param methodPath
  * The method which calls must be intercepted.
- * 
+ *
  * @param [selector]
  * A CSS selector which the target element must match. If not specified,
  * the override will occur for all elements.
- * 
+ *
  * @param [disposition]
  * How the override should be handled. If not specified, the overridden call
  * will be equivalent to an empty function. If set to `throw`, an exception
  * will be thrown. Any other value will be validated and returned as a
  * supported safe constant.
- * 
+ *
  * @example
  * ##+js(trusted-override-element-method, HTMLAnchorElement.prototype.click, a[target="_blank"][style])
- * 
+ *
  * */
 
 builtinScriptlets.push({

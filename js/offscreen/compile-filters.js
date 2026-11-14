@@ -21,6 +21,8 @@
 
 import * as makeScriptlets from './make-scriptlets.js';
 import * as sfp from '../static-filtering-parser.js';
+import { builtinScriptlets } from '../resources/scriptlets.js';
+import { getTrustedTokens } from '../trusted-tokens.js';
 import { minimizeRules, minimizeRuleset, validateRules } from '../ubo-parser.js';
 import { makeCosmeticScripts } from './make-cosmetic-filters.js';
 import { parseNetworkFilter } from '../ubo-parser.js';
@@ -29,6 +31,7 @@ import { safeReplace } from './safe-replace.js';
 /******************************************************************************/
 
 const browser = (self.browser || self.chrome);
+makeScriptlets.init(builtinScriptlets);
 
 const resourceTypes = Object.values(
     browser.declarativeNetRequest?.ResourceType ?? {}
@@ -168,7 +171,10 @@ function sanitizeCompiledCosmeticFilter(compiled) {
 export function compileFilters(listid, text, context = {}) {
     if ( Boolean(text) === false ) { return; }
 
-    const parser = new sfp.AstFilterParser(context);
+    const parser = new sfp.AstFilterParser({
+        ...context,
+        trustedTokens: getTrustedTokens(),
+    });
 
     const unminimizedRules = [];
     const specificCosmeticDetails = new Map();
@@ -238,13 +244,23 @@ export async function toMv3Data(rulesetid, compiledData) {
     if ( Boolean(compiledData) === false ) { return; }
 
     if ( compiledData.scriptletDetails.size !== 0 ) {
+        makeScriptlets.resetFramework();
+        const secret = self.crypto.randomUUID();
         for ( const details of compiledData.scriptletDetails.values() ) {
             makeScriptlets.compile(rulesetid, details);
         }
-        const template = await fetch('./scriptlet.template.js').then(response =>
-            response.text()
-        );
-        const result = makeScriptlets.commit(rulesetid, template);
+        const [ begin, template, end ] = await Promise.all([
+            './scriptlet-begin.template.js',
+            './scriptlet.template.js',
+            './scriptlet-end.template.js',
+        ].map(path => fetch(path).then(response => {
+            if ( response.ok === false ) {
+                throw new Error('packaged scriptlet template unavailable');
+            }
+            return response.text();
+        })));
+        const result = makeScriptlets.commit(rulesetid, template, secret);
+        const framework = makeScriptlets.commitFramework(begin, end, secret);
         if ( result.ISOLATED ) {
             const { hasRegexes, hasAncestors, hasEntities } = result.ISOLATED;
             const hostnames = hasRegexes || hasAncestors || hasEntities ||
@@ -253,7 +269,8 @@ export async function toMv3Data(rulesetid, compiledData) {
                 : result.ISOLATED.hostnames;
             isolated.push({
                 id: `${rulesetid}-isolated-scriptlets`,
-                code: result.ISOLATED.code,
+                code: [ framework.ISOLATED.beginCode, result.ISOLATED.code,
+                    framework.ISOLATED.endCode ].join('\n'),
                 hostnames,
             });
         }
@@ -265,11 +282,12 @@ export async function toMv3Data(rulesetid, compiledData) {
                 : result.MAIN.hostnames;
             main.push({
                 id: `${rulesetid}-main-scriptlets`,
-                code: result.MAIN.code,
+                code: [ framework.MAIN.beginCode, result.MAIN.code,
+                    framework.MAIN.endCode ].join('\n'),
                 hostnames,
             });
         }
-        makeScriptlets.reset();
+        makeScriptlets.resetFramework();
     }
 
     if ( compiledData.specificCosmeticDetails.size ) {

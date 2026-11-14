@@ -165,6 +165,18 @@ test('granular permission reconciliation preserves Complete sites covered by exa
   assert.equal(reappliedEffectiveModes.complete.has('all-urls'), true);
   assert.equal(reappliedEffectiveModes.none.has('managed-none.example'), true);
 
+  const userWithParentException = {
+    none: new Set(['parent.example']), basic: new Set(['all-urls']),
+    optimal: new Set(['child.parent.example']), complete: new Set(),
+  };
+  const managedParentException = applyManagedFilteringModes(
+    userWithParentException, undefined, ['parent.example']
+  );
+  assert.equal(managedParentException.optimal.has('child.parent.example'), false);
+  assert.equal(userWithParentException.optimal.has('child.parent.example'), true);
+  const policyRemoved = applyManagedFilteringModes(userWithParentException, undefined, []);
+  assert.equal(policyRemoved.optimal.has('child.parent.example'), true);
+
   let staleError;
   try {
     await setFilteringModeDetails(rawUserModes, 999);

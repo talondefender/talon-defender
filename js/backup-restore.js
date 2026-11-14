@@ -42,6 +42,14 @@ export async function backupToObject(currentConfig) {
     if ( currentConfig.strictBlockMode !== defaultConfig.strictBlockMode ) {
         out.strictBlockMode = currentConfig.strictBlockMode;
     }
+    if ( typeof currentConfig.popupBlockMode === 'boolean' &&
+        currentConfig.popupBlockMode !== defaultConfig.popupBlockMode ) {
+        out.popupBlockMode = currentConfig.popupBlockMode;
+    }
+    const sandboxFilters = await localRead('sandboxFilters');
+    if ( typeof sandboxFilters === 'string' && sandboxFilters !== '' ) {
+        out.sandboxFilters = sandboxFilters;
+    }
     const { enabledRulesets } = currentConfig;
     const customRulesets = [];
     for ( const id of enabledRulesets ) {
@@ -84,6 +92,18 @@ export async function backupToObject(currentConfig) {
 /******************************************************************************/
 
 export async function restoreFromObject(targetConfig) {
+    if ( targetConfig === null || typeof targetConfig !== 'object' ||
+        Array.isArray(targetConfig) ) {
+        throw new TypeError('invalid settings backup');
+    }
+    if ( targetConfig.popupBlockMode !== undefined &&
+        typeof targetConfig.popupBlockMode !== 'boolean' ) {
+        throw new TypeError('invalid popup blocking preference');
+    }
+    if ( targetConfig.sandboxFilters !== undefined &&
+        typeof targetConfig.sandboxFilters !== 'string' ) {
+        throw new TypeError('invalid sandbox filters');
+    }
     const defaultConfig = await sendMessage({ what: 'getDefaultConfig' });
 
     await sendMessage({
@@ -100,6 +120,12 @@ export async function restoreFromObject(targetConfig) {
         what: 'setStrictBlockMode',
         state: targetConfig.strictBlockMode ?? defaultConfig.strictBlockMode
     });
+
+    const popupResult = await sendMessage({
+        what: 'setPopupBlockMode',
+        state: targetConfig.popupBlockMode ?? defaultConfig.popupBlockMode,
+    });
+    if ( popupResult?.error ) { throw new Error(String(popupResult.error)); }
 
     const enabledRulesets = new Set(defaultConfig.rulesets);
     for ( const entry of targetConfig.rulesets || [] ) {
@@ -148,6 +174,12 @@ export async function restoreFromObject(targetConfig) {
         );
     }
     await Promise.all(promises);
+
+    const sandboxResult = await sendMessage({
+        what: 'setSandboxFilters',
+        text: targetConfig.sandboxFilters ?? '',
+    });
+    if ( sandboxResult?.error ) { throw new Error(String(sandboxResult.error)); }
 
     const dnrRules = targetConfig.dnrRules ?? [];
     if ( dnrRules.length !== 0 ) {

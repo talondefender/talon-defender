@@ -337,7 +337,7 @@
   "storage": {
     "managed_schema": "managed_storage.json"
   },
-  "version": "0.1.19",
+  "version": "0.1.20",
   "web_accessible_resources": [
     {
       "resources": [ "icons/icon128.png" ],
@@ -396,6 +396,7 @@
         "web_accessible_resources/noop.css",
         "web_accessible_resources/32x32.png",
         "web_accessible_resources/2x2.png",
+        "web_accessible_resources/3x2.png",
         "web_accessible_resources/empty",
         "web_accessible_resources/noop.html",
         "web_accessible_resources/amazon_ads.js",

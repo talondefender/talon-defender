@@ -52,6 +52,9 @@ const COMPILED_SANDBOX_FILTERS_KEY = 'sandboxFilters.compiledV1';
 export const SANDBOX_COMPILED_FINGERPRINT_KEY =
     'sandboxFilters.compiledFingerprintV1';
 const COMPILED_SANDBOX_FILTERS_SCHEMA = 1;
+// Recompile stored text after a compiler/runtime upgrade, while retaining the
+// last-known-good generation for the existing transactional rollback path.
+const SANDBOX_COMPILER_VERSION = '2026.1110.1816';
 export const SANDBOX_DNR_DIRTY_KEY = 'sandboxFilters.dnrDirtyV1';
 export const SANDBOX_REGISTRATION_DIRTY_KEY = 'sandboxFilters.registrationDirtyV1';
 export const SANDBOX_REGISTRATION_REVISION_KEY =
@@ -724,7 +727,7 @@ const reconcileManagedUserScripts = async (
 };
 
 const fingerprintFilterText = async text => {
-    const input = `${COMPILED_SANDBOX_FILTERS_SCHEMA}\n${text}`;
+    const input = `${COMPILED_SANDBOX_FILTERS_SCHEMA}\n${SANDBOX_COMPILER_VERSION}\n${text}`;
     try {
         const digest = await crypto.subtle.digest(
             'SHA-256',

@@ -82,6 +82,7 @@ const waitForCleanupBounded = promise => {
 };
 
 /******************************************************************************/
+const chrome = self.chrome ?? self.browser;
 
 const nonVisualElements = {
     head: true,
@@ -252,6 +253,12 @@ class PSelectorMatchesPathTask extends PSelectorTask {
         this.needle = regexFromString(
             task[1].replace(/\P{ASCII}/gu, s => encodeURIComponent(s))
         );
+        this.onNavigate = () => filterer.uBOL_DOMChanged();
+        self.navigation?.addEventListener('navigate', this.onNavigate);
+    }
+    destructor() {
+        super.destructor();
+        self.navigation?.removeEventListener('navigate', this.onNavigate);
     }
     transpose(node, output) {
         if ( this.needle.test(self.location.pathname + self.location.search) ) {

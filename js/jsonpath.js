@@ -345,12 +345,13 @@ export class JSONPath {
                     path: this.path.slice(),
                 };
                 const v = this.value.obj[this.value.key];
-                if ( recursive ) {
+                if ( recursive && typeof v === 'object' && v !== null && this.seen.has(v) === false ) {
                     if ( Array.isArray(v) ) {
                         this.stack.push({ obj: v, keys: v.keys() });
                     } else if ( typeof v === 'object' && v !== null ) {
                         this.stack.push({ obj: v, keys: Object.keys(v).values() });
                     }
+                    this.seen.add(v);
                 }
                 return this;
             },
@@ -358,6 +359,7 @@ export class JSONPath {
             value: undefined,
             done: false,
             stack: [],
+            seen: new WeakSet(),
             [Symbol.iterator]() { return this; },
         };
         if ( Array.isArray(v) ) {
@@ -495,7 +497,12 @@ export class JSONPath {
             if ( rval instanceof Object === false ) { return; }
             const lval = obj[key];
             if ( lval instanceof Object === false ) { return; }
-            if ( Array.isArray(lval) ) { return; }
+            if ( Array.isArray(lval) ) {
+                if ( Array.isArray(rval) ) {
+                    lval.push(...rval); break;
+                }
+                lval.push(rval); break;
+            }
             for ( const [ k, v ] of Object.entries(rval) ) {
                 lval[k] = v;
             }

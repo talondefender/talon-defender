@@ -91,7 +91,7 @@ try {
     if ( s.length !== 0 ) {
         await self.cssAPI.insert(
             `${s.join(',\n')}{display:none!important;}`,
-            sandboxScope
+            sandboxScope, true
         );
     }
 

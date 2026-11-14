@@ -21,6 +21,7 @@ It does not own:
 - business or support operations material
 
 Current product summary:
+- local candidate 0.1.20 uses reviewed uBO Lite Chromium `2026.1110.1816` filter data and an adapted shared scriptlet engine; Talon's YouTube runtime, French Stream customer fixes, licensing and custom-filter storage remain separate product behavior
 - native heuristics reads packaged configuration through the extension background rather than fetching a dynamic resource URL from the visited page
 - active YouTube protection hides mealbar promotional offers while preserving ordinary dialogs and player controls
 - the 540 px popup places subscription and license actions beside protection/site details, keeps the CTA visible without scrolling in supported default layouts, and puts optional reviews in the footer; colors, icons, wording, and typography are preserved

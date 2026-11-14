@@ -25,6 +25,27 @@
     // cosmetic subsystem. Keep every owner so removing one scope cannot tear
     // down CSS which is still required by another.
     const sheets = new Map();
+    const prepaintSheets = new Map();
+    const removePrepaintSheet = css => {
+        const sheet = prepaintSheets.get(css);
+        if ( sheet === undefined ) { return; }
+        document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
+            candidate => candidate !== sheet
+        );
+        prepaintSheets.delete(css);
+    };
+    const insertPrepaintSheet = css => {
+        if ( sheets.has(css) || prepaintSheets.has(css) ) { return; }
+        try {
+            const sheet = new CSSStyleSheet();
+            sheet.replaceSync(css);
+            document.adoptedStyleSheets = [ ...document.adoptedStyleSheets, sheet ];
+            prepaintSheets.set(css, sheet);
+        } catch {
+            // The background USER stylesheet remains authoritative when the
+            // document cannot adopt a temporary sheet (including older frames).
+        }
+    };
     const maxCssPayloadLength = 100000;
     const messageTimeoutMs = 15000;
     let operationTail = Promise.resolve();
@@ -102,11 +123,16 @@
     self.cssAPI = {
         supportsScopedOwnership: true,
         selectorListCssChunks,
-        insert(css, scope = 'core') {
+        insert(css, scope = 'core', immediate = false) {
             if ( typeof css !== 'string' || css === '' ) { return; }
+            if ( typeof scope === 'boolean' ) {
+                immediate = scope;
+                scope = 'core';
+            }
             const owner = typeof scope === 'string' && scope !== ''
                 ? scope
                 : 'core';
+            if ( immediate ) { insertPrepaintSheet(css); }
             // Ownership changes are part of the same ordered operation as the
             // physical CSS mutation. This prevents a reinsert from attaching
             // itself to a record whose removal is still in flight.
@@ -114,6 +140,7 @@
                 const existing = sheets.get(css);
                 if ( existing ) {
                     existing.owners.add(owner);
+                    removePrepaintSheet(css);
                     return;
                 }
                 const record = { owners: new Set([ owner ]) };
@@ -129,6 +156,8 @@
                 } catch (reason) {
                     if ( sheets.get(css) === record ) { sheets.delete(css); }
                     throw reason;
+                } finally {
+                    removePrepaintSheet(css);
                 }
             });
         },

@@ -240,8 +240,9 @@ const pruneUnbundledRulesetArtifacts = async (allowedIds) => {
   await pruneRulesetDirectoryById('rulesets/scripting/specific', allowedIds);
   await pruneRulesetDirectoryById('rulesets/scripting/popup', allowedIds);
   await pruneRulesetDirectoryById('rulesets/scripting/generichigh', allowedIds);
-  await pruneRulesetDirectoryById('rulesets/scripting/scriptlet/main', allowedIds);
-  await pruneRulesetDirectoryById('rulesets/scripting/scriptlet/isolated', allowedIds);
+  const scriptletIds = new Set([ ...allowedIds, 'scriptlet-begin', 'scriptlet-end' ]);
+  await pruneRulesetDirectoryById('rulesets/scripting/scriptlet/main', scriptletIds);
+  await pruneRulesetDirectoryById('rulesets/scripting/scriptlet/isolated', scriptletIds);
   await pruneRulesetDirectoryById(
     'js/scripting/scriptlet-token',
     new Set([ ...allowedIds, ...EXTRA_PACKAGED_SCRIPTLET_IDS ]),

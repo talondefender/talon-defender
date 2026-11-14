@@ -83,10 +83,10 @@ registerScriptlet(editOutboundObjectFn, {
  *
  * @param propChain
  * Property chain of the method to trap.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * */
 
 function editOutboundObject(propChain = '', jsonq = '') {
@@ -102,17 +102,17 @@ registerScriptlet(editOutboundObject, {
 /******************************************************************************/
 /**
  * @scriptlet trusted-edit-outbound-object.js
- * 
+ *
  * @description
  * Edit properties of an object returned by a specific method.
  * Properties can be assigned new values.
- * 
+ *
   * @param propChain
  * Property chain of the method to trap.
- * 
+ *
 * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * */
 
 function trustedEditOutboundObject(propChain = '', jsonq = '') {
@@ -144,7 +144,9 @@ function jsonEditFn(trusted = false, jsonq = '', ...varargs) {
     proxyApplyFn('JSON.parse', function(context) {
         const json = context.callArgs[0];
         const obj = context.reflect();
-        if ( pattern && safe.testPattern(pattern, json) === false ) { return obj; }
+        if ( pattern && typeof json === 'string' ) {
+            if ( safe.testPattern(pattern, json) === false ) { return obj; }
+        }
         const objAfter = jsonp.apply(obj);
         if ( objAfter === undefined ) { return obj; }
         safe.uboLog(logPrefix, 'Edited');
@@ -170,10 +172,10 @@ registerScriptlet(jsonEditFn, {
  * @description
  * Edit object generated through JSON.parse().
  * Properties can only be removed.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param 'matches', pattern
  * Vararg, optional: The JSONPath will be applied if and only if the pattern
  * matches the inbound JSON string. The pattern can be a plain string or a
@@ -198,10 +200,10 @@ registerScriptlet(jsonEdit, {
  * @description
  * Edit object generated through JSON.parse().
  * Properties can be assigned new values.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param 'matches', pattern
  * Vararg, optional: The JSONPath will be applied if and only if the pattern
  * matches the inbound JSON string. The pattern can be a plain string or a
@@ -254,7 +256,7 @@ function editInboundObjectFn(
     const editObj = obj => {
         let clone;
         try {
-            clone = safe.JSON_parse(safe.JSON_stringify(obj));
+            clone = safe.structuredClone(obj);
         } catch {
         }
         if ( typeof clone !== 'object' || clone === null ) { return; }
@@ -269,9 +271,12 @@ function editInboundObjectFn(
     proxyApplyFn(propChain, function(context) {
         const i = getArgPos(context.callArgs);
         if ( i !== undefined ) {
-            const obj = editObj(context.callArgs[i]);
-            if ( obj ) {
-                context.callArgs[i] = obj;
+            const objBefore = context.callArgs[i];
+            if ( typeof objBefore === 'object' ) {
+                const objAfter = editObj(objBefore);
+                if ( objAfter ) {
+                    context.callArgs[i] = objAfter;
+                }
             }
         }
         return context.reflect();
@@ -289,21 +294,21 @@ registerScriptlet(editInboundObjectFn, {
 /******************************************************************************/
 /**
  * @scriptlet edit-inbound-object.js
- * 
+ *
  * @description
  * Prune properties from an object passed as argument to a specific method.
  * Properties can only be removed.
- * 
+ *
  * @param propChain
  * Property chain of the method to trap.
- * 
+ *
  * @param argPos
  * 0-based position of the argument. Use negative integer for position relative
  * to the end.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * */
 
 function editInboundObject(propChain = '', argPos = '', jsonq = '') {
@@ -319,21 +324,21 @@ registerScriptlet(editInboundObject, {
 /******************************************************************************/
 /**
  * @scriptlet trusted-edit-inbound-object.js
- * 
+ *
  * @description
  * Edit properties of an object passed as argument to a specific method.
  * Properties can be assigned new values.
- * 
+ *
  * @param propChain
  * Property chain of the method to trap.
- * 
+ *
  * @param argPos
  * 0-based position of the argument. Use negative integer for position relative
  * to the end.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * */
 
 function trustedEditInboundObject(propChain = '', argPos = '', jsonq = '') {
@@ -399,22 +404,22 @@ registerScriptlet(editThisObjectFn, {
 /******************************************************************************/
 /**
  * @scriptlet edit-this-object.js
- * 
+ *
  * @description
  * Prune properties from an object through one of the object's own method.
  * Properties can only be removed.
- * 
+ *
  * @param propChain
  * Property chain of the method to trap.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param order
  * If set to `after`, the `this` object will be edited after the trapped method
  * is called. By default the `this` object is edited before calling the trapped
  * method.
- * 
+ *
  * */
 
 function editThisObject(...args) {
@@ -430,22 +435,22 @@ registerScriptlet(editThisObject, {
 /******************************************************************************/
 /**
  * @scriptlet trusted-edit-this-object.js
- * 
+ *
  * @description
  * Edit properties of an object through one of the object's own method.
  * Properties can be assigned new values.
- * 
+ *
  * @param propChain
  * Property chain of the method to trap.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param order
  * If set to `after`, the `this` object will be edited after the trapped method
  * is called. By default the `this` object is edited before calling the trapped
  * method.
- * 
+ *
  * */
 
 function trustedEditThisObject(...args) {
@@ -509,17 +514,17 @@ registerScriptlet(editObjectOnGetterFn, {
 /******************************************************************************/
 /**
  * @scriptlet edit-object-on-getter.js
- * 
+ *
  * @description
  * Prune properties from an object on read access.
  * Properties can only be removed.
- * 
+ *
  * @param propChain
  * Property chain of the property to trap.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * */
 
 function editObjectOnGetter(...args) {
@@ -535,17 +540,17 @@ registerScriptlet(editObjectOnGetter, {
 /******************************************************************************/
 /**
  * @scriptlet trusted-edit-object-on-getter.js
- * 
+ *
  * @description
  * Edit properties of an object on read access.
  * Properties can be assigned new values.
- * 
+ *
  * @param propChain
  * Property chain of the property to trap.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * */
 
 function trustedEditObjectOnGetter(...args) {
@@ -612,17 +617,17 @@ registerScriptlet(editObjectOnSetterFn, {
 /******************************************************************************/
 /**
  * @scriptlet edit-object-on-setter.js
- * 
+ *
  * @description
  * Prune properties from an object on write access.
  * Properties can only be removed.
- * 
+ *
  * @param propChain
  * Property chain of the property to trap.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * */
 
 function editObjectOnSetter(...args) {
@@ -638,17 +643,17 @@ registerScriptlet(editObjectOnSetter, {
 /******************************************************************************/
 /**
  * @scriptlet trusted-edit-object-on-setter.js
- * 
+ *
  * @description
  * Edit properties of an object on write access.
  * Properties can be assigned new values.
- * 
+ *
  * @param propChain
  * Property chain of the property to trap.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * */
 
 function trustedEditObjectOnSetter(...args) {
@@ -713,23 +718,23 @@ registerScriptlet(editElementObjectFn, {
 /******************************************************************************/
 /**
  * @scriptlet edit-element-object.js
- * 
+ *
  * @description
  * Prune properties of one or more elements matching a specific selector.
  * Properties can only be removed.
- * 
+ *
  * @param selector
  * The selector used to locate the elements on which the JSONPath query will
  * be applied.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param timeout
  * The maximum time (in milliseconds) to wait for matching elements before
  * stopping. Defaults to 0, which executes a single lookup attempt without
  * waiting.
- * 
+ *
  * */
 
 function editElementObject(...args) {
@@ -744,24 +749,24 @@ registerScriptlet(editElementObject, {
 
 /******************************************************************************/
 /**
- * @scriptlet trusted-element-this-object.js
- * 
+ * @scriptlet trusted-edit-element-object.js
+ *
  * @description
  * Edit properties of one or more elements matching a specific selector.
  * Properties can be assigned new values.
- * 
+ *
  * @param selector
  * The selector used to locate the elements on which the JSONPath query will
  * be applied.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param timeout
  * The maximum time (in milliseconds) to wait for matching elements before
  * stopping. Defaults to 0, which executes a single lookup attempt without
  * waiting.
- * 
+ *
  * */
 
 function trustedEditElementObject(...args) {
@@ -858,18 +863,18 @@ registerScriptlet(jsonEditXhrResponseFn, {
 /******************************************************************************/
 /**
  * @scriptlet json-edit-xhr-response.js
- * 
+ *
  * @description
  * Edit the object fetched through a XHR instance.
  * Properties can only be removed.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param [propsToMatch, value]
  * An optional vararg detailing the arguments to match when xhr.open() is
  * called.
- * 
+ *
  * */
 
 function jsonEditXhrResponse(jsonq = '', ...args) {
@@ -885,18 +890,18 @@ registerScriptlet(jsonEditXhrResponse, {
 /******************************************************************************/
 /**
  * @scriptlet trusted-json-edit-xhr-response.js
- * 
+ *
  * @description
  * Edit the object fetched through a XHR instance.
  * Properties can be assigned new values.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param [propsToMatch, value]
  * An optional vararg detailing the arguments to match when xhr.open() is
  * called.
- * 
+ *
  * */
 
 function trustedJsonEditXhrResponse(jsonq = '', ...args) {
@@ -976,18 +981,18 @@ registerScriptlet(jsonEditXhrRequestFn, {
 /******************************************************************************/
 /**
  * @scriptlet json-edit-xhr-request.js
- * 
+ *
  * @description
  * Edit the object sent as the body in a XHR instance.
  * Properties can only be removed.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param [propsToMatch, value]
  * An optional vararg detailing the arguments to match when xhr.open() is
  * called.
- * 
+ *
  * */
 
 function jsonEditXhrRequest(jsonq = '', ...args) {
@@ -1003,18 +1008,18 @@ registerScriptlet(jsonEditXhrRequest, {
 /******************************************************************************/
 /**
  * @scriptlet trusted-json-edit-xhr-request.js
- * 
+ *
  * @description
  * Edit the object sent as the body in a XHR instance.
  * Properties can be assigned new values.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param [propsToMatch, value]
  * An optional vararg detailing the arguments to match when xhr.open() is
  * called.
- * 
+ *
  * */
 
 function trustedJsonEditXhrRequest(jsonq = '', ...args) {
@@ -1098,18 +1103,18 @@ registerScriptlet(jsonEditFetchResponseFn, {
 /******************************************************************************/
 /**
  * @scriptlet json-edit-fetch-response.js
- * 
+ *
  * @description
  * Edit the object fetched through the fetch API.
  * Properties can only be removed.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param [propsToMatch, value]
  * An optional vararg detailing the arguments to match when xhr.open() is
  * called.
- * 
+ *
  * */
 
 function jsonEditFetchResponse(jsonq = '', ...args) {
@@ -1125,18 +1130,18 @@ registerScriptlet(jsonEditFetchResponse, {
 /******************************************************************************/
 /**
  * @scriptlet trusted-json-edit-fetch-response.js
- * 
+ *
  * @description
  * Edit the object fetched through the fetch API. The trusted version allows
  * Properties can be assigned new values.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param [propsToMatch, value]
  * An optional vararg detailing the arguments to match when xhr.open() is
  * called.
- * 
+ *
  * */
 
 function trustedJsonEditFetchResponse(jsonq = '', ...args) {
@@ -1215,19 +1220,111 @@ registerScriptlet(jsonEditFetchRequestFn, {
 });
 
 /******************************************************************************/
+/******************************************************************************/
+
+async function editInboundElementFn(
+    trusted = false,
+    propChain = '',
+    argPosRaw = '',
+    selector = '',
+    jsonq = ''
+) {
+    if ( propChain === '' ) { return; }
+    if ( selector === '' ) { return; }
+    const safe = safeSelf();
+    const logPrefix = safe.makeLogPrefix(
+        `${trusted ? 'trusted-' : ''}edit-inbound-element`,
+        propChain, argPosRaw, selector, jsonq
+    );
+    const jsonp = JSONPath.create(jsonq);
+    if ( jsonp.valid === false || jsonp.value !== undefined && trusted !== true ) {
+        return safe.uboLog(logPrefix, 'Bad JSONPath query');
+    }
+    const argPos = parseInt(argPosRaw, 10);
+    const getElem = context => {
+        if ( argPosRaw === 'this' ) { return context.thisArg; }
+        const { callArgs } = context;
+        if ( Array.isArray(callArgs) === false ) { return; }
+        if ( isNaN(argPos) ) { return; }
+        if ( argPos >= 0 ) {
+            if ( callArgs.length <= argPos ) { return; }
+            return callArgs[argPos];
+        }
+        if ( callArgs.length < -argPos ) { return; }
+        return callArgs[callArgs.length + argPos];
+    };
+    const editElem = elem => {
+        if ( elem instanceof Element === false ) { return; }
+        if ( elem.matches(selector) === false ) { return; }
+        elem = jsonp.apply(elem);
+        if ( elem === undefined ) { return; }
+        safe.uboLog(logPrefix, 'Edited');
+    };
+    proxyApplyFn(propChain, function(context) {
+        const elem = getElem(context);
+        if ( elem !== undefined ) {
+            editElem(elem);
+        }
+        return context.reflect();
+    });
+}
+registerScriptlet(editInboundElementFn, {
+    name: 'edit-inbound-element.fn',
+    dependencies: [
+        JSONPath,
+        proxyApplyFn,
+        safeSelf,
+    ],
+});
+
+/******************************************************************************/
+/**
+ * @scriptlet trusted-edit-inbound-element.js
+ *
+ * @description
+ * Edit properties of an element passed as an argument to a method.
+ * Properties can be assigned new values.
+ *
+ * @param propChain
+ * Property chain of the method to trap.
+ *
+ * @param argPos
+ * 0-based position of the argument. Use negative integer for position relative
+ * to the end.
+ *
+ * @param selector
+ * The selector the element must match for the JSONPath query to be applied.
+ *
+ * @param jsonq
+ * A uBO-flavored JSONPath query.
+ *
+ * */
+
+function trustedEditInboundElement(...args) {
+    editInboundElementFn(true, ...args);
+}
+registerScriptlet(trustedEditInboundElement, {
+    name: 'trusted-edit-inbound-element.js',
+    requiresTrust: true,
+    dependencies: [
+        editInboundElementFn,
+    ],
+});
+
+/******************************************************************************/
 /**
  * @scriptlet json-edit-fetch-request.js
- * 
+ *
  * @description
  * Edit the request body sent through the fetch API.
  * Properties can only be removed.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param [propsToMatch, value]
  * An optional vararg detailing the arguments to match when fetch() is called.
- * 
+ *
  * */
 
 function jsonEditFetchRequest(jsonq = '', ...args) {
@@ -1243,17 +1340,17 @@ registerScriptlet(jsonEditFetchRequest, {
 /******************************************************************************/
 /**
  * @scriptlet trusted-json-edit-fetch-request.js
- * 
+ *
  * @description
  * Edit the request body sent through the fetch API.
  * Properties can be assigned new values.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param [propsToMatch, value]
  * An optional vararg detailing the arguments to match when fetch() is called.
- * 
+ *
  * */
 
 function trustedJsonEditFetchRequest(jsonq = '', ...args) {
@@ -1270,14 +1367,20 @@ registerScriptlet(trustedJsonEditFetchRequest, {
 /******************************************************************************/
 /******************************************************************************/
 
-function jsonlEditFn(jsonp, text = '') {
+function jsonlEditFn(jsonp, text = '', jsonExtract) {
     const safe = safeSelf();
     const lineSeparator = /\r?\n/.exec(text)?.[0] || '\n';
     const linesBefore = text.split('\n');
     const linesAfter = [];
     for ( const lineBefore of linesBefore ) {
+        const match = jsonExtract.exec(lineBefore);
+        if ( match === null ) {
+            linesAfter.push(lineBefore);
+            continue;
+        }
+        const jsonBefore = match[1];
         let obj;
-        try { obj = safe.JSON_parse(lineBefore); } catch { }
+        try { obj = safe.JSON_parse(jsonBefore); } catch { }
         if ( typeof obj !== 'object' || obj === null ) {
             linesAfter.push(lineBefore);
             continue;
@@ -1287,7 +1390,12 @@ function jsonlEditFn(jsonp, text = '') {
             linesAfter.push(lineBefore);
             continue;
         }
-        const lineAfter = safe.JSON_stringify(objAfter);
+        const jsonAfter = safe.JSON_stringify(objAfter);
+        const lineAfter = [
+            lineBefore.slice(0, match.index),
+            jsonAfter,
+            lineBefore.slice(match.index + jsonBefore.length),
+        ].join('');
         linesAfter.push(lineAfter);
     }
     return linesAfter.join(lineSeparator);
@@ -1315,6 +1423,9 @@ function jsonlEditXhrResponseFn(trusted, jsonq = '', ...varargs) {
     }
     const extraArgs = safe.parseVarargs(varargs);
     const propNeedles = parsePropertiesToMatchFn(extraArgs.propsToMatch, 'url');
+    const jsonExtract = extraArgs.jsonExtract
+        ? new RegExp(extraArgs.jsonExtract)
+        : /^(.*)$/;
     self.XMLHttpRequest = class extends self.XMLHttpRequest {
         open(method, url, ...args) {
             const xhrDetails = { method, url };
@@ -1347,7 +1458,7 @@ function jsonlEditXhrResponseFn(trusted, jsonq = '', ...varargs) {
             if ( typeof innerResponse !== 'string' ) {
                 return (xhrDetails.response = innerResponse);
             }
-            const outerResponse = jsonlEditFn(jsonp, innerResponse);
+            const outerResponse = jsonlEditFn(jsonp, innerResponse, jsonExtract);
             if ( outerResponse !== innerResponse ) {
                 safe.uboLog(logPrefix, 'Pruned');
             }
@@ -1375,18 +1486,18 @@ registerScriptlet(jsonlEditXhrResponseFn, {
 /******************************************************************************/
 /**
  * @scriptlet jsonl-edit-xhr-response.js
- * 
+ *
  * @description
  * Edit the objects found in a JSONL resource fetched through a XHR instance.
  * Properties can only be removed.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param [propsToMatch, value]
  * An optional vararg detailing the arguments to match when xhr.open() is
  * called.
- * 
+ *
  * */
 
 function jsonlEditXhrResponse(jsonq = '', ...args) {
@@ -1402,18 +1513,18 @@ registerScriptlet(jsonlEditXhrResponse, {
 /******************************************************************************/
 /**
  * @scriptlet trusted-jsonl-edit-xhr-response.js
- * 
+ *
  * @description
  * Edit the objects found in a JSONL resource fetched through a XHR instance.
  * Properties can be assigned new values.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param [propsToMatch, value]
  * An optional vararg detailing the arguments to match when xhr.open() is
  * called.
- * 
+ *
  * */
 
 function trustedJsonlEditXhrResponse(jsonq = '', ...args) {
@@ -1442,6 +1553,9 @@ function jsonlEditFetchResponseFn(trusted, jsonq = '', ...varargs) {
     }
     const extraArgs = safe.parseVarargs(varargs);
     const propNeedles = parsePropertiesToMatchFn(extraArgs.propsToMatch, 'url');
+    const jsonExtract = extraArgs.jsonExtract
+        ? new RegExp(extraArgs.jsonExtract)
+        : /^(.*)$/;
     const logall = jsonq === '';
     proxyApplyFn('fetch', function(context) {
         const args = context.callArgs;
@@ -1462,7 +1576,7 @@ function jsonlEditFetchResponseFn(trusted, jsonq = '', ...varargs) {
                     safe.uboLog(logPrefix, textBefore);
                     return responseBefore;
                 }
-                const textAfter = jsonlEditFn(jsonp, textBefore);
+                const textAfter = jsonlEditFn(jsonp, textBefore, jsonExtract);
                 if ( textAfter === textBefore ) { return responseBefore; }
                 safe.uboLog(logPrefix, 'Pruned');
                 const responseAfter = new Response(textAfter, {
@@ -1503,18 +1617,18 @@ registerScriptlet(jsonlEditFetchResponseFn, {
 /******************************************************************************/
 /**
  * @scriptlet jsonl-edit-fetch-response.js
- * 
+ *
  * @description
  * Edit the objects found in a JSONL resource fetched through the fetch API.
  * Properties can only be removed.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param [propsToMatch, value]
  * An optional vararg detailing the arguments to match when xhr.open() is
  * called.
- * 
+ *
  * */
 
 function jsonlEditFetchResponse(jsonq = '', ...args) {
@@ -1530,18 +1644,18 @@ registerScriptlet(jsonlEditFetchResponse, {
 /******************************************************************************/
 /**
  * @scriptlet trusted-jsonl-edit-fetch-response.js
- * 
+ *
  * @description
  * Edit the objects found in a JSONL resource fetched through the fetch API.
  * Properties can be assigned new values.
- * 
+ *
  * @param jsonq
  * A uBO-flavored JSONPath query.
- * 
+ *
  * @param [propsToMatch, value]
  * An optional vararg detailing the arguments to match when xhr.open() is
  * called.
- * 
+ *
  * */
 
 function trustedJsonlEditFetchResponse(jsonq = '', ...args) {

@@ -3054,6 +3054,8 @@ import {
     rulesetConfig,
     saveRulesetConfig,
 } from './config.js';
+import { setPopupBlockMode } from './prevent-popup.js';
+import { isExpectedStyleInjectionError } from './runtime-errors.js';
 
 import {
     DNR_RECONCILIATION_DIRTY_KEY,
@@ -9531,7 +9533,10 @@ async function onPermissionsRemoved() {
 async function onPermissionsAdded(permissions) {
     const details = pendingPermissionRequest;
     pendingPermissionRequest = undefined;
-    if (details === undefined) {
+    const hostnames = Array.isArray(permissions.origins)
+        ? hostnamesFromMatches(permissions.origins)
+        : [];
+    if (details === undefined || hostnames.includes(details.hostname) === false) {
         const { mutationResult: modified, syncResult } =
             await reconcileFilteringModeMutation(syncWithBrowserPermissions, {
                 beforeSync: updateSessionRules,
@@ -9543,9 +9548,6 @@ async function onPermissionsAdded(permissions) {
     }
     const defaultMode = await getDefaultFilteringMode();
     if (defaultMode >= MODE_OPTIMAL) { return; }
-    if (Array.isArray(permissions.origins) === false) { return; }
-    const hostnames = hostnamesFromMatches(permissions.origins);
-    if (hostnames.includes(details.hostname) === false) { return; }
     const beforeLevel = await getFilteringMode(details.hostname);
     if (beforeLevel === details.afterLevel) { return; }
     const { mutationResult: afterLevel } =
@@ -10103,7 +10105,8 @@ function onMessage(
                     tabId, frameId, documentId, expectedTabGeneration, reason,
                 });
                 if ( isIgnorableRuntimeError(reason) === false ) {
-                    ubolErr(`insertCSS/${reason}`);
+                    const log = isExpectedStyleInjectionError(reason) ? ubolLog : ubolErr;
+                    log(`insertCSS/${reason}`);
                 }
                 callback({ ok: false, error: 'insert_css_failed' });
             });
@@ -10131,7 +10134,8 @@ function onMessage(
                     tabId, frameId, documentId, expectedTabGeneration, reason,
                 });
                 if ( isIgnorableRuntimeError(reason) === false ) {
-                    ubolErr(`removeCSS/${reason}`);
+                    const log = isExpectedStyleInjectionError(reason) ? ubolLog : ubolErr;
+                    log(`removeCSS/${reason}`);
                 }
                 callback({ ok: false, error: 'remove_css_failed' });
             });
@@ -10669,6 +10673,7 @@ function onMessage(
                     developerMode: defaultConfig.developerMode,
                     showBlockedCount: defaultConfig.showBlockedCount,
                     strictBlockMode: defaultConfig.strictBlockMode,
+                    popupBlockMode: defaultConfig.popupBlockMode,
                     rulesets,
                     filteringModes: Object.assign(defaultFilteringModes),
                 });
@@ -10723,6 +10728,7 @@ function onMessage(
                     showBlockedCount: rulesetConfig.showBlockedCount,
                     canShowBlockedCount,
                     strictBlockMode: getEffectiveStrictBlockMode(),
+                    popupBlockMode: rulesetConfig.popupBlockMode,
                     firstRun: process.firstRun,
                     isSideloaded,
                     developerMode: rulesetConfig.developerMode,
@@ -10745,6 +10751,7 @@ function onMessage(
                     showBlockedCount: rulesetConfig.showBlockedCount,
                     canShowBlockedCount,
                     strictBlockMode: getEffectiveStrictBlockMode(),
+                    popupBlockMode: rulesetConfig.popupBlockMode,
                     firstRun: process.firstRun,
                     isSideloaded,
                     developerMode: rulesetConfig.developerMode,
@@ -10793,6 +10800,23 @@ function onMessage(
             saveRulesetConfig().then(() => {
                 callback();
                 broadcastMessage({ showBlockedCount: rulesetConfig.showBlockedCount });
+            });
+            return true;
+
+        case 'setPopupBlockMode':
+            enqueueRulesetMutation(async () => {
+                if ( typeof request.state !== 'boolean' ) {
+                    throw new TypeError('invalid popup blocking preference');
+                }
+                await setPopupBlockMode(request.state);
+                const result = await syncInjectablesAndRefreshTabs({ runtimeOnly: false });
+                if ( result?.ok !== true ) {
+                    throw new Error('popup blocking runtime sync failed');
+                }
+                return { popupBlockMode: rulesetConfig.popupBlockMode };
+            }).then(callback).catch(reason => {
+                ubolErr(`setPopupBlockMode/${reason}`);
+                callback({ error: `${reason}` });
             });
             return true;
 

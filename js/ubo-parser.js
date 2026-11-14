@@ -46,6 +46,7 @@ const safeResourceTypes = [
 const validRedirectResources = (( ) => {
     const out = new Map();
     for ( const [ name, resource ] of redirectResourceMap ) {
+        if ( resource.packaged === false ) { continue; }
         out.set(name, name);
         if ( resource.alias === undefined ) { continue; }
         if ( typeof resource.alias === 'string' ) {

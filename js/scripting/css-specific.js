@@ -19,6 +19,8 @@
     Home: https://github.com/gorhill/uBlock
 */
 
+/* global chrome */
+
 // Important!
 // Isolate from global scope
 self.TalonCssSpecificReady = (async function uBOL_cssSpecific() {
@@ -255,7 +257,7 @@ try {
 if ( s.length !== 0 ) {
     await self.cssAPI.insert(
         `${s.join(',\n')}{display:none!important;}`,
-        coreSpecificScope
+        coreSpecificScope, true
     );
 }
 if ( runtimeWasTerminated() ) {

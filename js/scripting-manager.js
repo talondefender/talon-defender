@@ -667,7 +667,7 @@ async function registerSpecific(context) {
 /******************************************************************************/
 
 function registerScriptlet(context, scriptletDetails) {
-    const { before, filteringModeDetails, rulesetsDetails } = context;
+    const { filteringModeDetails, rulesetsDetails } = context;
     const scriptletExcludedHostnames = getScriptletExcludedHostnames();
 
     const hasBroadHostPermission =
@@ -683,22 +683,24 @@ function registerScriptlet(context, scriptletDetails) {
         ...filteringModeDetails.complete,
     ];
 
-    for ( const rulesetId of rulesetsDetails.map(v => v.id) ) {
-        if ( rulesetId === 'talon-site-fixes' ) { continue; }
-        const worlds = scriptletDetails.get(rulesetId);
-        if ( worlds instanceof Object === false ) { continue; }
-
-        for ( const world of Object.keys(worlds) ) {
-            if ( world !== 'MAIN' && world !== 'ISOLATED' ) { continue; }
-            const id = `${rulesetId}.${world.toLowerCase()}`;
+    // The upstream framework deduplicates helpers across enabled lists. Each
+    // world must run begin -> list data -> end in one ordered registration.
+    // Keep Talon's host scopes and its separate customer-site registration.
+    for ( const world of [ 'ISOLATED', 'MAIN' ] ) {
+        const id = `scriptlets.${world.toLowerCase()}`;
+        const js = [];
+        const matches = [];
+        const excludeMatches = ut.matchesFromHostnames(scriptletExcludedHostnames);
+        if ( hasBroadHostPermission ) {
+            excludeMatches.push(...permissionRevokedMatches);
+        }
+        for ( const { id: rulesetId } of rulesetsDetails ) {
+            if ( rulesetId === 'talon-site-fixes' ) { continue; }
+            const worlds = scriptletDetails.get(rulesetId);
+            if ( worlds instanceof Object === false ) { continue; }
             const hostnames = Array.isArray(worlds[world]) ? worlds[world] : [];
-
-            const matches = [];
-            const excludeMatches = [];
             let targetHostnames = [];
             if ( hasBroadHostPermission ) {
-                excludeMatches.push(...permissionRevokedMatches);
-                excludeMatches.push(...ut.matchesFromHostnames(scriptletExcludedHostnames));
                 targetHostnames = hostnames;
             } else if ( permissionGrantedHostnames.length !== 0 ) {
                 if ( hostnames.includes('*') ) {
@@ -716,42 +718,27 @@ function registerScriptlet(context, scriptletDetails) {
             }
             if ( targetHostnames.length === 0 ) { continue; }
             matches.push(...ut.matchesFromHostnames(targetHostnames));
+            js.push(`/rulesets/scripting/scriptlet/${world.toLowerCase()}/${rulesetId}.js`);
+        }
+        if ( js.length !== 0 && matches.length !== 0 ) {
             normalizeMatches(matches);
-
+            const prefix = `/rulesets/scripting/scriptlet/${world.toLowerCase()}`;
+            js.unshift(`${prefix}/scriptlet-begin.js`);
+            js.push(`${prefix}/scriptlet-end.js`);
             const directive = {
                 id,
-                js: [ `/rulesets/scripting/scriptlet/${world.toLowerCase()}/${rulesetId}.js` ],
-                matches,
+                js,
+                matches: Array.from(new Set(matches)),
                 allFrames: true,
                 matchOriginAsFallback: true,
                 runAt: 'document_start',
                 world,
             };
             if ( excludeMatches.length !== 0 ) {
-                directive.excludeMatches = excludeMatches;
+                directive.excludeMatches = Array.from(new Set(excludeMatches));
             }
 
-            const registered = before.get(id);
-            before.delete(id);
-            if ( registered === undefined ) {
-                context.toAdd.push(directive);
-                recordPackagedStaticScriptletReloadTransition(
-                    context.remoteScriptletReloadHint,
-                    undefined,
-                    directive
-                );
-                continue;
-            }
-            if ( contentScriptRegistrationsEqual(registered, directive) ) {
-                continue;
-            }
-            context.toRemove.push(id);
-            context.toAdd.push(directive);
-            recordPackagedStaticScriptletReloadTransition(
-                context.remoteScriptletReloadHint,
-                registered,
-                directive
-            );
+            reconcileContentScript(context, directive);
         }
     }
 }

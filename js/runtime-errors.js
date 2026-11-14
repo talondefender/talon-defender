@@ -40,6 +40,15 @@ const isIgnorableRuntimeError = error => {
     return IGNORABLE_RUNTIME_ERRORS.some(snippet => message.includes(snippet));
 };
 
+// Navigating/removed documents routinely race cosmetic insertion. Keep this
+// classification local to style operations; permission and startup failures
+// must still be reported as errors.
+const isExpectedStyleInjectionError = error =>
+    isIgnorableRuntimeError(error) ||
+    /^(?:No (?:frame|document) with (?:id|ID)\b|Frame with (?:id|ID) \d+ was removed\b)/.test(
+        errorMessageFrom(error)
+    );
+
 const ignoreRuntimeError = error => {
     // Some browser APIs may reject with an empty reason; do not turn that into "Uncaught undefined".
     if ( error === undefined || error === null ) { return; }
@@ -70,6 +79,7 @@ const ignoreRuntimeLastError = runtime => {
 export {
     errorMessageFrom,
     isIgnorableRuntimeError,
+    isExpectedStyleInjectionError,
     ignoreRuntimeError,
     runtimeLastErrorFrom,
     ignoreRuntimeLastError,

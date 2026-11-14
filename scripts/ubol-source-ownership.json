@@ -14,6 +14,8 @@
     "js/offscreen/**",
     "js/resources/**",
     "js/static-filtering-parser.js",
+    "js/trusted-tokens.js",
+    "js/redirect-resources.js",
     "js/ubo-parser.js",
     "lib/regexanalyzer/**"
   ],
@@ -38,6 +40,7 @@
   },
   "webAccessibleResourceExceptions": {
     "localExtra": {
+      "icons/icon128.png": "Talon-owned YouTube feedback branding; this resource remains exposed only to YouTube hosts.",
       "automation/directives.json": "Talon-owned packaged heuristic directives.",
       "automation/native-heuristics.json": "Talon-owned packaged native-ad heuristic vocabulary.",
       "web_accessible_resources/click2load.html": "Retained for Talon's entitlement-gated custom-filter redirect compiler; current uBO Lite no longer exposes this redirect target from its manifest."
@@ -50,6 +53,7 @@
     "localExtra": {
       "js/offscreen/compile-filters.js": "Talon-approved adapter keeps the authenticated request-scoped compiler protocol and durable entitlement-gated registration transaction while using the current upstream parser, cosmetic compiler, and scriptlet compiler.",
       "js/offscreen/css-compiled.template.js": "Talon-approved fail-closed cosmetic-template guard is preserved across the upstream css-sandbox to css-compiled rename.",
+      "js/ubo-parser.js": "Talon custom compiler rejects redirect descriptors explicitly marked unpackageable when their resource files are absent from the pinned upstream build.",
       "js/prevent-popup.js": "Talon-approved registration reconciliation and normalized popup-mode persistence prevent duplicate or stale dynamic registrations.",
       "js/scripting/css-api.js": "Talon-owned bounded CSS mutation queue and scoped ownership support live entitlement teardown and recovery.",
       "js/scripting/css-generic.js": "Talon-owned generic-cosmetic teardown and reload reconciliation are layered on the upstream compiled data.",

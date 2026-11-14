@@ -1,6 +1,6 @@
 ## Third-Party Notices
 
-Last updated: 2026-08-20
+Last updated: 2026-11-14
 
 Talon Defender is distributed under `GPL-3.0-or-later` and includes third-party code and data.
 
@@ -51,6 +51,14 @@ dataset itself.
 
 The authoritative upstream source and license map for every bundled ruleset is:
 - `rulesets/ruleset-license-policy.json`
+
+The local 0.1.20 candidate uses the reviewed Chromium `2026.1110.1816`
+compiled data. The `kor-1` source changed from List-KR Classic to
+FilteringDev/filterslists-KO; its GNU GPLv3 license and source are recorded
+in that map. Existing excluded lists remain excluded. Upstream redirect
+descriptors `freestar_pubfig.js` and `google-ima-dai.js` have no resource files
+in the pinned build, so the custom compiler rejects them as unpackageable
+targets rather than creating broken redirects.
 
 License-policy gate file: `rulesets/ruleset-license-policy.json`
 
