@@ -46,12 +46,21 @@ const REMOTE_SCRIPTLET_ID_PREFIX = 'remote-scriptlet.';
 export const RELOAD_SENSITIVE_REGISTRATION_STATE_SCHEMA = 1;
 const MAX_RELOAD_SENSITIVE_REGISTRATIONS = 1024;
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
+const TALON_SUPPORT_REGISTRATION_IDS = new Set([
+    'native-heuristics',
+    'post-hide-cleanup',
+    'automation',
+    'ad-shell-styles',
+    'remote-cosmetics-global',
+    'remote-cosmetics-host',
+]);
 
 export const isReloadSensitiveScriptletRegistration = entry =>
     isPackagedStaticScriptletRegistration(entry) || (
         entry instanceof Object &&
         typeof entry.id === 'string' &&
-        entry.id.startsWith(REMOTE_SCRIPTLET_ID_PREFIX)
+        (entry.id.startsWith(REMOTE_SCRIPTLET_ID_PREFIX) ||
+            TALON_SUPPORT_REGISTRATION_IDS.has(entry.id))
     );
 
 export const getReloadSensitiveResourcePaths = registrations => {

@@ -927,6 +927,7 @@ const stop = async ({ preserveProtectionListener = false } = {}) => {
         self.removeEventListener?.(shadowContentChangedEvent, onShadowContentChanged);
         shadowListenersConnected = false;
     }
+    shadowController?.release?.('postHideCleanup');
     if ( protectionListenerConnected && preserveProtectionListener === false ) {
         self.removeEventListener?.(protectionChangedEvent, onProtectionChanged);
         protectionListenerConnected = false;
@@ -996,6 +997,7 @@ const refresh = async ( ) => {
     self.addEventListener?.(shadowRootsChangedEvent, onShadowRootsChanged);
     self.addEventListener?.(shadowContentChangedEvent, onShadowContentChanged);
     shadowListenersConnected = true;
+    shadowController?.acquire?.('postHideCleanup');
     cleanupReady = true;
     collectHintedElements();
     scheduleProcess();

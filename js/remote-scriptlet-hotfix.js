@@ -3,6 +3,12 @@ const PACKAGED_STATIC_SCRIPTLET_ID_RE =
     /^[a-z0-9][a-z0-9._-]*\.(?:main|isolated)$/i;
 const PACKAGED_STATIC_SCRIPTLET_SPECIAL_IDS = new Set([
     'talon-site-fixes-main',
+    'native-heuristics',
+    'post-hide-cleanup',
+    'automation',
+    'ad-shell-styles',
+    'remote-cosmetics-global',
+    'remote-cosmetics-host',
 ]);
 
 // These exported names and the storage key are retained for persisted-state

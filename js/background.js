@@ -7044,7 +7044,7 @@ const normalizeReloadSensitiveArtifactManifest = async input => {
     const resources = {};
     for ( const [ path, digest ] of entries ) {
         if (
-            /^\/(?:js\/scripting\/scriptlet-token|rulesets\/scripting\/scriptlet)\/[a-z0-9._/-]+\.js$/i.test(path) === false ||
+            /^\/(?:js\/scripting\/[a-z0-9._/-]+|rulesets\/scripting\/scriptlet\/[a-z0-9._/-]+|shared\/(?:public-suffix-data|site-key-resolver))\.js$/i.test(path) === false ||
             path.includes('..') ||
             typeof digest !== 'string' ||
             /^[0-9a-f]{64}$/.test(digest) === false

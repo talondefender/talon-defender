@@ -686,10 +686,10 @@
         } catch {
             return;
         }
-        if ( isVisible(node) === false ) { return; }
         const text = readBoundedText(node, config.maxLabelTextLength || 40);
         if ( text === '' ) { return; }
         if ( labelRegexes.some(re => re.test(text)) === false ) { return; }
+        if ( isVisible(node) === false ) { return; }
         enqueueLabel(node);
     };
 
@@ -1444,6 +1444,7 @@
             self.removeEventListener?.(shadowContentChangedEvent, onShadowContentChanged);
             shadowListenersConnected = false;
         }
+        shadowController?.release?.('nativeHeuristics');
         if ( protectionListenerConnected ) {
             self.removeEventListener?.(protectionChangedEvent, onProtectionChanged);
             protectionListenerConnected = false;
@@ -1626,6 +1627,7 @@
         self.addEventListener?.(shadowRootsChangedEvent, onShadowRootsChanged);
         self.addEventListener?.(shadowContentChangedEvent, onShadowContentChanged);
         shadowListenersConnected = true;
+        shadowController?.acquire?.('nativeHeuristics');
         return { applied: true };
     };
 

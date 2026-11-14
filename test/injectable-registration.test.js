@@ -915,7 +915,29 @@ test('legacy digest migration is exact for every shipped pre-digest family', () 
   ], updateHint), false);
 });
 
-test('reload-sensitive artifact inventory exactly hashes the packaged scriptlet surface', async () => {
+test('document helper byte changes mark matching open tabs for reload', () => {
+  const directive = {
+    id: 'native-heuristics',
+    js: ['/shared/public-suffix-data.js', '/js/scripting/shadow-dom-helper.js'],
+    matches: ['*://*.example.com/*'],
+    excludeMatches: ['*://example.com/*'],
+    allFrames: false,
+  };
+  const before = createReloadSensitiveRegistrationState([directive], new Map([
+    [directive.js[0], '1'.repeat(64)], [directive.js[1], '2'.repeat(64)],
+  ]));
+  const after = createReloadSensitiveRegistrationState([directive], new Map([
+    [directive.js[0], '1'.repeat(64)], [directive.js[1], '3'.repeat(64)],
+  ]));
+  const hint = normalizeRemoteScriptletReloadHint(diffReloadSensitiveRegistrationStates(before, after));
+  assert.ok(hint);
+  assert.equal(shouldReloadForFrameUrls(['https://www.example.com/story'], hint), true);
+  assert.equal(shouldReloadForFrameUrls(['https://example.com/'], hint), false);
+  assert.equal(shouldReloadForFrameUrls(['https://example.org/'], hint), false);
+  assert.equal(diffReloadSensitiveRegistrationStates(after, after), null);
+});
+
+test('reload-sensitive artifact inventory exactly hashes scriptlets and document helpers', async () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const manifest = JSON.parse(await fs.readFile(
     path.join(root, RELOAD_SENSITIVE_ARTIFACT_MANIFEST_PATH.replace(/^\//, '')),
@@ -933,7 +955,7 @@ test('reload-sensitive artifact inventory exactly hashes the packaged scriptlet 
   for (const [resourcePath, expectedDigest] of entries) {
     assert.match(
       resourcePath,
-      /^\/(?:js\/scripting\/scriptlet-token|rulesets\/scripting\/scriptlet)\/[a-z0-9._/-]+\.js$/i
+      /^\/(?:js\/scripting\/[a-z0-9._/-]+|rulesets\/scripting\/scriptlet\/[a-z0-9._/-]+|shared\/(?:public-suffix-data|site-key-resolver))\.js$/i
     );
     assert.equal(resourcePath.includes('..'), false);
     const bytes = await fs.readFile(path.join(root, resourcePath.slice(1)));
@@ -957,8 +979,9 @@ test('reload-sensitive artifact inventory exactly hashes the packaged scriptlet 
       }
     }
   };
-  await collect('js/scripting/scriptlet-token');
+  await collect('js/scripting');
   await collect('rulesets/scripting/scriptlet');
+  expectedPaths.push('/shared/public-suffix-data.js', '/shared/site-key-resolver.js');
   expectedPaths.sort();
   assert.deepEqual(entries.map(([resourcePath]) => resourcePath), expectedPaths);
   assert.equal(

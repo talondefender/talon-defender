@@ -453,11 +453,20 @@ const syncShadowStyles = scope => {
     }
 };
 
+const syncShadowOwnership = () => {
+    if ( Array.from(scopeStates.values()).some(state => state.cssText !== '') ) {
+        shadowController?.acquire?.('remoteCosmetics');
+    } else {
+        shadowController?.release?.('remoteCosmetics');
+    }
+};
+
 const clearAppliedCss = (scope, { invalidate = true } = {}) => {
     const scopeState = getScopeState(scope);
     if ( scopeState === null ) { return Promise.resolve(); }
     if ( invalidate ) { scopeState.generation += 1; }
     scopeState.cssText = '';
+    syncShadowOwnership();
     runtimeStatsByScope.delete(scope);
     removeDocumentStyle(scope);
     syncShadowStyles(scope);
@@ -594,6 +603,7 @@ const applyScopeCosmetics = async scope => {
 
     if ( scopeState.cssText !== cssText ) {
         scopeState.cssText = cssText;
+        syncShadowOwnership();
         if ( cssText === '' ) {
             await clearAppliedCss(scope, { invalidate: false });
         } else {

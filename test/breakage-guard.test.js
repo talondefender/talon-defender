@@ -43,10 +43,16 @@ const loadGuard = async ({
   pathname = '/',
   treeNodes = [],
   onTreeNodeRead = () => {},
+  primaryCandidates = [],
+  onPrimaryQuery = () => {},
+  onStyleRead = () => {},
+  onMessage = () => {},
+  styleFor = () => ({}),
 } = {}) => {
   const browserStub = {
     runtime: {
-      async sendMessage() {
+      async sendMessage(message) {
+        onMessage(message);
         return undefined;
       },
     },
@@ -70,7 +76,8 @@ const loadGuard = async ({
       return null;
     },
     querySelectorAll() {
-      return [];
+      onPrimaryQuery();
+      return primaryCandidates;
     },
     createTreeWalker() {
       let index = 0;
@@ -84,13 +91,17 @@ const loadGuard = async ({
       };
     },
   };
-  globalThis.getComputedStyle = () => ({
+  globalThis.getComputedStyle = element => {
+    onStyleRead(element);
+    return ({
     display: 'block',
     visibility: 'visible',
     opacity: '1',
     overflow: 'visible',
     position: 'static',
-  });
+    ...styleFor(element),
+    });
+  };
   globalThis.innerWidth = 1280;
   globalThis.innerHeight = 720;
   delete globalThis.TalonBreakageGuard;
@@ -204,4 +215,39 @@ test('breakage guard recognizes bounded article-like content signals', async () 
   container.getBoundingClientRect = () => ({ width: 900, height: 400 });
 
   assert.equal(guard.isLikelyPrimaryContent(container), true);
+});
+
+test('ordinary documents avoid geometric baselines until a permitted mutation', async () => {
+  let queries = 0;
+  let styleReads = 0;
+  let hidden = false;
+  const messages = [];
+  const primary = new FakeElement();
+  primary.matches = () => true;
+  primary.isConnected = true;
+  const guard = await loadGuard({
+    primaryCandidates: [primary],
+    onPrimaryQuery: () => queries++,
+    onStyleRead: () => styleReads++,
+    onMessage: message => messages.push(message),
+    styleFor: element => element === primary && hidden ? { display: 'none' } : {},
+  });
+  assert.equal(queries, 0);
+  assert.equal(styleReads, 0);
+  const target = new FakeElement();
+  assert.equal(guard.canMutateElement(target).allowed, true);
+  assert.equal(queries, 1);
+  assert.ok(styleReads > 0, 'capture the baseline before the caller changes the DOM');
+  assert.equal(guard.canMutateElement(target).allowed, true);
+  assert.equal(queries, 1, 'reuse the current document baseline');
+  hidden = true;
+  guard.auditAfterMutation('test-hide');
+  await new Promise(resolve => setTimeout(resolve, 220));
+  assert.ok(messages.some(message => message.signal === 'primary-content-hidden'));
+  hidden = false;
+  globalThis.location.pathname = '/new-story';
+  guard.reclassifyProtection({ resetBaseline: true });
+  assert.equal(queries, 1, 'route classification itself stays cheap');
+  guard.canMutateElement(target);
+  assert.equal(queries, 2, 'new route captures a new pre-mutation baseline');
 });

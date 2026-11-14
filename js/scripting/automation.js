@@ -1162,6 +1162,7 @@ const stop = async ({ preserveProtectionListener = false } = {}) => {
     restoreAppliedMarks();
     restoreScrollStyles();
     activeDirectives = [];
+    shadowController?.release?.('automation');
     directiveState.clear();
     if ( preserveProtectionListener === false ) {
         setAutomationReadyMarker(false);
@@ -1208,6 +1209,7 @@ const refresh = async ( ) => {
     activeDirectives = nextActiveDirectives;
     directiveState.clear();
     if ( activeDirectives.length === 0 ) {
+        shadowController?.release?.('automation');
         clearHideStyles();
         if ( observerConnected ) {
             domObserver.disconnect();
@@ -1237,6 +1239,7 @@ const refresh = async ( ) => {
         self.addEventListener?.(shadowContentChangedEvent, onShadowContentChanged);
         shadowListenersConnected = true;
     }
+    shadowController?.acquire?.('automation');
     return { applied: true, directives: activeDirectives.length };
 };
 

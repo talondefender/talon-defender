@@ -4,7 +4,7 @@ import path from 'node:path';
 
 const rootDir = process.cwd();
 const resourceRoots = [
-  'js/scripting/scriptlet-token',
+  'js/scripting',
   'rulesets/scripting/scriptlet',
 ];
 const manifestRelativePath = 'rulesets/reload-sensitive-artifacts.json';
@@ -39,6 +39,7 @@ const files = [];
 for (const relativeDir of resourceRoots) {
   await collectJavaScriptFiles(relativeDir, files);
 }
+files.push('shared/public-suffix-data.js', 'shared/site-key-resolver.js');
 files.sort();
 
 const resources = {};

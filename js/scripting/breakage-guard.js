@@ -275,14 +275,14 @@ const isSubsystemSuppressed = subsystemId => {
     return expiresAt > Date.now();
 };
 
-const isVisible = el => {
+const isVisible = (el, knownRect) => {
     if ( el instanceof Element === false ) { return false; }
     try {
         const style = self.getComputedStyle(el);
         if ( style.display === 'none' ) { return false; }
         if ( style.visibility === 'hidden' ) { return false; }
         if ( Number(style.opacity) === 0 ) { return false; }
-        const rect = el.getBoundingClientRect();
+        const rect = knownRect || el.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
     } catch {
     }
@@ -516,6 +516,9 @@ const canMutateElement = (el, options = {}) => {
         });
         return { allowed: false, reason: 'large-target' };
     }
+    // Capture safety evidence before the first permitted mutation, not on
+    // every ordinary document which never needs a Talon DOM modification.
+    ensureBaseline();
     return { allowed: true, reason: '' };
 };
 
@@ -587,7 +590,7 @@ const primarySnapshotFor = el => {
     if ( el instanceof Element === false ) { return null; }
     const rect = el.getBoundingClientRect();
     return {
-        visible: isVisible(el),
+        visible: isVisible(el, rect),
         height: Math.round(rect.height),
         width: Math.round(rect.width),
         textLength: textWeight(el),
@@ -652,7 +655,6 @@ function reclassifyProtection({ resetBaseline = false } = {}) {
             mutationAuditTimer = undefined;
         }
     }
-    ensureBaseline();
     if (
         previous?.category !== protection.category ||
         previous?.allowedRiskTier !== protection.allowedRiskTier ||
@@ -687,8 +689,6 @@ const auditAfterMutation = reason => {
     if ( mutationAuditTimer !== undefined ) { return; }
     mutationAuditTimer = self.setTimeout(() => {
         mutationAuditTimer = undefined;
-        ensureBaseline();
-
         const html = document.documentElement;
         const body = document.body;
         try {
@@ -765,8 +765,6 @@ if ( document.readyState === 'loading' ) {
         resolveClassificationReady?.();
         resolveClassificationReady = undefined;
     }, { once: true });
-} else {
-    ensureBaseline();
 }
 
 self.addEventListener?.('popstate', scheduleRouteReclassification);

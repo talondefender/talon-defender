@@ -348,7 +348,7 @@ const checkSourceCodeLinkInUi = async () => {
 };
 
 const RELOAD_SENSITIVE_RESOURCE_RE =
-  /^(?:js\/scripting\/scriptlet-token|rulesets\/scripting\/scriptlet)\/[a-z0-9._/-]+\.js$/i;
+  /^(?:js\/scripting\/[a-z0-9._/-]+|rulesets\/scripting\/scriptlet\/[a-z0-9._/-]+|shared\/(?:public-suffix-data|site-key-resolver))\.js$/i;
 
 const sha256Hex = bytes => createHash('sha256').update(bytes).digest('hex');
 const sha256JavaScript = bytes => sha256Hex(Buffer.from(

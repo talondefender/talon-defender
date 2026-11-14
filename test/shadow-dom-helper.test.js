@@ -108,15 +108,16 @@ class FakeDocument extends FakeEventTarget {
   }
 
   createTreeWalker(root) {
+    (this.walkedRoots ||= []).push(root);
     const nodes = collectDescendants(root);
     let index = -1;
     return {
-      currentNode: null,
+      currentNode: root,
       nextNode() {
         index += 1;
-        if (index >= nodes.length) { return false; }
+        if (index >= nodes.length) { return null; }
         this.currentNode = nodes[index];
-        return true;
+        return this.currentNode;
       },
     };
   }
@@ -180,7 +181,10 @@ const createHelperHarness = (readyState = 'loading') => {
     return true;
   };
   const runAllTimers = () => {
-    while (runNextTimer()) {}
+    let count = 0;
+    while (runNextTimer()) {
+      assert.ok(++count < 100, 'finite shadow scans must drain their scheduled work');
+    }
   };
   return {
     context,
@@ -423,4 +427,58 @@ test('shadow helper stop and start control all observers and timers', () => {
   harness.runAllTimers();
   assert.equal(observer.targets.includes(harness.document), true);
   assert.equal(observer.targets.includes(host.shadowRoot), true);
+});
+
+test('shared shadow scanning stops only after the last consumer releases it', () => {
+  const harness = createHelperHarness('complete');
+  const controller = loadHelper(harness);
+  controller.acquire('native');
+  controller.acquire('cleanup');
+  harness.runAllTimers();
+  controller.release('native');
+  assert.ok(harness.mutationObservers[0].targets.includes(harness.document));
+  controller.release('cleanup');
+  assert.equal(harness.mutationObservers[0].targets.length, 0);
+  assert.equal(harness.runNextTimer(), false);
+  loadHelper(harness);
+  assert.equal(harness.runNextTimer(), false, 'reinjection must not restart an unowned helper');
+  controller.acquire('native');
+  harness.runAllTimers();
+  assert.ok(harness.mutationObservers[0].targets.includes(harness.document));
+});
+
+test('shadow mutation batches merge overlapping roots before scanning', () => {
+  const harness = createHelperHarness();
+  const controller = loadHelper(harness);
+  harness.runAllTimers();
+  const parent = new FakeElement('section');
+  const child = new FakeElement('div');
+  child.shadowRoot = new FakeDocumentFragment();
+  parent.append(child);
+  harness.document.documentElement.append(parent);
+  harness.document.walkedRoots = [];
+  harness.mutationObservers[0].trigger([{ addedNodes: [child, parent, child], removedNodes: [] }]);
+  harness.runAllTimers();
+  assert.ok(controller.enumerateRoots().includes(child.shadowRoot));
+  assert.equal(harness.document.walkedRoots.filter(root => root === child).length, 0);
+  assert.equal(harness.document.walkedRoots.filter(root => root === parent).length, 1);
+});
+
+test('mutations behind an active shadow traversal are retained for the next pass', () => {
+  const harness = createHelperHarness();
+  const controller = loadHelper(harness);
+  harness.runAllTimers();
+  const parent = new FakeElement('section');
+  for (let i = 0; i < 1000; i++) parent.append(new FakeElement('div'));
+  harness.document.documentElement.append(parent);
+  harness.mutationObservers[0].trigger([{ addedNodes: [parent], removedNodes: [] }]);
+  harness.runNextTimer();
+  harness.runNextTimer();
+  const late = new FakeElement('aside');
+  late.shadowRoot = new FakeDocumentFragment();
+  parent.children[0].append(late);
+  harness.mutationObservers[0].trigger([{ addedNodes: [late], removedNodes: [] }]);
+  harness.runAllTimers();
+  assert.ok(controller.enumerateRoots().includes(late.shadowRoot));
+  assert.equal(harness.runNextTimer(), false);
 });

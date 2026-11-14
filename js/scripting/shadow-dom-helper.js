@@ -4,7 +4,12 @@
 (function uBOL_shadowDomHelper() {
 
 if ( self.TalonShadowRootController ) {
-    self.TalonShadowRootController.start?.();
+    const existing = self.TalonShadowRootController;
+    if ( typeof existing.refresh === 'function' ) {
+        existing.refresh();
+    } else {
+        existing.start?.();
+    }
     return;
 }
 
@@ -34,6 +39,8 @@ let rescanTimer;
 let scanTimer;
 let observerConnected = false;
 let active = true;
+const consumers = new Set();
+let managedConsumers = false;
 const observedRoots = new Set();
 const postLoadTimers = new Set();
 let pendingAddedNodes = [];
@@ -255,7 +262,7 @@ const continueBudgetedFullScan = deadline => {
         monotonicNow() < deadline
     ) {
         const walker = state.walkers.at(-1);
-        if ( walker.nextNode() === false ) {
+        if ( walker.nextNode() === null ) {
             state.walkers.pop();
             continue;
         }
@@ -331,7 +338,7 @@ const continueBudgetedAddedScan = deadline => {
         let node;
         if ( state.walkers.length !== 0 ) {
             const walker = state.walkers.at(-1);
-            if ( walker.nextNode() === false ) {
+            if ( walker.nextNode() === null ) {
                 state.walkers.pop();
                 continue;
             }
@@ -417,8 +424,19 @@ const startBudgetedAddedScan = roots => {
     ) {
         return false;
     }
+    // Collapse overlapping roots only before this batch starts. Mutations
+    // arriving during its traversal stay queued for a subsequent pass.
+    const batch = new Set(roots.slice(0, MAX_PENDING_MUTATION_NODES));
+    const scanRoots = Array.from(batch).filter(root => {
+        let ancestor = root?.parentNode || root?.host;
+        while ( ancestor ) {
+            if ( batch.has(ancestor) ) { return false; }
+            ancestor = ancestor.parentNode || ancestor.host;
+        }
+        return true;
+    });
     budgetedAddedScan = {
-        roots: roots.slice(0, MAX_PENDING_MUTATION_NODES),
+        roots: scanRoots,
         rootIndex: 0,
         walkers: [],
         nextRoots: knownRoots.slice(),
@@ -666,6 +684,31 @@ self.TalonShadowRootController = {
     scheduleRescan,
     start,
     stop,
+    acquire(consumer) {
+        if ( typeof consumer !== 'string' || consumer === '' ) { return; }
+        managedConsumers = true;
+        consumers.add(consumer);
+        return start();
+    },
+    release(consumer) {
+        managedConsumers = true;
+        consumers.delete(consumer);
+        if ( consumers.size === 0 ) { stop(); }
+    },
+    refresh() {
+        if ( managedConsumers && consumers.size === 0 ) { return knownRoots.slice(); }
+        return start();
+    },
+    getDiagnostics() {
+        return {
+            active,
+            consumerCount: consumers.size,
+            rootCount: knownRoots.length,
+            scanPending: scanTimer !== undefined || rescanTimer !== undefined ||
+                budgetedFullScan !== undefined || budgetedAddedScan !== undefined,
+            pendingNodeCount: pendingAddedNodes.length + pendingRemovedNodes.length,
+        };
+    },
 };
 
 observeDocument();
