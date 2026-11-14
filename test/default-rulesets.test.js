@@ -139,6 +139,28 @@ const getPackagedBundle = () => {
   return packagedBundlePromise;
 };
 
+test('Talon site-fix data keeps rule counts and cosmetic indexes consistent', async () => {
+  const rules = await readJson('../rulesets/main/talon-site-fixes.json');
+  const data = await readJson('../rulesets/scripting/specific/talon-site-fixes.json');
+  const details = await readJson('../rulesets/ruleset-details.json');
+  const entry = details.find(item => item.id === 'talon-site-fixes');
+  assert.equal(entry.rules.total, rules.length);
+  assert.equal(entry.css.specific, data.selectors.length);
+  assert.equal(new Set(rules.map(rule => rule.id)).size, rules.length);
+  assert.deepEqual(data.hostnames, [...data.hostnames].sort());
+  assert.equal(data.selectorListRefs.length, data.hostnames.length);
+  for (const listIndex of data.selectorListRefs) {
+    assert.ok(Number.isInteger(listIndex) && listIndex >= 0 && listIndex < data.selectorLists.length);
+  }
+  for (const list of data.selectorLists) {
+    for (const selectorIndex of JSON.parse(`[${list}]`)) {
+      assert.ok(Number.isInteger(selectorIndex));
+      const index = selectorIndex < 0 ? ~selectorIndex : selectorIndex;
+      assert.ok(index >= 0 && index < data.selectors.length);
+    }
+  }
+});
+
 test('static ruleset updates retry only Chrome exact potentially transient internal error', async () => {
   const waits = [];
   let attempts = 0;
@@ -495,8 +517,8 @@ test('YouTube compatibility allow rules outrank dynamic blocking rules', async (
 test('Talon site fixes target French Stream popup abuse narrowly', async () => {
   const rules = await readJson('../rulesets/main/talon-site-fixes.json');
   assert.equal(Array.isArray(rules), true);
-  assert.equal(rules.length, 44);
-  assert.equal(rules.every(rule => rule?.action?.type === 'block'), true);
+  assert.equal(rules.filter(rule => rule.id < 980045).length, 44);
+  assert.equal(rules.filter(rule => rule.id < 980045).every(rule => rule?.action?.type === 'block'), true);
   assert.equal(
     rules.some(rule => rule?.condition?.urlFilter === '||french-stream.one/js/9c9e0968.js'),
     true
@@ -729,8 +751,10 @@ test('Talon site fixes target French Stream popup abuse narrowly', async () => {
   }
 
   const cosmetics = await readJson('../rulesets/scripting/specific/talon-site-fixes.json');
-  assert.deepEqual(cosmetics.selectors, ['#dontfoid']);
-  assert.deepEqual(cosmetics.hostnames, ['french-stream.one']);
+  assert.equal(cosmetics.selectors[0], '#dontfoid');
+  assert.equal(cosmetics.hostnames[0], 'french-stream.one');
+  assert.equal(cosmetics.selectorLists[0], '0');
+  assert.equal(cosmetics.selectorListRefs[0], 0);
   assert.equal(cosmetics.hasEntities, false);
 
   const scriptletDetails = await readJson('../rulesets/scriptlet-details.json');

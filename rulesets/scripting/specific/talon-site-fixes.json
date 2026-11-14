@@ -1,16 +1,24 @@
 {
-  "selectors": [
-    "#dontfoid"
-  ],
-  "selectorLists": [
-    "0"
-  ],
-  "selectorListRefs": [
-    0
-  ],
-  "hostnames": [
-    "french-stream.one"
-  ],
-  "hasEntities": false,
-  "regexes": []
+ "selectors": [
+  "#dontfoid",
+  "a:is([href^=\"https://lightbrights3.xyz/view/\"],[href^=\"http://lightbrights3.xyz/view/\"],[href^=\"//lightbrights3.xyz/view/\"])",
+  "#content_area:has(iframe[src=\"ber.php\"])"
+ ],
+ "selectorLists": [
+  "0",
+  "1",
+  "2"
+ ],
+ "selectorListRefs": [
+  0,
+  2,
+  1
+ ],
+ "hostnames": [
+  "french-stream.one",
+  "lovmel.net",
+  "vipbox1.com"
+ ],
+ "hasEntities": false,
+ "regexes": []
 }

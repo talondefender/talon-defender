@@ -1,3 +1,5 @@
+Local 0.1.21 sports-filter candidate: validate the advertising-link and player-overlay cosmetics, scoped navigation blocks and an exact-URL, script-only detection-probe exception, real stream links, unrelated sites, Allowed Sites and expired protection using the packaged extension. Confirm the original French Stream rules and all YouTube runtime bytes remain intact, then run the existing Chrome/Edge, minimum-browser and entitlement gates. This data update retains the reviewed upstream baseline and adds no permission, runtime hook or remote executable behavior. No source push, Latest promotion or store submission is implied.
+
 # Release
 
 Local 0.1.20 parity candidate: pinned upstream Chromium `2026.1110.1816`,

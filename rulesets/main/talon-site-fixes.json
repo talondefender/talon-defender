@@ -907,5 +907,60 @@
         "sub_frame"
       ]
     }
+  },
+  {
+    "id": 980045,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "vipbox1.com"
+      ],
+      "requestDomains": [
+        "lightbrights3.xyz"
+      ],
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980046,
+    "priority": 2000000,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "vipbox1.com",
+        "lightbrights3.xyz"
+      ],
+      "requestDomains": [
+        "betsoffer.xyz"
+      ],
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 980047,
+    "priority": 2000000,
+    "action": {
+      "type": "allow"
+    },
+    "condition": {
+      "initiatorDomains": [
+        "vipboxi.net"
+      ],
+      "urlFilter": "|https://blockietv3.xyz/adbdetect/pgout.js|",
+      "resourceTypes": [
+        "script"
+      ]
+    }
   }
 ]

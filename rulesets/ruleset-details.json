@@ -54,20 +54,20 @@
   "enabled": true,
   "homeURL": "https://talondefender.com/",
   "filters": {
-   "total": 26,
-   "accepted": 26,
+   "total": 50,
+   "accepted": 50,
    "rejected": 0
   },
   "rules": {
-   "total": 2,
-   "plain": 2,
+   "total": 47,
+   "plain": 47,
    "regex": 0,
    "strictblock": 0,
    "rejected": 0
   },
   "css": {
    "generic": 0,
-   "specific": 1
+   "specific": 3
   }
  },
  {
