@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "fingerprint": "b85644f187f0b56718009de58f5fbc128d8bddf49cb2c382eea61b9554dcd28a",
+  "fingerprint": "7d0dfaffab60bb663a61fabbe9ea93a3748fd68092174adf136fc55b24e07ddb",
   "resources": {
     "/js/scripting/ad-shell-styles.js": "e45a9e16e76b53b9e79ae6b7ded6703d6b6129908f70c4073fd19101c4a6da7c",
     "/js/scripting/automation.js": "49512cd8445a87682389b1878b383c9333664fa086df2a71b7853fd4b87f46b6",
@@ -18,7 +18,7 @@
     "/js/scripting/css-user.js": "07396d9c73a42d7b8b415c3d9fff162e21c6e041bd32675adfee82fce1e22c65",
     "/js/scripting/isolated-api.js": "600517252125e4cfe410bd795693ab00c875828572019c6c4ccca019b19c014f",
     "/js/scripting/native-heuristics.js": "aac244c881371e1bdbf7f89c190dc6879df1530427d0dbba49b48698855fc04b",
-    "/js/scripting/picker.js": "805813ef1079f9aeafd27f2c8dd24406cda41d1c3df1647e75eaaed77465c167",
+    "/js/scripting/picker.js": "4b9598e6f947d2633bce2aa03043a34cf4469c04137505b8faadb35a1d7fe67e",
     "/js/scripting/post-hide-cleanup.js": "fec742533285835db7409523ff96d53d8c5629f5e88431357298cd91de95a3e6",
     "/js/scripting/prevent-popup-target.js": "911f4f34bea9718e65cffa72219f0c0677465918ba3237a6890af9710103bd36",
     "/js/scripting/prevent-popup.js": "810baa36671f8b653fad66b53ced50aeb07edccc1a4d635741b116e4b07f728d",

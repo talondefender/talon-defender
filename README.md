@@ -21,7 +21,7 @@ It does not own:
 - business or support operations material
 
 Current product summary:
-- local candidate 0.1.22 adds finite, owned DOM scanning and defers geometric safety snapshots until a permitted mutation, retaining the sports filters and reviewed uBO Lite Chromium `2026.1110.1816` baseline; Talon's YouTube runtime, French Stream customer fixes, licensing and custom-filter storage remain separate product behavior
+- local candidate 0.1.23 updates nine filter lists, custom-filter selector validation and element picker selection from uBO Lite Chromium `2026.1116.1650`. The other 42 approved lists and the shared scriptlet framework retain the reviewed November 10 baseline. It carries forward the bounded DOM scanning from 0.1.22 and Talon's YouTube, French Stream and sports protections.
 - native heuristics reads packaged configuration through the extension background rather than fetching a dynamic resource URL from the visited page
 - active YouTube protection hides mealbar promotional offers while preserving ordinary dialogs and player controls
 - the 540 px popup places subscription and license actions beside protection/site details, keeps the CTA visible without scrolling in supported default layouts, and puts optional reviews in the footer; colors, icons, wording, and typography are preserved

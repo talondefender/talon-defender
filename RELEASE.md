@@ -1,3 +1,7 @@
+## Local candidate 0.1.23
+
+Validate the nine lists recorded in `CURRENT_STATE.md` against Chromium `2026.1116.1650` and the other 42 against `2026.1110.1816`. Exercise saved custom-filter recompilation, valid and invalid cosmetic selectors, picker suggestions and preview cleanup. Verify the eight default rulesets, user-selected lists, Allowed Sites, YouTube exclusions and Talon site fixes across an in-place update. Run both packaged targets on Chrome or Edge as appropriate and on minimum Chromium 122. A performance-qualified rollout also requires the ordinary-page CPU check documented below for 0.1.22.
+
 Local 0.1.22 performance candidate: verify finite and idle scans using native browser traversal; open/closed and late shadow roots; shared consumer release/resume; pre-mutation safety evidence; scoped helper-update reload hints; Allowed Sites, expiration and five-state update preservation. Run Chrome/Edge and minimum-Chromium checks plus the private paired ordinary-page gate. A private benchmark is not a universal performance claim. No source push, Latest promotion or store submission is implied.
 
 The current ordinary-page CPU budget is a blocking performance-qualification requirement, not a warning to suppress: median no more than 1.05 times and p95 no more than 1.10 times the pinned comparator, with preserved blocking and controls. A finite-scan correctness pass alone does not satisfy it. Keep remaining benchmark failures and untested site/lifecycle coverage explicit in the private evidence before any rollout decision.

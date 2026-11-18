@@ -54,7 +54,7 @@ export const SANDBOX_COMPILED_FINGERPRINT_KEY =
 const COMPILED_SANDBOX_FILTERS_SCHEMA = 1;
 // Recompile stored text after a compiler/runtime upgrade, while retaining the
 // last-known-good generation for the existing transactional rollback path.
-const SANDBOX_COMPILER_VERSION = '2026.1110.1816';
+const SANDBOX_COMPILER_VERSION = '2026.1116.1650';
 export const SANDBOX_DNR_DIRTY_KEY = 'sandboxFilters.dnrDirtyV1';
 export const SANDBOX_REGISTRATION_DIRTY_KEY = 'sandboxFilters.registrationDirtyV1';
 export const SANDBOX_REGISTRATION_REVISION_KEY =
